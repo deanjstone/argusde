@@ -1,0 +1,108 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #442;
+}
+
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.message {
+  max-width: 70%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+}
+
+.message-user {
+  align-self: flex-end;
+  background: #2b5;
+}
+
+.message-agent {
+  align-self: flex-start;
+  background: #333;
+}
+
+.message-agent-thought {
+  align-self: flex-start;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.message-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.tool-call {
+  align-self: flex-start;
+  border: 1px solid #555;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  max-width: 80%;
+}
+
+.tool-call-title {
+  font-weight: 600;
+}
+
+.tool-call-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.agent-working-indicator {
+  align-self: flex-start;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.permission-prompt {
+  padding: 1rem;
+  border-top: 1px solid #555;
+}
+
+.permission-options {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.chat-input {
+  display: flex;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-top: 1px solid #555;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 0.5rem;
+}

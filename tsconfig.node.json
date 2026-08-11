@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node", "electron"],
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.mts",
+    "src/utility/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": ["src/**/*.test.ts", "src/utility/fake-agent.ts"]
+}
