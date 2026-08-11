@@ -18,7 +18,10 @@ Decisions locked via HITL grilling before charting:
 - **Motivation: full control / no upstream dependency.** Not chasing a specific feature gap between T3 and Orca — the point is owning the whole stack outright, even where the resulting feature set ends up close to one of them.
 - **MVP: T3-style single-agent chat first.** ACP-based chat with one provider (Claude Code) working end-to-end in ArgusDE's own Electron shell is the first real milestone. Orca-style multi-worktree/fleet orchestration is explicitly deferred past MVP, not built in parallel.
 
+## Repo location (locked 2026-08-11)
+
+ArgusDE stays a **standalone repo** (`deanjstone/argusde`) — it does not fold into the `argus` monorepo as `packages/argusde`. Resolved via the wayfinder map's first decision ticket ([argusde#2](https://github.com/deanjstone/argusde/issues/2)); no longer open fog.
+
 ## Open / not yet resolved
 
-- **Repo location is genuinely undecided.** This standalone repo (`deanjstone/argusde`) was created only as a placeholder to hold the wayfinder map and planning issues — it is **not** a commitment to staying standalone. The alternative (folding into the `argus` monorepo as `packages/argusde`, following the precedent `ccbot` set: standalone repo first, consolidated into `apps/ccbot` later) is still on the table and should be resolved as its own decision ticket before or during early implementation, not assumed either way.
 - Everything below MVP scope (ACP client library choice vs. hand-rolled, IPC architecture, terminal backend, exact provider list beyond Claude Code, build/release tooling, branding/theming) is unresolved — see the map issue's frontier for current open tickets.
