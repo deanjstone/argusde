@@ -1,34 +1,19 @@
 import { app, BrowserWindow } from "electron";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { IpcRelay } from "./ipc-relay.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Under WSLg, Electron/Chromium's XWayland presentation path silently fails
-// to hand composited frames to WSLg's RDP/RAIL compositor: the window
-// registers (taskbar icon, correct geometry) and Chromium paints internally
-// (confirmed via CDP screenshot) but nothing ever reaches the screen. Native
-// Wayland doesn't hit this path. Detected via /mnt/wslg rather than
-// WAYLAND_DISPLAY/WSL_DISTRO_NAME, since those don't reliably propagate
-// through detached/non-interactive launches. Also requires DISPLAY to be
-// unset or WSLg's own :0 — /mnt/wslg is a WSL2-wide mount present even
-// under a headless xvfb-run session (DISPLAY=:99), which must keep using
-// its own virtual X server, not WSLg's real Wayland socket.
-const display = process.env.DISPLAY;
-if (
-  process.platform === "linux" &&
-  (display === undefined || display === ":0") &&
-  fs.existsSync("/mnt/wslg")
-) {
-  process.env.WAYLAND_DISPLAY ??= "wayland-0";
-  process.env.XDG_RUNTIME_DIR ??= "/mnt/wslg/runtime-dir";
-  app.commandLine.appendSwitch("ozone-platform", "wayland");
-  // Required under WSL2 regardless of display backend: no CAP_SYS_ADMIN /
-  // user namespaces for Electron's sandbox helper.
-  app.commandLine.appendSwitch("no-sandbox");
-}
+// WSLg's Wayland/sandbox setup (ELECTRON_OZONE_PLATFORM_HINT, WAYLAND_DISPLAY,
+// no-sandbox) has to be in the environment before Electron's native process
+// starts — see bin/launch-linux.sh, which `pnpm start`/`pnpm package` invoke
+// instead of the electron binary directly. Setting it here via process.env
+// or app.commandLine is too late: Chromium's Ozone platform selection
+// happens during early native init, before this file's top-level code runs.
+// (Confirmed empirically: window registers and shows a first frame, but
+// never repaints after — the wayland connection was already made against
+// the wrong/no socket by the time process.env took effect.)
 
 let mainWindow: BrowserWindow | null = null;
 const relay = new IpcRelay();
