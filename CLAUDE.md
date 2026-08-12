@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-**Planning stage.** This repo currently holds only the wayfinder map and its decision tickets — no application code yet. Read the map issue (linked below once charted) for current frontier state before assuming anything here is stale.
+**MVP implemented and merged.** ArgusDE is a working Electron app: T3-style single-agent ACP chat with Claude Code, verified end-to-end against the real `claude-agent-acp` bridge (not just tests). Built per [spec #9](https://github.com/deanjstone/argusde/issues/9), landed via [PR #11](https://github.com/deanjstone/argusde/pull/11). See `src/` for the actual implementation: `AcpSession` (utility process), the IPC relay through main, and the chat-state reducer + React UI in the renderer.
 
 ## Origin and destination-scoping decisions (locked 2026-08-11)
 
@@ -22,6 +22,20 @@ Decisions locked via HITL grilling before charting:
 
 ArgusDE stays a **standalone repo** (`deanjstone/argusde`) — it does not fold into the `argus` monorepo as `packages/argusde`. Resolved via the wayfinder map's first decision ticket ([argusde#2](https://github.com/deanjstone/argusde/issues/2)); no longer open fog.
 
+## Claude Code integration (locked 2026-08-12)
+
+ArgusDE talks to Claude Code by spawning **`claude-agent-acp`** (npm: `@agentclientprotocol/claude-agent-acp`), not `claude` itself — `claude` has no ACP flag or subcommand, and Anthropic explicitly declined to add one ([anthropics/claude-code#6686](https://github.com/anthropics/claude-code/issues/6686), closed not-planned). `claude-agent-acp` wraps Anthropic's own Claude Agent SDK behind a real ACP stdio server; `AcpSession` needed zero changes to consume it. It's provisioned globally by the sys-admin repo, not bundled as an ArgusDE dependency, since this is a private single-user app. Resolved via wayfinder map [argusde#12](https://github.com/deanjstone/argusde/issues/12); no longer open fog.
+
+## MVP architecture decisions (locked 2026-08-12)
+
+Collapsed from wayfinder map [argusde#1](https://github.com/deanjstone/argusde/issues/1) into [spec #9](https://github.com/deanjstone/argusde/issues/9) and implemented:
+
+- **ACP client**: the official `@agentclientprotocol/sdk`, not hand-rolled and not T3 Code's `effect-acp`.
+- **Process architecture**: `AcpSession` runs in a dedicated Electron utility process; the renderer never talks to it directly — everything relays through main (`ipcMain`/`webContents.send` + `contextBridge`).
+- **Chat UI**: a custom chat-style surface rendering ACP session updates directly, not a terminal emulator.
+- **Build/packaging**: electron-builder.
+
 ## Open / not yet resolved
 
-- Everything below MVP scope (ACP client library choice vs. hand-rolled, IPC architecture, terminal backend, exact provider list beyond Claude Code, build/release tooling, branding/theming) is unresolved — see the map issue's frontier for current open tickets.
+- **Exact provider list beyond Claude Code** — explicitly post-MVP, out of scope until a future multi-provider effort.
+- **Branding/theming** — doesn't block anything shipped so far; out of scope for now, picked up whenever it becomes relevant.
