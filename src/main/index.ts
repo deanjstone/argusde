@@ -5,6 +5,16 @@ import { IpcRelay } from "./ipc-relay.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// WSLg's Wayland/sandbox setup (ELECTRON_OZONE_PLATFORM_HINT, WAYLAND_DISPLAY,
+// no-sandbox) has to be in the environment before Electron's native process
+// starts — see bin/launch-linux.sh, which `pnpm start`/`pnpm package` invoke
+// instead of the electron binary directly. Setting it here via process.env
+// or app.commandLine is too late: Chromium's Ozone platform selection
+// happens during early native init, before this file's top-level code runs.
+// (Confirmed empirically: window registers and shows a first frame, but
+// never repaints after — the wayland connection was already made against
+// the wrong/no socket by the time process.env took effect.)
+
 let mainWindow: BrowserWindow | null = null;
 const relay = new IpcRelay();
 
