@@ -12,8 +12,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // (confirmed via CDP screenshot) but nothing ever reaches the screen. Native
 // Wayland doesn't hit this path. Detected via /mnt/wslg rather than
 // WAYLAND_DISPLAY/WSL_DISTRO_NAME, since those don't reliably propagate
-// through detached/non-interactive launches.
-if (process.platform === "linux" && fs.existsSync("/mnt/wslg")) {
+// through detached/non-interactive launches. Also requires DISPLAY to be
+// unset or WSLg's own :0 — /mnt/wslg is a WSL2-wide mount present even
+// under a headless xvfb-run session (DISPLAY=:99), which must keep using
+// its own virtual X server, not WSLg's real Wayland socket.
+const display = process.env.DISPLAY;
+if (
+  process.platform === "linux" &&
+  (display === undefined || display === ":0") &&
+  fs.existsSync("/mnt/wslg")
+) {
   process.env.WAYLAND_DISPLAY ??= "wayland-0";
   process.env.XDG_RUNTIME_DIR ??= "/mnt/wslg/runtime-dir";
   app.commandLine.appendSwitch("ozone-platform", "wayland");
