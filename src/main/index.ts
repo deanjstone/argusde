@@ -1,9 +1,26 @@
 import { app, BrowserWindow } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { IpcRelay } from "./ipc-relay.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Under WSLg, Electron/Chromium's XWayland presentation path silently fails
+// to hand composited frames to WSLg's RDP/RAIL compositor: the window
+// registers (taskbar icon, correct geometry) and Chromium paints internally
+// (confirmed via CDP screenshot) but nothing ever reaches the screen. Native
+// Wayland doesn't hit this path. Detected via /mnt/wslg rather than
+// WAYLAND_DISPLAY/WSL_DISTRO_NAME, since those don't reliably propagate
+// through detached/non-interactive launches.
+if (process.platform === "linux" && fs.existsSync("/mnt/wslg")) {
+  process.env.WAYLAND_DISPLAY ??= "wayland-0";
+  process.env.XDG_RUNTIME_DIR ??= "/mnt/wslg/runtime-dir";
+  app.commandLine.appendSwitch("ozone-platform", "wayland");
+  // Required under WSL2 regardless of display backend: no CAP_SYS_ADMIN /
+  // user namespaces for Electron's sandbox helper.
+  app.commandLine.appendSwitch("no-sandbox");
+}
 
 let mainWindow: BrowserWindow | null = null;
 const relay = new IpcRelay();
