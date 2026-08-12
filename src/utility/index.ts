@@ -2,15 +2,18 @@ import { AcpSession } from "./acp-session.js";
 import { spawnAgentProcessTransport } from "./spawn-agent-process.js";
 import type { MainToUtilityMessage, UtilityToMainMessage } from "../shared/ipc-contract.js";
 
-// TODO(unresolved, see argusde issue tracker): `--acp` was a guess and is
-// confirmed wrong — `claude --help` (CLI v2.1.228) has no ACP flag or
-// subcommand at all. AcpSession itself is built and tested against a fake
-// in-process agent (see acp-session.test.ts) per the spec, so it's correct
-// against the protocol; only this CLI invocation is unverified. Override via
-// ARGUSDE_AGENT_COMMAND / ARGUSDE_AGENT_ARGS once the real invocation (or
-// required CLI version) is confirmed.
-const agentCommand = process.env.ARGUSDE_AGENT_COMMAND ?? "claude";
-const agentArgs = process.env.ARGUSDE_AGENT_ARGS ? (JSON.parse(process.env.ARGUSDE_AGENT_ARGS) as string[]) : ["--acp"];
+// `claude` itself has no ACP flag or subcommand (confirmed — see argusde#10
+// and the research on argusde#13) and Anthropic has declined to add one
+// (anthropics/claude-code#6686, closed not-planned). ArgusDE instead spawns
+// `claude-agent-acp` (npm: @agentclientprotocol/claude-agent-acp), a bridge
+// that wraps Anthropic's own Claude Agent SDK behind a real ACP stdio server
+// — decided in argusde#14. It's provisioned globally by the sys-admin repo
+// (deanjstone/sys-admin#71), not bundled as an ArgusDE dependency, since
+// this is a private single-user app; ArgusDE assumes it's on PATH the same
+// way `claude` itself is. Override via ARGUSDE_AGENT_COMMAND /
+// ARGUSDE_AGENT_ARGS if that ever needs to change.
+const agentCommand = process.env.ARGUSDE_AGENT_COMMAND ?? "claude-agent-acp";
+const agentArgs = process.env.ARGUSDE_AGENT_ARGS ? (JSON.parse(process.env.ARGUSDE_AGENT_ARGS) as string[]) : [];
 const cwd = process.env.ARGUSDE_SESSION_CWD ?? process.cwd();
 
 const parentPort = process.parentPort;
