@@ -1,6 +1,9 @@
 import Database from "better-sqlite3";
 import { ensureSchema } from "./schema.js";
 import type { ChatContentBlock } from "../../shared/acp-events.js";
+import type { CheckpointRecord } from "../../shared/ws-protocol.js";
+
+export type { CheckpointRecord };
 
 export type DomainEvent =
   | { kind: "project.created"; projectId: string; workspaceRoot: string; title: string; timestamp: string }
@@ -36,13 +39,6 @@ export interface ThreadRecord {
   title: string;
   worktreePath: string | null;
   currentModeId: string | null;
-  createdAt: string;
-}
-
-export interface CheckpointRecord {
-  threadId: string;
-  turn: number;
-  ref: string;
   createdAt: string;
 }
 

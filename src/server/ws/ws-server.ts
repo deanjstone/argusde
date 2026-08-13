@@ -131,7 +131,36 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         await runtime.setMode(command.modeId);
         return {};
       }
+      case "thread.list-checkpoints": {
+        requireThread(command.threadId);
+        return eventStore.listCheckpoints(command.threadId);
+      }
+      case "thread.diff-checkpoints": {
+        const cwd = resolveThreadCwd(command.threadId);
+        const diff = checkpointStore.diffCheckpoints(command.threadId, command.turnA, command.turnB, cwd);
+        return { diff };
+      }
     }
+  }
+
+  /** Looks up a persisted Thread record, or throws — the one place "unknown thread" is decided, so every read-only history query stays consistent. */
+  function requireThread(threadId: string): NonNullable<ReturnType<typeof eventStore.getThread>> {
+    const thread = eventStore.getThread(threadId);
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    return thread;
+  }
+
+  /**
+   * Resolves the working directory checkpoint refs for `threadId` live in —
+   * a plain lookup through persistence, not the in-memory `runtimes` map, so
+   * a read-only history query works even for a thread whose ThreadRuntime
+   * isn't currently active (e.g. after a server restart).
+   */
+  function resolveThreadCwd(threadId: string): string {
+    const thread = requireThread(threadId);
+    const project = eventStore.getProject(thread.projectId);
+    if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
+    return thread.worktreePath ?? project.workspaceRoot;
   }
 
   wss.on("connection", (client) => {

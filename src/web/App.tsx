@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { PermissionOutcome } from "../shared/acp-events.js";
-import { WS_PATH } from "../shared/ws-protocol.js";
+import { WS_PATH, type CheckpointRecord } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
-import { ChatView } from "./components/chat-view.js";
+import { ChatView, type DiffState } from "./components/chat-view.js";
 import { TabBar, type Tab } from "./components/tab-bar.js";
 
 interface SetupState {
@@ -16,6 +16,8 @@ interface ThreadInfo {
   threadId: string;
   title: string;
 }
+
+const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
 
 /**
  * Thin composition root — wires WsClient + the chat-state reducer + the
@@ -30,6 +32,27 @@ export function App() {
   const [thread, setThread] = useState<ThreadInfo | null>(null);
   const [chatState, setChatState] = useState<ChatState>(initialChatState);
   const [tab, setTab] = useState<Tab>("chat");
+  const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
+  const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
+  const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
+  // Guards against an in-flight fetchDiff call overwriting a *later* one's
+  // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
+  // request already rendered, which would silently show a stale diff.
+  const diffRequestRef = useRef(0);
+
+  async function refreshCheckpoints(threadId: string) {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      const result = await client.sendCommand<CheckpointRecord[]>({ type: "thread.list-checkpoints", threadId });
+      setCheckpoints(result);
+    } catch (error) {
+      // Non-critical — the strip just stays stale until the next successful
+      // refresh rather than surfacing this as a chat-level error — but the
+      // reason still needs to be visible somewhere, not silently dropped.
+      console.error("Failed to refresh checkpoints:", error);
+    }
+  }
 
   useEffect(() => {
     const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -44,6 +67,7 @@ export function App() {
           break;
         case "session.event":
           setChatState((s) => chatStateReducer(s, { kind: "session-event", threadId: push.threadId, event: push.event }));
+          if (push.event.kind === "turn-complete") void refreshCheckpoints(push.threadId);
           break;
         case "protocol-error":
           setChatState((s) => chatStateReducer(s, { kind: "protocol-error", message: push.message }));
@@ -76,6 +100,7 @@ export function App() {
       });
       setThread({ threadId, title: workspaceRoot });
       setSetup({ submitting: false });
+      void refreshCheckpoints(threadId);
     } catch (error) {
       setSetup({ submitting: false, error: error instanceof Error ? error.message : String(error) });
     }
@@ -92,6 +117,44 @@ export function App() {
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
       );
     }
+  }
+
+  async function fetchDiff(turnA: number, turnB: number) {
+    const client = clientRef.current;
+    if (!client || !thread) return;
+    const requestId = ++diffRequestRef.current;
+    setDiff({ text: null, loading: true, error: undefined });
+    try {
+      const result = await client.sendCommand<{ diff: string }>({
+        type: "thread.diff-checkpoints",
+        threadId: thread.threadId,
+        turnA,
+        turnB,
+      });
+      if (requestId !== diffRequestRef.current) return; // a newer request has since superseded this one
+      setDiff({ text: result.diff, loading: false, error: undefined });
+    } catch (error) {
+      if (requestId !== diffRequestRef.current) return;
+      setDiff({ text: null, loading: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  function handleSelectTurn(turn: number) {
+    setActiveTurn(turn);
+    void fetchDiff(turn - 1, turn);
+  }
+
+  function handleSinceStart() {
+    const latest = checkpoints.at(-1);
+    if (!latest || latest.turn === 0) return;
+    setActiveTurn(latest.turn);
+    void fetchDiff(0, latest.turn);
+  }
+
+  function handleCloseDiff() {
+    diffRequestRef.current++; // invalidate any in-flight fetchDiff so it can't resurrect the panel after close
+    setDiff(EMPTY_DIFF);
+    setActiveTurn(undefined);
   }
 
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
@@ -123,7 +186,19 @@ export function App() {
   return (
     <div className="flex h-screen flex-col">
       <div className="min-h-0 flex-1">
-        {tab === "chat" && <ChatView state={chatState} onSend={handleSend} onRespondPermission={handleRespondPermission} />}
+        {tab === "chat" && (
+          <ChatView
+            state={chatState}
+            onSend={handleSend}
+            onRespondPermission={handleRespondPermission}
+            checkpoints={checkpoints}
+            onSelectTurn={handleSelectTurn}
+            onSinceStart={handleSinceStart}
+            activeTurn={activeTurn}
+            diff={diff}
+            onCloseDiff={handleCloseDiff}
+          />
+        )}
         {tab === "threads" && (
           <div className="flex h-full flex-col bg-neutral-950 p-4 text-neutral-100">
             <h2 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Threads</h2>

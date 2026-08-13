@@ -101,4 +101,26 @@ describe("web smoke: server + browser round trip", () => {
     },
     30_000,
   );
+
+  it(
+    "shows a real checkpoint diff after a second turn changes a file on disk",
+    async () => {
+      // A real filesystem change between turns (not through the fixture
+      // agent, which only streams text) — proves the diff panel renders a
+      // real `git diff`, not a placeholder.
+      fs.writeFileSync(path.join(repoDir, "notes.txt"), "hello from the web smoke test\nand a second line\n");
+
+      await page.getByPlaceholder(/message/i).fill("anything else?");
+      await page.getByPlaceholder(/message/i).press("Enter");
+
+      await page.waitForSelector('button:has-text("Turn 2")', { timeout: 15_000 });
+      await page.getByRole("button", { name: "Turn 2" }).click();
+
+      await page.waitForSelector("text=and a second line", { timeout: 10_000 });
+      const diffText = await page.textContent("body");
+      expect(diffText).toContain("notes.txt");
+      expect(diffText).toContain("and a second line");
+    },
+    30_000,
+  );
 });

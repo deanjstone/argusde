@@ -1,13 +1,28 @@
 import { useState } from "react";
 import type { ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
+import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
+import { CheckpointStrip } from "./checkpoint-strip.js";
+import { DiffView } from "./diff-view.js";
+
+export interface DiffState {
+  text: string | null;
+  loading: boolean;
+  error: string | undefined;
+}
 
 export interface ChatViewProps {
   state: ChatState;
   onSend: (text: string) => void;
   onRespondPermission: (requestId: string, outcome: PermissionOutcome) => void;
+  checkpoints?: CheckpointRecord[];
+  onSelectTurn?: (turn: number) => void;
+  onSinceStart?: () => void;
+  activeTurn?: number;
+  diff?: DiffState;
+  onCloseDiff?: () => void;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -60,7 +75,17 @@ function TimelineItemView({ item }: { item: TimelineItem }) {
 }
 
 /** Message list + input + permission prompt + connection status, mobile-first. */
-export function ChatView({ state, onSend, onRespondPermission }: ChatViewProps) {
+export function ChatView({
+  state,
+  onSend,
+  onRespondPermission,
+  checkpoints = [],
+  onSelectTurn = () => {},
+  onSinceStart = () => {},
+  activeTurn,
+  diff = { text: null, loading: false, error: undefined },
+  onCloseDiff = () => {},
+}: ChatViewProps) {
   const [text, setText] = useState("");
 
   function handleSubmit(event: React.FormEvent) {
@@ -78,6 +103,9 @@ export function ChatView({ state, onSend, onRespondPermission }: ChatViewProps) 
           {state.connectionError ? <span className="text-red-400">{state.connectionError}</span> : <span>{state.connectionState}…</span>}
         </div>
       )}
+
+      <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
+      <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {state.timeline.map((item) => (

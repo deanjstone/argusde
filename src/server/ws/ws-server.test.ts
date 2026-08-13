@@ -142,6 +142,38 @@ describe("ws-server", () => {
     expect(eventStore.listCheckpoints(threadId).map((c) => c.turn)).toEqual([0, 1]);
   }, 20_000);
 
+  it("lists checkpoints and diffs two of them via the WS API, reflecting a real filesystem change", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cp1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cp2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "cp3", threadId, text: "first turn" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    // Modify the file directly (not through the fixture agent, which only
+    // streams text) — isolates "checkpoint capture reflects real filesystem
+    // state" from anything the agent itself does.
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
+
+    await send({ type: "thread.send-message", commandId: "cp4", threadId, text: "second turn" });
+    await waitFor(
+      (messages) =>
+        messages.filter((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete").length === 2,
+    );
+
+    const listResult = await send({ type: "thread.list-checkpoints", commandId: "cp5", threadId });
+    expect(listResult.ok).toBe(true);
+    const checkpoints = listResult.ok ? (listResult.result as { turn: number }[]) : [];
+    expect(checkpoints.map((c) => c.turn)).toEqual([0, 1, 2]);
+
+    const diffResult = await send({ type: "thread.diff-checkpoints", commandId: "cp6", threadId, turnA: 1, turnB: 2 });
+    expect(diffResult.ok).toBe(true);
+    const { diff } = diffResult.ok ? (diffResult.result as { diff: string }) : { diff: "" };
+    expect(diff).toContain("file.txt");
+    expect(diff).toContain("+world");
+  }, 20_000);
+
   it(
     "replies with ok: false and an error message for a command referencing an unknown thread",
     async () => {

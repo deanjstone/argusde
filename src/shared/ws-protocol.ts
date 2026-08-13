@@ -22,9 +22,30 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     outcome: z.union([z.literal("cancelled"), z.object({ optionId: z.string() })]),
   }),
   z.object({ type: z.literal("thread.set-mode"), commandId: z.string(), threadId: z.string(), modeId: z.string() }),
+  z.object({ type: z.literal("thread.list-checkpoints"), commandId: z.string(), threadId: z.string() }),
+  z.object({
+    type: z.literal("thread.diff-checkpoints"),
+    commandId: z.string(),
+    threadId: z.string(),
+    turnA: z.number(),
+    turnB: z.number(),
+  }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
+
+/**
+ * Canonical shape for a checkpoint as returned by thread.list-checkpoints —
+ * shared (not just server-side) so browser code importing it doesn't have
+ * to redeclare the shape or reach into server-only modules (event-store.ts
+ * pulls in better-sqlite3, not browser-safe).
+ */
+export interface CheckpointRecord {
+  threadId: string;
+  turn: number;
+  ref: string;
+  createdAt: string;
+}
 
 export type CommandResult =
   | { type: "command.result"; commandId: string; ok: true; result: unknown }
