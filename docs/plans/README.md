@@ -8,4 +8,5 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 
 - [Phase 1: server foundation](phase-1-server-foundation.md) — event-sourced persistence, checkpoints, WebSocket API. Merged [#34](https://github.com/deanjstone/argusde/pull/34).
 - [Phase 2: shared web UI](phase-2-shared-web-ui.md) — server-served UI, functional parity chat in a browser. Merged [#37](https://github.com/deanjstone/argusde/pull/37).
-- [Phase 2b: Electron cutover](phase-2b-electron-cutover.md) — Electron loads the shared UI via loadURL, retires the old renderer/IPC path. In progress on `feature/electron-cutover`.
+- [Phase 2b: Electron cutover](phase-2b-electron-cutover.md) — Electron loads the shared UI via loadURL, retires the old renderer/IPC path. Merged [#38](https://github.com/deanjstone/argusde/pull/38).
+- [Phase 3: Tailscale serve + startup QR code](phase-3-tailscale-remote-access.md) — `argusde serve` wires up `tailscale serve` and prints a scannable QR code on startup. In progress on `feature/tailscale-remote-access`.
