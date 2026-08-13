@@ -10,9 +10,10 @@
   },
   "packageManager": "pnpm@11.10.0",
   "scripts": {
-    "dev": "vite",
-    "build": "pnpm run typecheck && vite build && pnpm run build:web && tsc -p tsconfig.node.json --outDir dist",
+    "dev": "vite --config vite.config.web.ts",
+    "build": "pnpm run typecheck && pnpm run build:web && pnpm run build:connect-screen && tsc -p tsconfig.node.json --outDir dist",
     "build:web": "vite build -c vite.config.web.ts",
+    "build:connect-screen": "rm -rf dist/connect-screen && mkdir -p dist && cp -r src/connect-screen dist/connect-screen",
     "typecheck": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.web.json",
     "pretest": "pnpm run build",
     "test": "vitest run",
