@@ -92,4 +92,48 @@ describe("ChatView", () => {
     render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.getByText("stream closed")).toBeInTheDocument();
   });
+
+  it("renders no checkpoint strip or diff view when no checkpoints are passed", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Turn 1" })).not.toBeInTheDocument();
+  });
+
+  it("renders the checkpoint strip and forwards turn selection", () => {
+    const onSelectTurn = vi.fn();
+    const checkpoints = [
+      { threadId: "t1", turn: 0, ref: "r0", createdAt: "" },
+      { threadId: "t1", turn: 1, ref: "r1", createdAt: "" },
+    ];
+
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={checkpoints}
+        onSelectTurn={onSelectTurn}
+        onSinceStart={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Turn 1" }));
+    expect(onSelectTurn).toHaveBeenCalledWith(1);
+  });
+
+  it("renders the diff panel when a diff is present and forwards close", () => {
+    const onCloseDiff = vi.fn();
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        diff={{ text: "+added line", loading: false, error: undefined }}
+        onCloseDiff={onCloseDiff}
+      />,
+    );
+
+    expect(screen.getByText("+added line")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    expect(onCloseDiff).toHaveBeenCalled();
+  });
 });
