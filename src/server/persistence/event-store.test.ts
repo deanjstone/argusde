@@ -172,4 +172,43 @@ describe("EventStore", () => {
     // already-closed handle so the double-close is a no-op rather than an error.
     store = reopened;
   });
+
+  it("listEventsForThread returns only events belonging to that thread, in append order", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/workspace",
+      title: "Project One",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-13T00:01:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-2",
+      projectId: "proj-1",
+      title: "Other thread",
+      worktreePath: null,
+      timestamp: "2026-08-13T00:01:30.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.message-recorded",
+      threadId: "thread-1",
+      messageId: "msg-1",
+      role: "agent",
+      content: [{ type: "text", text: "hello" }],
+      timestamp: "2026-08-13T00:02:00.000Z",
+    });
+
+    const events = store.listEventsForThread("thread-1");
+
+    expect(events.map((e) => e.kind)).toEqual(["thread.created", "thread.message-recorded"]);
+    expect(events.every((e) => "threadId" in e && e.threadId === "thread-1")).toBe(true);
+  });
 });

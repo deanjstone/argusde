@@ -141,6 +141,18 @@ export class EventStore {
       .all(projectId) as ThreadRecord[];
   }
 
+  /**
+   * Raw event-log replay for one thread. Phase 1 has no dedicated message/
+   * turn-history projection table (that lands with the UI work that reads
+   * it) — this is the durable source of truth in the meantime.
+   */
+  listEventsForThread(threadId: string): DomainEvent[] {
+    const rows = this.db.prepare("SELECT payload FROM events ORDER BY id").all() as { payload: string }[];
+    return rows
+      .map((row) => JSON.parse(row.payload) as DomainEvent)
+      .filter((event): event is DomainEvent & { threadId: string } => "threadId" in event && event.threadId === threadId);
+  }
+
   listCheckpoints(threadId: string): CheckpointRecord[] {
     return this.db
       .prepare(
