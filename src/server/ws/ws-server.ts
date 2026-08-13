@@ -87,7 +87,19 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           checkpointStore,
           onEvent: (event) => broadcast({ type: "session.event", threadId, event }),
         });
-        await runtime.start();
+        try {
+          await runtime.start();
+        } catch (error) {
+          // The Thread's persisted record (and its turn-0 checkpoint) is
+          // already durable at this point — thread.created has to precede
+          // any checkpoint event to satisfy the checkpoints table's foreign
+          // key, so a failed start can't be un-persisted. What we can and
+          // must do is not leak the partially-connected session; retrying
+          // thread creation for this same threadId isn't supported yet
+          // (tracked in argusde#35).
+          await runtime.dispose().catch(() => undefined);
+          throw error;
+        }
         runtimes.set(threadId, runtime);
         return { threadId };
       }
@@ -155,6 +167,13 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
     async close() {
       await Promise.all([...runtimes.values()].map((runtime) => runtime.dispose()));
       runtimes.clear();
+
+      // wss.close()'s callback only fires once every currently-connected
+      // client disconnects on its own — terminate any still-open clients
+      // first so shutdown doesn't hang on one that never does.
+      for (const client of clients) client.terminate();
+      clients.clear();
+
       await new Promise<void>((resolve, reject) => {
         wss.close((err) => (err ? reject(err) : resolve()));
       });

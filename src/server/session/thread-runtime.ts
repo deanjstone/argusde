@@ -106,7 +106,11 @@ export class ThreadRuntime {
   }
 
   private accumulateAgentChunk(messageId: string | undefined, content: ChatContentBlock): void {
-    const key = messageId ?? `__anon-${this.pendingAgentMessageOrder.length}`;
+    // An undefined messageId means the agent isn't distinguishing messages —
+    // every such chunk in a turn belongs to the same message (mirrors the
+    // chat-reducer's "continues last" heuristic), so it gets one stable key,
+    // not a fresh key per call.
+    const key = messageId ?? "__anon__";
     const existing = this.pendingAgentMessages.get(key);
     if (existing) {
       this.pendingAgentMessages.set(key, mergeContent(existing, content));

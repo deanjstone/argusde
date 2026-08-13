@@ -136,6 +136,25 @@ describe("ThreadRuntime", () => {
     expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1]);
   });
 
+  it("assembles chunks with no messageId (undefined) into a single message too, not one message per chunk", async () => {
+    const runtime = runtimeWithSteps(
+      [
+        { type: "message", text: "The bug is " },
+        { type: "message", text: "in the retry handler." },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("what's broken?");
+
+    const events = eventStore.listEventsForThread("thread-1");
+    const agentMessages = events.filter((e) => e.kind === "thread.message-recorded" && e.role === "agent");
+    expect(agentMessages).toHaveLength(1);
+    expect(agentMessages[0]).toMatchObject({
+      content: [{ type: "text", text: "The bug is in the retry handler." }],
+    });
+  });
+
   it("captures checkpoint numbers 1:1 with turns across multiple sendMessage calls, even when a turn makes no changes", async () => {
     const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
     await runtime.start();

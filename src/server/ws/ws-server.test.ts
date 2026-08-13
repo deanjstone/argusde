@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import { agent, methods } from "@agentclientprotocol/sdk";
 import { EventStore } from "../persistence/event-store.js";
 import { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { AcpSession } from "../../utility/acp-session.js";
@@ -148,5 +149,108 @@ describe("ws-server", () => {
       if (!result.ok) expect(result.error).toEqual(expect.any(String));
     },
     20_000,
+  );
+
+  it(
+    "thread.create replies ok: false and disposes the session when the agent fails to start, without crashing the server",
+    async () => {
+      const failingServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () =>
+              agent({ name: "failing-agent" }).onRequest(methods.agent.initialize, async () => {
+                throw new Error("simulated agent startup failure");
+              }),
+          }),
+      });
+      const failingClient = new WebSocket(`ws://127.0.0.1:${failingServer.port}`);
+      const failingReceived: ServerPush[] = [];
+      failingClient.on("message", (data) => failingReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        failingClient.once("open", () => resolve());
+        failingClient.once("error", reject);
+      });
+
+      failingClient.send(JSON.stringify({ type: "project.create", commandId: "p1", workspaceRoot: repoDir, title: "P" }));
+      await waitFor(() => failingReceived.some((m) => m.type === "command.result" && m.commandId === "p1"));
+      const projectCreateResult = failingReceived.find(
+        (m) => m.type === "command.result" && m.commandId === "p1",
+      ) as Extract<ServerPush, { type: "command.result" }>;
+      const projectId = projectCreateResult.ok ? (projectCreateResult.result as { projectId: string }).projectId : undefined;
+
+      failingClient.send(JSON.stringify({ type: "thread.create", commandId: "t1", projectId, title: "T" }));
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const check = () => {
+          if (failingReceived.some((m) => m.type === "command.result" && m.commandId === "t1")) return resolve();
+          if (Date.now() - start > 5000) return reject(new Error("timed out"));
+          setTimeout(check, 20);
+        };
+        check();
+      });
+
+      const threadResult = failingReceived.find((m) => m.type === "command.result" && m.commandId === "t1") as Extract<
+        ServerPush,
+        { type: "command.result" }
+      >;
+      // The ACP SDK wraps a thrown handler error as a generic JSON-RPC error
+      // rather than propagating the original message text — just assert the
+      // command failed cleanly with some error, not the exact wording.
+      expect(threadResult.ok).toBe(false);
+      if (!threadResult.ok) expect(threadResult.error).toEqual(expect.any(String));
+
+      // The server itself must still be responsive after the failed thread.create.
+      failingClient.send(JSON.stringify({ type: "project.create", commandId: "p2", workspaceRoot: repoDir, title: "P2" }));
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const check = () => {
+          if (failingReceived.some((m) => m.type === "command.result" && m.commandId === "p2")) return resolve();
+          if (Date.now() - start > 5000) return reject(new Error("timed out"));
+          setTimeout(check, 20);
+        };
+        check();
+      });
+
+      failingClient.terminate();
+      await failingServer.close();
+    },
+    15_000,
+  );
+
+  it(
+    "close() resolves even when a connected client never closes itself first",
+    async () => {
+      // wss.close()'s callback only fires once every currently-connected
+      // client has disconnected — close() must terminate lingering clients
+      // itself rather than waiting on them to leave voluntarily.
+      const danglingServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+      const danglingClient = new WebSocket(`ws://127.0.0.1:${danglingServer.port}`);
+      await new Promise<void>((resolve, reject) => {
+        danglingClient.once("open", () => resolve());
+        danglingClient.once("error", reject);
+      });
+
+      // Intentionally never call danglingClient.close() — this is the case
+      // that used to hang.
+      await danglingServer.close();
+    },
+    5_000,
   );
 });
