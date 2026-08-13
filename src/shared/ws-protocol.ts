@@ -22,6 +22,14 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     outcome: z.union([z.literal("cancelled"), z.object({ optionId: z.string() })]),
   }),
   z.object({ type: z.literal("thread.set-mode"), commandId: z.string(), threadId: z.string(), modeId: z.string() }),
+  z.object({ type: z.literal("thread.list-checkpoints"), commandId: z.string(), threadId: z.string() }),
+  z.object({
+    type: z.literal("thread.diff-checkpoints"),
+    commandId: z.string(),
+    threadId: z.string(),
+    turnA: z.number(),
+    turnB: z.number(),
+  }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
