@@ -61,4 +61,12 @@ This plan scopes **Phase 2 only**: get a real, functional chat working end-to-en
 
 ## Outcome
 
-_To be filled in once this phase lands._
+Landed as planned, with a few adjustments discovered along the way:
+
+- **`protocol.ts` moved to `src/shared/`** (from `src/server/ws/`) before writing `ws-client.ts` — it's a genuine client-server contract, and importing it from `src/web` across into `src/server` wasn't clean given the tsconfig split. Not anticipated in the original plan, but a one-line-of-reasoning fix once hit.
+- **shadcn primitives ended up leaner than "the CLI's output"**: hand-written `Button`/`Input` using plain Tailwind utility classes + `cn()`, skipping `class-variance-authority`, `@radix-ui/react-slot`, and `lucide-react` — none were earning their keep for a two-component set at this phase's scope. Same structural pattern (forwardRef, typed variant props), fewer dependencies.
+- **Component testing infrastructure didn't exist yet** — added `@testing-library/react`, `jsdom`, `@testing-library/jest-dom`, and a shared `test-setup.ts` (vitest isn't in `globals` mode, so testing-library's auto-cleanup detection never fires without an explicit `afterEach(cleanup)`).
+- **Real bugs found via TDD, not just the happy path**: `chat-state.ts`'s `user-message-sent` case initially reused the "merge with last message of this role" heuristic (correct for streaming agent replies with no `messageId`) for locally-sent user messages too — two separately-sent messages would have silently concatenated into one timeline entry. Caught by a dedicated regression test before it ever reached a browser.
+- **One real bug found only in manual browser verification, not the automated suite**: `WorkspaceSetup`'s `h-full` never resolved to anything, since `html`/`body`/`#root` had no explicit height for it to cascade from — the page rendered correctly in content but only filled the top portion of the viewport. Fixed via a small global CSS addition. A reminder that component tests (jsdom, no real layout engine) don't catch layout/CSS bugs — only an actual rendered browser does.
+- **`tsconfig.test.json` was silently never covering `test/**/*.ts` at all** (pre-existing gap, not introduced this phase) — discovered when adding `test/web-smoke.test.ts` and wiring it into `pnpm run typecheck`'s coverage. Fixed by overriding `rootDir` for that noEmit-only project.
+- End-to-end verified twice: once against the fixture agent (automated `test/web-smoke.test.ts`, a real server + real Playwright browser context), and once manually against the real `claude-agent-acp` (real tool use — `find` + `Read` — streamed back and rendered correctly across all three tabs).
