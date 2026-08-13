@@ -78,6 +78,10 @@ export class ThreadRuntime {
     this.options.session.respondToPermission(requestId, outcome);
   }
 
+  async dispose(): Promise<void> {
+    await this.options.session.dispose();
+  }
+
   private handleEvent(event: AcpSessionEvent): void {
     this.options.onEvent(event);
 

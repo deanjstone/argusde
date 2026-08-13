@@ -189,4 +189,14 @@ describe("ThreadRuntime", () => {
 
     expect(events.some((e) => e.kind === "turn-complete")).toBe(true);
   });
+
+  it("dispose() tears down the underlying session, leaving it disconnected", async () => {
+    const events: AcpSessionEvent[] = [];
+    const runtime = runtimeWithSteps([], (e) => events.push(e));
+    await runtime.start();
+
+    await runtime.dispose();
+
+    expect(events).toContainEqual({ kind: "connection-state", state: "disconnected" });
+  });
 });
