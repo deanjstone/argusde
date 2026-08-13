@@ -11,7 +11,8 @@
     "src/main/**/*.ts",
     "src/preload/**/*.mts",
     "src/utility/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/shared/**/*.ts",
+    "src/server/**/*.ts"
   ],
   "exclude": ["src/**/*.test.ts", "src/utility/fake-agent.ts"]
 }

@@ -23,6 +23,7 @@ export type FakeAgentStep =
       toolCallId: string;
       options: PermissionOption[];
     }
+  | { type: "mode-change"; modeId: string }
   | { type: "crash"; message?: string };
 
 export interface FakeAgentOptions {
@@ -52,6 +53,13 @@ export function createFakeAgent(options: FakeAgentOptions = {}): AgentApp {
     .onRequest(methods.agent.session.new, async () => ({
       sessionId,
     }))
+    .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
+      await client.notify(methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "current_mode_update", currentModeId: params.modeId },
+      });
+      return {};
+    })
     .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
       for (const step of steps) {
         switch (step.type) {
@@ -101,6 +109,15 @@ export function createFakeAgent(options: FakeAgentOptions = {}): AgentApp {
               sessionId: params.sessionId,
               toolCall: { toolCallId: step.toolCallId },
               options: step.options,
+            });
+            break;
+          case "mode-change":
+            await client.notify(methods.client.session.update, {
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "current_mode_update",
+                currentModeId: step.modeId,
+              },
             });
             break;
           case "crash": {

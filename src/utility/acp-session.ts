@@ -195,9 +195,12 @@ export class AcpSession extends EventEmitter {
           })),
         });
         break;
+      case "current_mode_update":
+        this.emitEvent({ kind: "mode-changed", modeId: update.currentModeId });
+        break;
       default:
-        // Other update kinds (mode changes, config options, usage, etc.) are
-        // out of scope for the MVP chat surface and are intentionally dropped.
+        // Other update kinds (config options, usage, etc.) are out of scope
+        // for the MVP chat surface and are intentionally dropped.
         break;
     }
   }
@@ -244,6 +247,16 @@ export class AcpSession extends EventEmitter {
     }
     const response = await this.activeSession.prompt(text);
     this.emitEvent({ kind: "turn-complete", stopReason: response.stopReason });
+  }
+
+  async setMode(modeId: string): Promise<void> {
+    if (!this.connection || !this.activeSession) {
+      throw new Error("AcpSession.setMode() called before start()");
+    }
+    await this.connection.agent.request(methods.agent.session.setMode, {
+      sessionId: this.activeSession.sessionId,
+      modeId,
+    });
   }
 
   async restartSession(): Promise<void> {
