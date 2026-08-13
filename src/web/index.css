@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+/*
+ * `h-full` only resolves against an ancestor with an explicit height —
+ * without this, WorkspaceSetup's `h-full` (and anything else using it as
+ * the page root) collapses to its content height, leaving the rest of the
+ * viewport unstyled. `h-screen`-rooted screens (App's "Connecting…" state)
+ * don't need this, but WorkspaceSetup is rendered as App's direct return
+ * value, so it needs the cascade.
+ */
+html,
+body,
+#root {
+  height: 100%;
+}
