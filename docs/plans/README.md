@@ -1,0 +1,10 @@
+# Plans
+
+Implementation plans produced via Claude Code's plan mode (`EnterPlanMode`/`ExitPlanMode`) for non-trivial work in this repo, kept here for history — not just in the local `~/.claude/plans/` scratch file, which isn't checked in and gets overwritten by the next plan.
+
+Each file is the plan as approved before implementation started, with an `## Outcome` section appended once the work lands, noting anything that changed from the plan (bugs found in review, scope adjustments, etc.).
+
+Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/deanjstone/argusde/issues/33)):
+
+- [Phase 1: server foundation](phase-1-server-foundation.md) — event-sourced persistence, checkpoints, WebSocket API. Merged [#34](https://github.com/deanjstone/argusde/pull/34).
+- [Phase 2: shared web UI](phase-2-shared-web-ui.md) — server-served UI, functional parity chat in a browser. In progress.
