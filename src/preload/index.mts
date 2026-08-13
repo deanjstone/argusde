@@ -1,30 +1,50 @@
+/// <reference lib="dom" />
+// Preload scripts run in a page-like context with real window/document/
+// location globals, even though this file is compiled under
+// tsconfig.node.json (no DOM lib, since main/server/utility genuinely are
+// Node-only) — pull in just the DOM lib for this one file rather than
+// changing that shared tsconfig.
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
 import {
-  IPC_RESPOND_PERMISSION_CHANNEL,
-  IPC_RESTART_SESSION_CHANNEL,
-  IPC_SEND_MESSAGE_CHANNEL,
-  IPC_SESSION_EVENT_CHANNEL,
-} from "../shared/ipc-contract.js";
-import type { AcpSessionEvent, PermissionOutcome } from "../shared/acp-events.js";
+  IPC_CONNECT_FAILED,
+  IPC_GET_SERVER_URL,
+  IPC_RETRY_CONNECT,
+  IPC_SET_SERVER_URL,
+} from "../main/connect-screen-ipc.js";
 
+/**
+ * A much smaller bridge than the MVP's — the shared web UI (src/web/) talks
+ * straight to the server over its own WebSocket (WsClient), no Electron API
+ * involved. This preload backs only the connect screen (src/connect-screen/),
+ * which is the one piece of UI that isn't server-served.
+ */
 const api = {
-  onSessionEvent(listener: (event: AcpSessionEvent) => void): () => void {
-    const handler = (_event: IpcRendererEvent, payload: AcpSessionEvent): void => listener(payload);
-    ipcRenderer.on(IPC_SESSION_EVENT_CHANNEL, handler);
-    return () => ipcRenderer.removeListener(IPC_SESSION_EVENT_CHANNEL, handler);
+  getServerUrl(): Promise<string> {
+    return ipcRenderer.invoke(IPC_GET_SERVER_URL);
   },
-  sendMessage(text: string): Promise<void> {
-    return ipcRenderer.invoke(IPC_SEND_MESSAGE_CHANNEL, text);
+  setServerUrl(url: string): Promise<void> {
+    return ipcRenderer.invoke(IPC_SET_SERVER_URL, url);
   },
-  respondToPermission(requestId: string, outcome: PermissionOutcome): Promise<void> {
-    return ipcRenderer.invoke(IPC_RESPOND_PERMISSION_CHANNEL, requestId, outcome);
+  retryConnect(): void {
+    ipcRenderer.send(IPC_RETRY_CONNECT);
   },
-  restartSession(): Promise<void> {
-    return ipcRenderer.invoke(IPC_RESTART_SESSION_CHANNEL);
+  onConnectFailed(listener: (message: string) => void): () => void {
+    const handler = (_event: IpcRendererEvent, message: string): void => listener(message);
+    ipcRenderer.on(IPC_CONNECT_FAILED, handler);
+    return () => ipcRenderer.removeListener(IPC_CONNECT_FAILED, handler);
   },
 };
 
-contextBridge.exposeInMainWorld("argusde", api);
+// This preload attaches to every navigation in the window — both the
+// locally-bundled connect screen (file://) and whatever the configured
+// server serves (typically http://, possibly over a plain Tailscale
+// connection). Only expose the bridge on the connect screen itself: the
+// remote page has no legitimate use for setServerUrl/retryConnect, and
+// without this guard a malicious or compromised server could silently
+// repoint and persist the app's own connection config.
+if (location.protocol === "file:") {
+  contextBridge.exposeInMainWorld("argusdeConnect", api);
+}
 
-export type ArgusDeApi = typeof api;
+export type ArgusDeConnectApi = typeof api;

@@ -7,4 +7,5 @@ Each file is the plan as approved before implementation started, with an `## Out
 Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/deanjstone/argusde/issues/33)):
 
 - [Phase 1: server foundation](phase-1-server-foundation.md) — event-sourced persistence, checkpoints, WebSocket API. Merged [#34](https://github.com/deanjstone/argusde/pull/34).
-- [Phase 2: shared web UI](phase-2-shared-web-ui.md) — server-served UI, functional parity chat in a browser. In progress on `feature/shared-web-ui`.
+- [Phase 2: shared web UI](phase-2-shared-web-ui.md) — server-served UI, functional parity chat in a browser. Merged [#37](https://github.com/deanjstone/argusde/pull/37).
+- [Phase 2b: Electron cutover](phase-2b-electron-cutover.md) — Electron loads the shared UI via loadURL, retires the old renderer/IPC path. In progress on `feature/electron-cutover`.
