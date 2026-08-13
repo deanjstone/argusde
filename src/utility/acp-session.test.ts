@@ -112,6 +112,15 @@ describe("AcpSession", () => {
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
   });
 
+  it("setMode requests a mode change and the agent's confirmation round-trips as a mode-changed event", async () => {
+    const session = sessionWithSteps([]);
+    await session.start();
+
+    const events = await collectEvents(session, () => session.setMode("plan"));
+
+    expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
+  });
+
   it("emits a permission-request event and resolves the agent's request once respondToPermission is called", async () => {
     const session = sessionWithSteps([
       {

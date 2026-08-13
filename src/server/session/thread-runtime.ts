@@ -70,6 +70,10 @@ export class ThreadRuntime {
     await this.options.session.sendMessage(text);
   }
 
+  async setMode(modeId: string): Promise<void> {
+    await this.options.session.setMode(modeId);
+  }
+
   respondToPermission(requestId: string, outcome: PermissionOutcome): void {
     this.options.session.respondToPermission(requestId, outcome);
   }

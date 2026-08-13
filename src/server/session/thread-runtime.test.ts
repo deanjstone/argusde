@@ -158,6 +158,18 @@ describe("ThreadRuntime", () => {
     );
   });
 
+  it("setMode forwards to the underlying session and the confirmation is persisted via the normal mode-changed path", async () => {
+    const runtime = runtimeWithSteps([], () => {});
+    await runtime.start();
+
+    await runtime.setMode("plan");
+
+    const events = eventStore.listEventsForThread("thread-1");
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "thread.mode-changed", modeId: "plan" }),
+    );
+  });
+
   it("respondToPermission forwards to the underlying session, unblocking the turn", async () => {
     const events: AcpSessionEvent[] = [];
     const runtime = runtimeWithSteps(

@@ -53,6 +53,13 @@ export function createFakeAgent(options: FakeAgentOptions = {}): AgentApp {
     .onRequest(methods.agent.session.new, async () => ({
       sessionId,
     }))
+    .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
+      await client.notify(methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: { sessionUpdate: "current_mode_update", currentModeId: params.modeId },
+      });
+      return {};
+    })
     .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
       for (const step of steps) {
         switch (step.type) {

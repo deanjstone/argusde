@@ -249,6 +249,16 @@ export class AcpSession extends EventEmitter {
     this.emitEvent({ kind: "turn-complete", stopReason: response.stopReason });
   }
 
+  async setMode(modeId: string): Promise<void> {
+    if (!this.connection || !this.activeSession) {
+      throw new Error("AcpSession.setMode() called before start()");
+    }
+    await this.connection.agent.request(methods.agent.session.setMode, {
+      sessionId: this.activeSession.sessionId,
+      modeId,
+    });
+  }
+
   async restartSession(): Promise<void> {
     await this.closeConnection();
     this.pendingPermissions.clear();
