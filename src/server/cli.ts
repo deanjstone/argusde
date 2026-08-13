@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import qrcodeTerminal from "qrcode-terminal";
 import { WS_PATH } from "../shared/ws-protocol.js";
 import { startServer } from "./index.js";
-import { checkTailscaleStatus, enableServe, disableServe } from "./remote/tailscale.js";
+import { checkTailscaleStatus, hasExistingMapping, enableServe, disableServe } from "./remote/tailscale.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,26 +67,12 @@ async function main(): Promise<void> {
   const server = await startServer({ host, port, dbPath, webDistDir });
   console.log(`ArgusDE server listening at http://${host}:${server.port}/ (WebSocket API at ws://${host}:${server.port}${WS_PATH})`);
 
+  // Registered before any Tailscale wiring below (which awaits subprocess
+  // calls, each bounded by its own timeout but still not instant) so an
+  // early Ctrl-C is never left with no SIGINT listener installed — it must
+  // always reach graceful shutdown, including tearing down a Tailscale
+  // mapping that had *already* been enabled moments earlier.
   let tailscaleEnabled = false;
-  if (shouldEnableTailscale({ tailscale, host })) {
-    const status = await checkTailscaleStatus();
-    if (status.available) {
-      try {
-        await enableServe(server.port);
-        tailscaleEnabled = true;
-        const url = `https://${status.dnsName}:${server.port}/`;
-        console.log(`Remote access via Tailscale: ${url}`);
-        qrcodeTerminal.generate(url, { small: true });
-      } catch (err) {
-        // Tailscale wiring is a bonus, not a requirement — local/LAN access
-        // via the status line above already works regardless.
-        console.warn(`Tailscale serve setup failed, continuing with local access only: ${(err as Error).message}`);
-      }
-    } else {
-      console.log('Tailscale not detected — remote access unavailable. Run "tailscale up" to enable it.');
-    }
-  }
-
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
@@ -103,6 +89,31 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  if (shouldEnableTailscale({ tailscale, host })) {
+    const status = await checkTailscaleStatus();
+    if (status.available) {
+      if (await hasExistingMapping(server.port)) {
+        console.warn(
+          `Port ${server.port} already has a tailscale serve mapping (from a prior ArgusDE run or an unrelated service) — skipping Tailscale wiring to avoid overwriting it. Local access is unaffected.`,
+        );
+      } else {
+        try {
+          await enableServe(server.port, host);
+          tailscaleEnabled = true;
+          const url = `https://${status.dnsName}:${server.port}/`;
+          console.log(`Remote access via Tailscale: ${url}`);
+          qrcodeTerminal.generate(url, { small: true });
+        } catch (err) {
+          // Tailscale wiring is a bonus, not a requirement — local/LAN
+          // access via the status line above already works regardless.
+          console.warn(`Tailscale serve setup failed, continuing with local access only: ${(err as Error).message}`);
+        }
+      }
+    } else {
+      console.log('Tailscale not detected — remote access unavailable. Run "tailscale up" to enable it.');
+    }
+  }
 }
 
 // Only run when executed directly (`node dist/server/cli.js ...` or the
