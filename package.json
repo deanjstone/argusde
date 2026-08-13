@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Personal, full-control coding-agent desktop client.",
   "main": "dist/main/index.js",
+  "bin": {
+    "argusde": "dist/server/cli.js"
+  },
   "packageManager": "pnpm@11.10.0",
   "scripts": {
     "dev": "vite",
@@ -14,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "pnpm run build && bin/launch-linux.sh",
+    "serve": "pnpm run build && node dist/server/cli.js serve",
     "package": "pnpm run build && electron-builder"
   },
   "dependencies": {
