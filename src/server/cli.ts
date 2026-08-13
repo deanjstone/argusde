@@ -2,8 +2,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { startServer } from "./index.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4870;
@@ -40,7 +42,12 @@ async function main(): Promise<void> {
   fs.mkdirSync(dataDir, { recursive: true });
   const dbPath = path.join(dataDir, "argusde.sqlite");
 
-  const server = await startServer({ host, port, dbPath });
+  // dist/server/cli.js -> dist/web (vite.config.web.ts's outDir). Falls
+  // back to serving nothing (404 for HTTP GETs, WS API still works) if the
+  // web UI hasn't been built.
+  const webDistDir = path.join(__dirname, "../web");
+
+  const server = await startServer({ host, port, dbPath, webDistDir });
   console.log(`ArgusDE server listening on ws://${host}:${server.port}`);
 
   let shuttingDown = false;
