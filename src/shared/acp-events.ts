@@ -66,4 +66,5 @@ export type AcpSessionEvent =
   | { kind: "tool-call-update"; toolCall: ToolCallUpdateSummary }
   | { kind: "plan"; entries: PlanEntrySummary[] }
   | { kind: "permission-request"; request: PermissionRequestSummary }
-  | { kind: "turn-complete"; stopReason: string };
+  | { kind: "turn-complete"; stopReason: string }
+  | { kind: "mode-changed"; modeId: string };

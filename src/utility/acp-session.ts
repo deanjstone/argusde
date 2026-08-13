@@ -195,9 +195,12 @@ export class AcpSession extends EventEmitter {
           })),
         });
         break;
+      case "current_mode_update":
+        this.emitEvent({ kind: "mode-changed", modeId: update.currentModeId });
+        break;
       default:
-        // Other update kinds (mode changes, config options, usage, etc.) are
-        // out of scope for the MVP chat surface and are intentionally dropped.
+        // Other update kinds (config options, usage, etc.) are out of scope
+        // for the MVP chat surface and are intentionally dropped.
         break;
     }
   }
