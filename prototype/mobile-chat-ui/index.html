@@ -1,0 +1,346 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway code for wayfinder ticket #27 (deanjstone/argusde),
+  "Mobile-first shadcn UI direction". Answers: what should ArgusDE's new
+  mobile-first chat surface look like, given it's now one shared UI (per #26)
+  used by both the PWA and Electron (loadURL'd from the server)?
+
+  Three structurally different variants of the same mobile-first chat screen,
+  switchable via ?variant=A|B|C and the floating bottom bar. No build step,
+  no backend — mock data only. Open this file directly in a browser.
+
+  Concepts each variant has to place somewhere: message list w/ streaming
+  content blocks, a blocking permission-prompt interaction, connection
+  status, chat input, Thread switching (multiple concurrent Threads per
+  Project), Checkpoint indication/revert, and worktree indication.
+
+  Not for production — see /home/deanj/.claude/skills/prototype/UI.md.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>ArgusDE mobile chat UI — prototype</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(120,120,120,0.35); border-radius: 3px; }
+  [x-cloak] { display: none !important; }
+</style>
+</head>
+<body class="bg-neutral-950 text-neutral-100 h-screen overflow-hidden" x-data="app()" x-init="init()">
+
+<!-- ============================== SHARED MOCK DATA (see <script> at bottom) ============================== -->
+
+<!-- ============================== VARIANT A — chatbot-template style: centered column, slide-over thread drawer ============================== -->
+<template x-if="variant === 'A'">
+  <div class="h-full flex flex-col max-w-2xl mx-auto relative">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between px-4 py-3 border-b border-neutral-800 shrink-0">
+      <button @click="drawerOpen = true" class="p-2 -ml-2 rounded-lg hover:bg-neutral-900" aria-label="Threads">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div class="flex flex-col items-center">
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm font-medium" x-text="activeThread.title"></span>
+          <span x-show="activeThread.worktree" class="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30">worktree</span>
+        </div>
+        <span class="text-[11px] text-neutral-500" x-text="activeThread.project"></span>
+      </div>
+      <div class="flex items-center gap-1.5 pr-1" :title="connection.label">
+        <span class="w-2 h-2 rounded-full" :class="connection.dotClass"></span>
+      </div>
+    </header>
+
+    <!-- Message scroller -->
+    <main class="flex-1 overflow-y-auto px-4 py-6 flex flex-col gap-5">
+      <template x-for="m in messages" :key="m.id">
+        <div>
+          <!-- checkpoint marker sits between turns -->
+          <template x-if="m.checkpointBefore">
+            <div class="flex items-center gap-2 my-3 text-[11px] text-neutral-500">
+              <div class="h-px flex-1 bg-neutral-800"></div>
+              <button class="flex items-center gap-1 px-2 py-0.5 rounded-full border border-neutral-800 hover:border-neutral-600 hover:text-neutral-300">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                <span x-text="'checkpoint · turn ' + m.checkpointBefore"></span>
+              </button>
+              <div class="h-px flex-1 bg-neutral-800"></div>
+            </div>
+          </template>
+
+          <div class="flex" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+            <div class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed"
+                 :class="m.role === 'user' ? 'bg-violet-600 text-white rounded-br-md' : 'bg-neutral-900 text-neutral-100 rounded-bl-md'">
+              <template x-if="m.tool">
+                <div class="mb-1.5 flex items-center gap-1.5 text-[11px] font-mono text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-md px-2 py-1">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+                  <span x-text="m.tool"></span>
+                </div>
+              </template>
+              <span x-text="m.text"></span>
+              <span x-show="m.streaming" class="inline-block w-1.5 h-3.5 bg-current align-middle ml-0.5 animate-pulse"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- blocking permission prompt -->
+      <template x-if="pendingPermission">
+        <div class="mx-auto w-full rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <p class="text-sm text-amber-200 mb-3" x-text="pendingPermission.text"></p>
+          <div class="flex gap-2">
+            <button class="flex-1 rounded-lg bg-amber-500 text-neutral-950 text-sm font-medium py-2">Allow</button>
+            <button class="flex-1 rounded-lg border border-neutral-700 text-sm py-2">Deny</button>
+          </div>
+        </div>
+      </template>
+    </main>
+
+    <!-- Input -->
+    <footer class="p-3 border-t border-neutral-800 shrink-0">
+      <div class="flex items-end gap-2 rounded-2xl border border-neutral-800 bg-neutral-900 px-3 py-2">
+        <textarea rows="1" placeholder="Message ArgusDE…" class="flex-1 bg-transparent text-sm resize-none outline-none placeholder:text-neutral-500"></textarea>
+        <button class="w-8 h-8 shrink-0 rounded-full bg-violet-600 flex items-center justify-center">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="m5 12 14 0M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Slide-over thread drawer -->
+    <div x-cloak x-show="drawerOpen" class="absolute inset-0 z-20">
+      <div class="absolute inset-0 bg-black/60" @click="drawerOpen = false"></div>
+      <div class="absolute inset-y-0 left-0 w-[82%] max-w-xs bg-neutral-950 border-r border-neutral-800 p-4 flex flex-col gap-1"
+           x-transition:enter="transition ease-out duration-200" x-transition:enter-start="-translate-x-full" x-transition:enter-end="translate-x-0">
+        <h2 class="text-xs uppercase tracking-wide text-neutral-500 px-2 mb-2">Threads · <span x-text="activeThread.project"></span></h2>
+        <template x-for="t in threads" :key="t.id">
+          <button @click="activeThreadId = t.id; drawerOpen = false" class="text-left px-3 py-2.5 rounded-lg hover:bg-neutral-900" :class="t.id === activeThreadId && 'bg-neutral-900'">
+            <div class="flex items-center gap-1.5">
+              <span class="text-sm" x-text="t.title"></span>
+              <span x-show="t.worktree" class="text-[9px] px-1 rounded-full bg-violet-500/20 text-violet-300">wt</span>
+            </div>
+            <span class="text-[11px] text-neutral-500" x-text="t.lastActivity"></span>
+          </button>
+        </template>
+        <button class="mt-2 text-sm text-neutral-400 px-3 py-2 rounded-lg hover:bg-neutral-900 text-left">+ New thread</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- ============================== VARIANT B — native-app style: bottom tab bar (Chat / Threads / Settings) ============================== -->
+<template x-if="variant === 'B'">
+  <div class="h-full flex flex-col max-w-2xl mx-auto">
+
+    <header class="flex items-center justify-between px-4 py-3 shrink-0">
+      <div>
+        <div class="text-sm font-semibold" x-text="tab === 'chat' ? activeThread.title : (tab === 'threads' ? 'Threads' : 'Settings')"></div>
+        <div class="text-[11px] text-neutral-500" x-text="connection.label"></div>
+      </div>
+      <span class="w-2.5 h-2.5 rounded-full" :class="connection.dotClass"></span>
+    </header>
+
+    <!-- Chat tab -->
+    <template x-if="tab === 'chat'">
+      <main class="flex-1 overflow-y-auto px-4 pb-4 flex flex-col gap-5">
+        <template x-for="m in messages" :key="m.id">
+          <div class="flex" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+            <div class="max-w-[85%] rounded-xl px-3.5 py-2 text-sm" :class="m.role === 'user' ? 'bg-blue-600' : 'bg-neutral-800'">
+              <template x-if="m.tool">
+                <div class="mb-1 text-[11px] font-mono text-neutral-400">→ <span x-text="m.tool"></span></div>
+              </template>
+              <span x-text="m.text"></span>
+            </div>
+          </div>
+        </template>
+        <template x-if="pendingPermission">
+          <div class="rounded-xl bg-neutral-800 border border-neutral-700 p-3 flex items-center justify-between gap-3">
+            <span class="text-sm" x-text="pendingPermission.text"></span>
+            <div class="flex gap-1.5 shrink-0">
+              <button class="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center">✓</button>
+              <button class="w-8 h-8 rounded-full bg-neutral-700 flex items-center justify-center">✕</button>
+            </div>
+          </div>
+        </template>
+      </main>
+    </template>
+
+    <!-- Threads tab: full-screen list -->
+    <template x-if="tab === 'threads'">
+      <main class="flex-1 overflow-y-auto">
+        <template x-for="t in threads" :key="t.id">
+          <button @click="activeThreadId = t.id; tab = 'chat'" class="w-full text-left px-4 py-3 border-b border-neutral-900 flex items-center justify-between">
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-medium" x-text="t.title"></span>
+                <span x-show="t.worktree" class="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300">worktree</span>
+              </div>
+              <div class="text-[11px] text-neutral-500" x-text="t.lastActivity"></div>
+            </div>
+            <span x-show="t.id === activeThreadId" class="text-[10px] px-2 py-0.5 rounded-full bg-blue-600">active</span>
+          </button>
+        </template>
+        <button class="w-full text-left px-4 py-3 text-blue-400 text-sm">+ New thread</button>
+      </main>
+    </template>
+
+    <!-- Settings tab: connection settings stub, per #25/#26 -->
+    <template x-if="tab === 'settings'">
+      <main class="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-4">
+        <div>
+          <label class="text-[11px] text-neutral-500 uppercase tracking-wide">Server URL</label>
+          <input value="https://dell.tailnet-1234.ts.net" class="mt-1 w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div class="text-[11px] text-neutral-500">Tailscale-authenticated · no separate sign-in</div>
+      </main>
+    </template>
+
+    <!-- Input, only on chat tab -->
+    <template x-if="tab === 'chat'">
+      <div class="p-3 shrink-0">
+        <div class="flex items-center gap-2 rounded-full bg-neutral-800 px-4 py-2.5">
+          <input placeholder="Message…" class="flex-1 bg-transparent text-sm outline-none placeholder:text-neutral-500" />
+          <button class="text-blue-400 text-sm font-medium">Send</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- Bottom tab bar -->
+    <nav class="grid grid-cols-3 border-t border-neutral-900 shrink-0 pb-[env(safe-area-inset-bottom)]">
+      <button @click="tab = 'chat'" class="py-2.5 flex flex-col items-center gap-0.5" :class="tab === 'chat' ? 'text-blue-400' : 'text-neutral-500'">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="text-[10px]">Chat</span>
+      </button>
+      <button @click="tab = 'threads'" class="py-2.5 flex flex-col items-center gap-0.5" :class="tab === 'threads' ? 'text-blue-400' : 'text-neutral-500'">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <span class="text-[10px]">Threads</span>
+      </button>
+      <button @click="tab = 'settings'" class="py-2.5 flex flex-col items-center gap-0.5" :class="tab === 'settings' ? 'text-blue-400' : 'text-neutral-500'">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="text-[10px]">Settings</span>
+      </button>
+    </nav>
+  </div>
+</template>
+
+<!-- ============================== VARIANT C — power-user style: inline thread picker + checkpoint timeline strip ============================== -->
+<template x-if="variant === 'C'">
+  <div class="h-full flex flex-col max-w-2xl mx-auto border-l border-r border-neutral-900">
+
+    <!-- Inline thread picker acting as header, like a pinned command bar -->
+    <header class="shrink-0 border-b border-neutral-800">
+      <div class="flex items-center gap-2 px-3 py-2 overflow-x-auto">
+        <template x-for="t in threads" :key="t.id">
+          <button @click="activeThreadId = t.id"
+                  class="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border-l-2"
+                  :class="[t.id === activeThreadId ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300', t.worktree ? 'border-emerald-500' : 'border-transparent']">
+            <span x-text="t.title"></span>
+          </button>
+        </template>
+        <button class="shrink-0 text-xs text-neutral-600 px-2 py-1">+</button>
+      </div>
+      <div class="flex items-center justify-between px-3 pb-1.5 text-[10px] text-neutral-500">
+        <span x-text="activeThread.project + (activeThread.worktree ? ' · isolated worktree' : ' · main workspace')"></span>
+        <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full" :class="connection.dotClass"></span><span x-text="connection.label"></span></span>
+      </div>
+    </header>
+
+    <!-- Checkpoint timeline strip -->
+    <div class="shrink-0 border-b border-neutral-900 px-3 py-2 flex items-center gap-1.5 overflow-x-auto">
+      <span class="text-[10px] text-neutral-600 mr-1 shrink-0">checkpoints</span>
+      <template x-for="cp in checkpoints" :key="cp">
+        <button class="shrink-0 w-6 h-6 rounded-full border border-neutral-700 hover:border-emerald-500 hover:text-emerald-400 text-[10px] flex items-center justify-center" x-text="cp"></button>
+      </template>
+    </div>
+
+    <main class="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 font-mono text-[13px]">
+      <template x-for="m in messages" :key="m.id">
+        <div class="flex gap-2">
+          <span class="shrink-0 select-none" :class="m.role === 'user' ? 'text-blue-400' : 'text-emerald-400'" x-text="m.role === 'user' ? '❯' : '·'"></span>
+          <div class="min-w-0">
+            <template x-if="m.tool">
+              <div class="text-neutral-500 mb-0.5">exec: <span x-text="m.tool"></span></div>
+            </template>
+            <span class="text-neutral-200" x-text="m.text"></span>
+            <span x-show="m.streaming" class="inline-block w-1.5 h-3 bg-emerald-400 align-middle ml-0.5 animate-pulse"></span>
+          </div>
+        </div>
+      </template>
+      <template x-if="pendingPermission">
+        <div class="border border-amber-600/40 bg-amber-950/30 rounded px-2.5 py-2 flex items-center justify-between gap-2">
+          <span class="text-amber-300 text-[12px]" x-text="'? ' + pendingPermission.text"></span>
+          <div class="flex gap-1 shrink-0 text-[11px]">
+            <button class="px-2 py-0.5 rounded bg-amber-600 text-neutral-950">y</button>
+            <button class="px-2 py-0.5 rounded border border-neutral-700">n</button>
+          </div>
+        </div>
+      </template>
+    </main>
+
+    <footer class="p-2 border-t border-neutral-800 shrink-0">
+      <div class="flex items-center gap-2 bg-neutral-900 rounded px-2.5 py-1.5 font-mono text-[13px]">
+        <span class="text-blue-400">❯</span>
+        <input placeholder="" class="flex-1 bg-transparent outline-none" />
+      </div>
+    </footer>
+  </div>
+</template>
+
+<!-- ============================== FLOATING PROTOTYPE SWITCHER (dev-only) ============================== -->
+<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-neutral-800 border border-neutral-600 rounded-full shadow-lg px-1.5 py-1.5 text-xs">
+  <button @click="cycle(-1)" class="w-6 h-6 rounded-full hover:bg-neutral-700 flex items-center justify-center">←</button>
+  <span class="px-2 font-medium" x-text="variant + ' — ' + variantNames[variant]"></span>
+  <button @click="cycle(1)" class="w-6 h-6 rounded-full hover:bg-neutral-700 flex items-center justify-center">→</button>
+</div>
+
+<script>
+function app() {
+  return {
+    variant: 'A',
+    variantNames: { A: 'Slide-over drawer', B: 'Native tab bar', C: 'Power-user command bar' },
+    tab: 'chat',
+    drawerOpen: false,
+    activeThreadId: 't1',
+    threads: [
+      { id: 't1', title: 'Fix ACP relay retry', project: 'argusde', worktree: false, lastActivity: '2m ago' },
+      { id: 't2', title: 'Checkpoint UI spike', project: 'argusde', worktree: true, lastActivity: '1h ago' },
+      { id: 't3', title: 'Explore t3code parity', project: 'argusde', worktree: false, lastActivity: 'yesterday' },
+    ],
+    checkpoints: ['1', '2', '3', '4'],
+    connection: { label: 'connected · dell.tailnet', dotClass: 'bg-emerald-500' },
+    messages: [
+      { id: 1, role: 'user', text: 'Can you check why the utility process keeps restarting?' },
+      { id: 2, role: 'assistant', tool: 'Read src/utility/acp-session.ts', text: 'Found it — the restart handler treats a clean exit the same as a crash.' },
+      { id: 3, role: 'user', text: 'Fix it and add a test.', checkpointBefore: 2 },
+      { id: 4, role: 'assistant', text: 'Updating the exit handler to check the exit code before restarting…', streaming: true },
+    ],
+    pendingPermission: { text: 'Allow writing to src/utility/acp-session.ts?' },
+    get activeThread() {
+      return this.threads.find(t => t.id === this.activeThreadId) ?? this.threads[0];
+    },
+    init() {
+      const params = new URLSearchParams(location.search);
+      const v = params.get('variant');
+      if (v && this.variantNames[v]) this.variant = v;
+      window.addEventListener('keydown', (e) => {
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+        if (e.key === 'ArrowLeft') this.cycle(-1);
+        if (e.key === 'ArrowRight') this.cycle(1);
+      });
+    },
+    cycle(dir) {
+      const keys = Object.keys(this.variantNames);
+      const i = keys.indexOf(this.variant);
+      this.variant = keys[(i + dir + keys.length) % keys.length];
+      const url = new URL(location.href);
+      url.searchParams.set('variant', this.variant);
+      history.replaceState(null, '', url);
+    },
+  };
+}
+</script>
+</body>
+</html>
