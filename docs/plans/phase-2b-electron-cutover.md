@@ -51,4 +51,9 @@ This phase does the cutover spec decision #5 called for: Electron's `BrowserWind
 
 ## Outcome
 
-_To be filled in once this phase lands._
+Landed as planned. Notable along the way:
+
+- **Used a background agent for the mechanical cleanup step** (deletions + build/tsconfig updates) while writing the new Electron tests directly in parallel — a genuine, low-risk split since the two touched disjoint file sets. Coordinated by having the agent stage and commit only its specific files (never `git add -A`) and by committing my own test files with `git commit -- <specific paths>` rather than a blanket commit, so neither side's in-progress staged changes leaked into the other's commit.
+- **A real bug found via manual verification, not the automated tests**: `loadURL()`'s own promise rejects on failure — a separate signal from the `did-fail-load` event this phase's connect-screen fallback relies on — and was uncaught, producing an unhandled promise rejection warning on every failed connection attempt. Found by driving a real Electron launch against an unreachable URL and reading the raw process output, not by the Playwright-driven assertions (which only check rendered content, not console warnings). Fixed with a defensive `.catch()`.
+- **A test-writing pitfall avoided, not hit**: the first manual check attempt used `http://127.0.0.1:1/` as an "unreachable" URL — port 1 is on Chromium's restricted-ports list (`ERR_UNSAFE_PORT`), a different failure mode than a genuine connection refusal. Switched to port 59999 (outside that list) for both the manual check and `test/electron-connect-screen.test.ts`.
+- Verified end-to-end three ways: the two new automated tests (`test/electron-smoke.test.ts` against the fixture agent, `test/electron-connect-screen.test.ts` against a genuinely closed port), and a full manual run against the real `claude-agent-acp` covering both scenarios the plan called for — fresh launch (no config) → connect screen → connect → real chat round trip inside Electron, and a second launch reusing the persisted config → straight to the setup screen, no connect-screen detour.
