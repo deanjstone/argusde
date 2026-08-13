@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AcpSession } from "../../utility/acp-session.js";
 import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
-import { ClientCommandSchema, type ClientCommand, type ServerPush } from "./protocol.js";
+import { createStaticFileServer } from "../http/static-server.js";
+import { ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
 
 /**
  * Bumped whenever the WS protocol (protocol.ts) changes shape. Electron's
@@ -22,6 +24,8 @@ export interface WsServerOptions {
   checkpointStore: CheckpointStore;
   /** Builds the AcpSession for a newly-created Thread. Production points this at a spawned claude-agent-acp; tests point it at a fixture. */
   createSession: (threadId: string, cwd: string) => AcpSession;
+  /** Static assets served at "/" — the built web UI (dist/web). Omit to serve nothing but the WS API (e.g. tests that don't care about HTTP). */
+  webDistDir?: string;
 }
 
 export interface WsServerHandle {
@@ -34,11 +38,17 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   const clients = new Set<WebSocket>();
   const runtimes = new Map<string, ThreadRuntime>();
 
-  const wss = new WebSocketServer({ host: options.host, port: options.port });
+  const staticHandler = options.webDistDir
+    ? createStaticFileServer(options.webDistDir)
+    : (_req: http.IncomingMessage, res: http.ServerResponse) => res.writeHead(404).end("Not found");
+
+  const httpServer = http.createServer(staticHandler);
   await new Promise<void>((resolve, reject) => {
-    wss.once("listening", () => resolve());
-    wss.once("error", reject);
+    httpServer.once("error", reject);
+    httpServer.listen(options.port, options.host, () => resolve());
   });
+
+  const wss = new WebSocketServer({ server: httpServer, path: WS_PATH });
 
   function broadcast(push: ServerPush): void {
     const payload = JSON.stringify(push);
@@ -163,7 +173,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   });
 
   return {
-    port: (wss.address() as { port: number }).port,
+    port: (httpServer.address() as { port: number }).port,
     async close() {
       await Promise.all([...runtimes.values()].map((runtime) => runtime.dispose()));
       runtimes.clear();
@@ -174,8 +184,20 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       for (const client of clients) client.terminate();
       clients.clear();
 
+      // wss.close() only detaches from the underlying http.Server (it
+      // doesn't own it, since it was passed in via `server`) — it must be
+      // closed separately or the process would keep listening.
       await new Promise<void>((resolve, reject) => {
         wss.close((err) => (err ? reject(err) : resolve()));
+      });
+      // httpServer.close()'s callback doesn't fire until every open
+      // connection ends — including idle keep-alive sockets left pooled by
+      // a browser or fetch's connection reuse, which can sit open for
+      // Node's default keepAliveTimeout (5s). Force them closed so
+      // shutdown doesn't stall on a connection nobody's actively using.
+      httpServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((err) => (err ? reject(err) : resolve()));
       });
     },
   };

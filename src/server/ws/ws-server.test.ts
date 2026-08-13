@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import http from "node:http";
 import { WebSocket } from "ws";
 import { agent, methods } from "@agentclientprotocol/sdk";
 import { EventStore } from "../persistence/event-store.js";
@@ -11,7 +12,7 @@ import { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { AcpSession } from "../../utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../../utility/spawn-agent-process.js";
 import { startWsServer, type WsServerHandle } from "./ws-server.js";
-import type { ServerPush } from "./protocol.js";
+import type { ServerPush } from "../../shared/ws-protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureCliPath = path.resolve(__dirname, "../../../test/fixtures/fake-agent-cli.mjs");
@@ -76,7 +77,7 @@ beforeEach(async () => {
   });
 
   received = [];
-  client = new WebSocket(`ws://127.0.0.1:${server.port}`);
+  client = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
   // Attach the message listener before awaiting "open" — the server sends
   // server.welcome immediately on connection, which can otherwise race
   // ahead of a listener registered only after "open" resolves.
@@ -169,7 +170,7 @@ describe("ws-server", () => {
               }),
           }),
       });
-      const failingClient = new WebSocket(`ws://127.0.0.1:${failingServer.port}`);
+      const failingClient = new WebSocket(`ws://127.0.0.1:${failingServer.port}/ws`);
       const failingReceived: ServerPush[] = [];
       failingClient.on("message", (data) => failingReceived.push(JSON.parse(data.toString()) as ServerPush));
       await new Promise<void>((resolve, reject) => {
@@ -241,7 +242,7 @@ describe("ws-server", () => {
             createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
           }),
       });
-      const danglingClient = new WebSocket(`ws://127.0.0.1:${danglingServer.port}`);
+      const danglingClient = new WebSocket(`ws://127.0.0.1:${danglingServer.port}/ws`);
       await new Promise<void>((resolve, reject) => {
         danglingClient.once("open", () => resolve());
         danglingClient.once("error", reject);
@@ -252,5 +253,105 @@ describe("ws-server", () => {
       await danglingServer.close();
     },
     5_000,
+  );
+
+  it("returns 404 for HTTP requests when no webDistDir is configured, without affecting the WS API", async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect(res.status).toBe(404);
+
+    // The WS connection from beforeEach must still be perfectly usable.
+    const result = await send({ type: "project.create", commandId: "http1", workspaceRoot: repoDir, title: "P" });
+    expect(result.ok).toBe(true);
+  });
+
+  it(
+    "serves the configured webDistDir over plain HTTP on the same port the WS API uses",
+    async () => {
+      const webDistDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-dist-"));
+      fs.writeFileSync(path.join(webDistDir, "index.html"), "<!doctype html><title>ArgusDE</title>");
+
+      const staticServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        webDistDir,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+
+      try {
+        const res = await fetch(`http://127.0.0.1:${staticServer.port}/`);
+        expect(res.status).toBe(200);
+        expect(await res.text()).toContain("<title>ArgusDE</title>");
+
+        // The WS upgrade must still work on /ws on the very same port.
+        const wsClient = new WebSocket(`ws://127.0.0.1:${staticServer.port}/ws`);
+        const gotWelcome = await new Promise<boolean>((resolve, reject) => {
+          wsClient.once("message", (data) => {
+            const msg = JSON.parse(data.toString());
+            resolve(msg.type === "server.welcome");
+          });
+          wsClient.once("error", reject);
+        });
+        expect(gotWelcome).toBe(true);
+        wsClient.terminate();
+      } finally {
+        await staticServer.close();
+        fs.rmSync(webDistDir, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
+
+  it(
+    "close() doesn't stall on a lingering idle keep-alive HTTP connection",
+    async () => {
+      // Dedicated server — this test closes it itself, and the outer
+      // afterEach already closes the shared one.
+      const dedicatedServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+
+      // A keep-alive agent leaves its socket open (idle, pooled for reuse)
+      // after the response completes — exactly what a browser or fetch's
+      // connection pooling does for a static-asset request.
+      const keepAliveAgent = new http.Agent({ keepAlive: true });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request({ host: "127.0.0.1", port: dedicatedServer.port, path: "/", agent: keepAliveAgent }, (res) => {
+            res.resume();
+            res.on("end", () => resolve());
+          });
+          req.on("error", reject);
+          req.end();
+        });
+
+        const start = Date.now();
+        await dedicatedServer.close();
+        const elapsedMs = Date.now() - start;
+
+        // Node's default keepAliveTimeout is 5000ms — without forcing the
+        // idle connection closed, close() waits close to that. A healthy
+        // close should be near-instant.
+        expect(elapsedMs).toBeLessThan(2000);
+      } finally {
+        keepAliveAgent.destroy();
+      }
+    },
+    10_000,
   );
 });

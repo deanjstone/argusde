@@ -8,6 +8,8 @@ export interface StartServerOptions {
   host?: string;
   port: number;
   dbPath: string;
+  /** Static assets served at "/" — the built web UI (dist/web). Omit to serve nothing but the WS API. */
+  webDistDir?: string;
 }
 
 export interface ServerHandle {
@@ -37,6 +39,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     port: options.port,
     eventStore,
     checkpointStore,
+    webDistDir: options.webDistDir,
     createSession: (_threadId, cwd) =>
       new AcpSession({
         name: "ArgusDE",

@@ -1,11 +1,15 @@
 import { z } from "zod";
-import type { AcpSessionEvent } from "../../shared/acp-events.js";
+import type { AcpSessionEvent } from "./acp-events.js";
 
 /**
  * Wire format for ArgusDE's standalone server WebSocket API (spec #33).
  * Every client (Electron, PWA) speaks this same protocol — it's the
  * highest, and only, integration seam between clients and the server.
  */
+
+/** Path the WebSocket upgrade is served on — everything else on the same port/server is plain HTTP (the static web UI). Shared so client and server can't drift apart on it. */
+export const WS_PATH = "/ws";
+
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
   z.object({ type: z.literal("thread.create"), commandId: z.string(), projectId: z.string(), title: z.string() }),
