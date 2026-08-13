@@ -1,8 +1,5 @@
 import { cn } from "../lib/utils.js";
-
-interface CheckpointRecord {
-  turn: number;
-}
+import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 
 export interface CheckpointStripProps {
   checkpoints: CheckpointRecord[];

@@ -34,6 +34,19 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
 
+/**
+ * Canonical shape for a checkpoint as returned by thread.list-checkpoints —
+ * shared (not just server-side) so browser code importing it doesn't have
+ * to redeclare the shape or reach into server-only modules (event-store.ts
+ * pulls in better-sqlite3, not browser-safe).
+ */
+export interface CheckpointRecord {
+  threadId: string;
+  turn: number;
+  ref: string;
+  createdAt: string;
+}
+
 export type CommandResult =
   | { type: "command.result"; commandId: string; ok: true; result: unknown }
   | { type: "command.result"; commandId: string; ok: false; error: string };

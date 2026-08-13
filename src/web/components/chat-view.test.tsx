@@ -120,6 +120,27 @@ describe("ChatView", () => {
     expect(onSelectTurn).toHaveBeenCalledWith(1);
   });
 
+  it("forwards activeTurn to the checkpoint strip so the selected turn is highlighted", () => {
+    const checkpoints = [
+      { threadId: "t1", turn: 0, ref: "r0", createdAt: "" },
+      { threadId: "t1", turn: 1, ref: "r1", createdAt: "" },
+    ];
+
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={checkpoints}
+        onSelectTurn={() => {}}
+        onSinceStart={() => {}}
+        activeTurn={1}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Turn 1" })).toHaveAttribute("aria-current", "true");
+  });
+
   it("renders the diff panel when a diff is present and forwards close", () => {
     const onCloseDiff = vi.fn();
     render(

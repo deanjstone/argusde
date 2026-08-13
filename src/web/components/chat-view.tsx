@@ -1,14 +1,11 @@
 import { useState } from "react";
 import type { ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
+import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView } from "./diff-view.js";
-
-interface CheckpointRecord {
-  turn: number;
-}
 
 export interface DiffState {
   text: string | null;
@@ -23,6 +20,7 @@ export interface ChatViewProps {
   checkpoints?: CheckpointRecord[];
   onSelectTurn?: (turn: number) => void;
   onSinceStart?: () => void;
+  activeTurn?: number;
   diff?: DiffState;
   onCloseDiff?: () => void;
 }
@@ -84,6 +82,7 @@ export function ChatView({
   checkpoints = [],
   onSelectTurn = () => {},
   onSinceStart = () => {},
+  activeTurn,
   diff = { text: null, loading: false, error: undefined },
   onCloseDiff = () => {},
 }: ChatViewProps) {
@@ -105,7 +104,7 @@ export function ChatView({
         </div>
       )}
 
-      <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} />
+      <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
       <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">

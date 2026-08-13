@@ -55,3 +55,18 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33) stories 9-11 and 21 
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean, including all new/extended test files above.
 2. Manual check: run `argusde serve`, open the web UI, send a couple of messages that cause real file changes (via the real `claude-agent-acp`, not the fixture), confirm the timeline strip shows one marker per turn, confirm tapping a turn shows a real, correct diff, confirm "since start" shows the cumulative diff.
 3. Work happens on a branch (`feature/checkpoint-diff-ui`), committed incrementally (protocol + server wiring + tests → App.tsx wiring → CheckpointStrip/DiffView components + tests → web-smoke extension), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1-3), PR opened once complete and green. Plan copied to `docs/plans/phase-4-checkpoint-diff-ui.md` per the standing repo convention.
+
+## Outcome
+
+Landed as planned — all the server-side git/persistence plumbing really was already there from Phase 1, this phase was purely wiring (protocol + WS handlers + UI). `/code-review high` on the completed branch found 6 real issues, all fixed except one deliberately deferred:
+
+- **Diff-request race condition**: `fetchDiff` had no sequencing — a slow "Turn 5" request could resolve after a fast "Turn 8" request and silently overwrite the diff panel with stale content. Fixed with a request-id ref in `App.tsx`; a response is only applied if it's still the most recent request, and closing the panel invalidates any in-flight request too.
+- **Silent `catch {}`**: `refreshCheckpoints` swallowed WS command failures with no logging, directly violating the repo's explicit error-handling rule. Fixed with `console.error`.
+- **`activeTurn` was fully implemented but never wired up**: `CheckpointStrip`'s selected-turn highlighting (`aria-current`, violet border) was dead code — no caller ever passed the prop. Fixed by tracking the selected turn in `App.tsx` state, threaded through `ChatView` → `CheckpointStrip`, cleared on diff-panel close.
+- **`CheckpointRecord` was redeclared three times** (`App.tsx`, `chat-view.tsx`, `checkpoint-strip.tsx`) instead of reusing the canonical server-side type, contrary to the plan's own explicit "no shape duplication" call. Fixed by moving the canonical definition into `src/shared/ws-protocol.ts` (browser-safe, unlike `event-store.ts` which pulls in `better-sqlite3`) and having `event-store.ts` re-export it; all three UI call sites now import the one type.
+- **Duplicated "unknown thread" lookup** between the `thread.list-checkpoints` handler and `resolveThreadCwd` in `ws-server.ts`. Fixed by factoring both through a shared `requireThread(threadId)` helper.
+- **Deferred, not fixed**: `CheckpointStore`'s git subprocess calls (`captureCheckpoint`, and now `diffCheckpoints`) are fully synchronous (`execFileSync`), blocking the server's single event loop while they run. This is a pre-existing Phase 1 characteristic, not a regression from this phase's diff wiring — fixing it properly means touching already-shipped, well-tested code for a disproportionate amount of scope in a UI-focused phase. Filed as [argusde#41](https://github.com/deanjstone/argusde/issues/41).
+
+Also manually verified against the real `claude-agent-acp` (not just the fixture agent): asked it to edit a real file, confirmed the timeline strip showed the new turn, confirmed both "Turn N" and "Since start" diffs rendered the real, correct `git diff` content in the browser.
+
+Verified after fixes: full suite green (130 tests, 19 files, up from 129 immediately post-implementation), typecheck clean.
