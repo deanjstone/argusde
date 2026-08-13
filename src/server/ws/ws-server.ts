@@ -6,7 +6,7 @@ import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
-import { ClientCommandSchema, type ClientCommand, type ServerPush } from "./protocol.js";
+import { ClientCommandSchema, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
 
 /** Path the WebSocket upgrade is served on — everything else on the same port/server is plain HTTP (the static web UI). */
 export const WS_PATH = "/ws";

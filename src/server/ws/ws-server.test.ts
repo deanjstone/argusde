@@ -11,7 +11,7 @@ import { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { AcpSession } from "../../utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../../utility/spawn-agent-process.js";
 import { startWsServer, type WsServerHandle } from "./ws-server.js";
-import type { ServerPush } from "./protocol.js";
+import type { ServerPush } from "../../shared/ws-protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureCliPath = path.resolve(__dirname, "../../../test/fixtures/fake-agent-cli.mjs");

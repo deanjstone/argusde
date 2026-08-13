@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AcpSessionEvent } from "../../shared/acp-events.js";
+import type { AcpSessionEvent } from "./acp-events.js";
 
 /**
  * Wire format for ArgusDE's standalone server WebSocket API (spec #33).
