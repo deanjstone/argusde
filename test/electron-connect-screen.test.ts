@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { EventStore } from "../src/server/persistence/event-store.js";
+import { CheckpointStore } from "../src/server/checkpoint/checkpoint-store.js";
+import { AcpSession } from "../src/utility/acp-session.js";
+import { spawnAgentProcessTransport } from "../src/utility/spawn-agent-process.js";
+import { startWsServer, type WsServerHandle } from "../src/server/ws/ws-server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
+const fixtureCliPath = path.join(projectRoot, "test/fixtures/fake-agent-cli.mjs");
+const webDistDir = path.join(projectRoot, "dist/web");
 
 /**
  * The other half of Electron's cutover coverage (see electron-smoke.test.ts
@@ -19,10 +29,12 @@ const projectRoot = path.resolve(__dirname, "..");
 describe("electron: shows the connect screen when no server is reachable", () => {
   let app: ElectronApplication;
   let window: Page;
+  let userDataDir: string;
 
   beforeAll(async () => {
+    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-connect-screen-userdata-"));
     app = await electron.launch({
-      args: [projectRoot, "--no-sandbox", "--disable-gpu"],
+      args: [projectRoot, "--no-sandbox", "--disable-gpu", `--user-data-dir=${userDataDir}`],
       // Port 59999 is outside Chromium's restricted-ports list and nothing
       // in this test suite ever listens on it — a real connection refusal,
       // not a mock.
@@ -33,6 +45,7 @@ describe("electron: shows the connect screen when no server is reachable", () =>
 
   afterAll(async () => {
     await app?.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
   }, 10_000);
 
   it(
@@ -51,5 +64,68 @@ describe("electron: shows the connect screen when no server is reachable", () =>
       expect(value).toBe("http://127.0.0.1:59999/");
     },
     20_000,
+  );
+
+  it(
+    "exposes the privileged bridge on the connect screen itself (the complement of electron-smoke's 'not exposed on the remote page' check)",
+    async () => {
+      const hasBridge = await window.evaluate(() => "argusdeConnect" in window);
+      expect(hasBridge).toBe(true);
+    },
+    10_000,
+  );
+
+  it(
+    "does not persist a server URL that failed to connect, only one that actually succeeded",
+    async () => {
+      expect(fs.existsSync(path.join(userDataDir, "config.json"))).toBe(false);
+
+      // Still-unreachable — this Connect attempt must not persist anything.
+      await window.fill('input[name="server-url"]', "http://127.0.0.1:59998/");
+      await window.click('button:has-text("Connect")');
+      await window.waitForTimeout(1000);
+      expect(fs.existsSync(path.join(userDataDir, "config.json"))).toBe(false);
+
+      // Now point it at a real, working server.
+      const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-connect-screen-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: repoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: repoDir });
+
+      const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-connect-screen-db-"));
+      const eventStore = new EventStore(path.join(dbDir, "argusde.sqlite"));
+      const checkpointStore = new CheckpointStore();
+      let server: WsServerHandle | undefined;
+
+      try {
+        server = await startWsServer({
+          host: "127.0.0.1",
+          port: 0,
+          eventStore,
+          checkpointStore,
+          webDistDir,
+          createSession: (_threadId, cwd) =>
+            new AcpSession({
+              name: "argusde-connect-screen-test",
+              cwd,
+              createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+            }),
+        });
+
+        await window.fill('input[name="server-url"]', `http://127.0.0.1:${server.port}/`);
+        await window.click('button:has-text("Connect")');
+
+        await window.waitForSelector("text=/workspace path/i", { timeout: 15_000 });
+        expect(fs.existsSync(path.join(userDataDir, "config.json"))).toBe(true);
+        const persisted = JSON.parse(fs.readFileSync(path.join(userDataDir, "config.json"), "utf8"));
+        expect(persisted.serverUrl).toBe(`http://127.0.0.1:${server.port}/`);
+      } finally {
+        await server?.close();
+        eventStore.close();
+        fs.rmSync(repoDir, { recursive: true, force: true });
+        fs.rmSync(dbDir, { recursive: true, force: true });
+      }
+    },
+    25_000,
   );
 });

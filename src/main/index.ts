@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getServerUrl, setServerUrl } from "./server-config.js";
 import { IPC_CONNECT_FAILED, IPC_GET_SERVER_URL, IPC_RETRY_CONNECT, IPC_SET_SERVER_URL } from "./connect-screen-ipc.js";
 
@@ -16,6 +17,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // never repaints after — the wayland connection was already made against
 // the wrong/no socket by the time process.env took effect.)
 
+const CONNECT_SCREEN_PATH = path.join(__dirname, "../connect-screen/index.html");
+const CONNECT_SCREEN_URL = pathToFileURL(CONNECT_SCREEN_PATH).href;
+const ERR_ABORTED = -3;
+
 let mainWindow: BrowserWindow | null = null;
 
 /**
@@ -23,12 +28,23 @@ let mainWindow: BrowserWindow | null = null;
  * only seeds the *initial* value (dev/testing override, same pattern as
  * ARGUSDE_AGENT_COMMAND elsewhere in this codebase) — once the user sets a
  * URL via the connect screen, that becomes authoritative for the rest of
- * the session, not re-read from the env var on every retry.
+ * the session, not re-read from the env var on every retry. It's only
+ * persisted to disk once a connection to it actually succeeds (see
+ * did-finish-load below) — not eagerly when the user clicks Connect, so a
+ * bad URL can never overwrite a previously-working persisted config.
  */
 let currentServerUrl: string;
 
-function connectScreenPath(): string {
-  return path.join(__dirname, "../connect-screen/index.html");
+/**
+ * The connect screen must only ever be driven by itself — the preload
+ * script already refuses to expose `window.argusdeConnect` to any page
+ * except the connect screen (see src/preload/index.mts), but these
+ * ipcMain handlers are a second, independent line of defense: without it,
+ * a forged IPC message claiming to come from the remote server-served page
+ * could still reach these handlers directly.
+ */
+function isFromConnectScreen(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  return event.senderFrame?.url === CONNECT_SCREEN_URL;
 }
 
 function attemptConnect(window: BrowserWindow, url: string): void {
@@ -37,6 +53,23 @@ function attemptConnect(window: BrowserWindow, url: string): void {
   // connect screen. Without this catch, a bad URL produces an unhandled
   // promise rejection warning on every failed attempt.
   window.loadURL(url).catch(() => undefined);
+}
+
+async function showConnectScreen(window: BrowserWindow, failureMessage: string): Promise<void> {
+  if (window.isDestroyed()) return;
+  try {
+    // Send the failure only after the connect screen has actually loaded
+    // (not before navigating to it) — its onConnectFailed listener is
+    // registered by that page's own script, not by whatever just failed.
+    await window.loadFile(CONNECT_SCREEN_PATH);
+    if (!window.isDestroyed()) window.webContents.send(IPC_CONNECT_FAILED, failureMessage);
+  } catch {
+    // The connect screen itself failed to load — e.g. a packaging issue, or
+    // the window was closed mid-navigation (loadFile can also throw
+    // synchronously in that case, which this try/catch covers too, not
+    // just a rejected promise). Nothing more to do; the window is left on
+    // whatever it last successfully rendered.
+  }
 }
 
 function createWindow(): void {
@@ -58,18 +91,19 @@ function createWindow(): void {
   });
   const window = mainWindow;
 
-  window.webContents.on("did-fail-load", (_event, _errorCode, errorDescription, validatedURL, isMainFrame) => {
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return; // a sub-resource failure, not the page itself
-    if (validatedURL.startsWith("file://")) return; // the connect screen itself failed to load — don't loop back into it
+    if (errorCode === ERR_ABORTED) return; // a superseded/cancelled navigation, not a real connection failure
+    if (validatedURL === CONNECT_SCREEN_URL) return; // the connect screen itself failed to load — don't loop back into it
 
-    const message = `Couldn't reach ${validatedURL}: ${errorDescription}`;
-    // Send the failure only after the connect screen has actually loaded
-    // (not before navigating to it) — its onConnectFailed listener is
-    // registered by that page's own script, not by whatever just failed.
-    window
-      .loadFile(connectScreenPath())
-      .then(() => window.webContents.send(IPC_CONNECT_FAILED, message))
-      .catch(() => undefined);
+    void showConnectScreen(window, `Couldn't reach ${validatedURL}: ${errorDescription}`);
+  });
+
+  window.webContents.on("did-finish-load", () => {
+    const loadedUrl = window.webContents.getURL();
+    if (loadedUrl !== CONNECT_SCREEN_URL && loadedUrl === currentServerUrl) {
+      setServerUrl(app.getPath("userData"), currentServerUrl);
+    }
   });
 
   attemptConnect(window, currentServerUrl);
@@ -79,14 +113,18 @@ function createWindow(): void {
   });
 }
 
-ipcMain.handle(IPC_GET_SERVER_URL, () => currentServerUrl);
-
-ipcMain.handle(IPC_SET_SERVER_URL, (_event, url: string) => {
-  currentServerUrl = url;
-  setServerUrl(app.getPath("userData"), url);
+ipcMain.handle(IPC_GET_SERVER_URL, (event) => {
+  if (!isFromConnectScreen(event)) return undefined;
+  return currentServerUrl;
 });
 
-ipcMain.on(IPC_RETRY_CONNECT, () => {
+ipcMain.handle(IPC_SET_SERVER_URL, (event, url: string) => {
+  if (!isFromConnectScreen(event)) return;
+  currentServerUrl = url;
+});
+
+ipcMain.on(IPC_RETRY_CONNECT, (event) => {
+  if (!isFromConnectScreen(event)) return;
   if (mainWindow) attemptConnect(mainWindow, currentServerUrl);
 });
 

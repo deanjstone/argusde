@@ -1,3 +1,9 @@
+/// <reference lib="dom" />
+// Preload scripts run in a page-like context with real window/document/
+// location globals, even though this file is compiled under
+// tsconfig.node.json (no DOM lib, since main/server/utility genuinely are
+// Node-only) — pull in just the DOM lib for this one file rather than
+// changing that shared tsconfig.
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcRendererEvent } from "electron";
 import {
@@ -30,6 +36,15 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld("argusdeConnect", api);
+// This preload attaches to every navigation in the window — both the
+// locally-bundled connect screen (file://) and whatever the configured
+// server serves (typically http://, possibly over a plain Tailscale
+// connection). Only expose the bridge on the connect screen itself: the
+// remote page has no legitimate use for setServerUrl/retryConnect, and
+// without this guard a malicious or compromised server could silently
+// repoint and persist the app's own connection config.
+if (location.protocol === "file:") {
+  contextBridge.exposeInMainWorld("argusdeConnect", api);
+}
 
 export type ArgusDeConnectApi = typeof api;

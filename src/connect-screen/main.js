@@ -29,7 +29,16 @@ form.addEventListener("submit", (event) => {
 
   clearError();
   button.disabled = true;
-  window.argusdeConnect.setServerUrl(url).then(() => {
-    window.argusdeConnect.retryConnect();
-  });
+  window.argusdeConnect
+    .setServerUrl(url)
+    .then(() => {
+      window.argusdeConnect.retryConnect();
+    })
+    .catch(() => {
+      // The IPC call itself failed (e.g. the userData directory is
+      // unwritable) — without this, the button stays disabled forever
+      // with no feedback.
+      button.disabled = false;
+      showError("Couldn't save that server URL — check the app has permission to write its settings.");
+    });
 });
