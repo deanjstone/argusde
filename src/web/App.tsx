@@ -4,7 +4,7 @@ import { WS_PATH } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
-import { ChatView } from "./components/chat-view.js";
+import { ChatView, type DiffState } from "./components/chat-view.js";
 import { TabBar, type Tab } from "./components/tab-bar.js";
 
 interface SetupState {
@@ -16,6 +16,15 @@ interface ThreadInfo {
   threadId: string;
   title: string;
 }
+
+interface CheckpointRecord {
+  threadId: string;
+  turn: number;
+  ref: string;
+  createdAt: string;
+}
+
+const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
 
 /**
  * Thin composition root — wires WsClient + the chat-state reducer + the
@@ -30,6 +39,20 @@ export function App() {
   const [thread, setThread] = useState<ThreadInfo | null>(null);
   const [chatState, setChatState] = useState<ChatState>(initialChatState);
   const [tab, setTab] = useState<Tab>("chat");
+  const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
+  const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
+
+  async function refreshCheckpoints(threadId: string) {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      const result = await client.sendCommand<CheckpointRecord[]>({ type: "thread.list-checkpoints", threadId });
+      setCheckpoints(result);
+    } catch {
+      // Non-critical — the strip just stays stale until the next successful
+      // refresh rather than surfacing this as a chat-level error.
+    }
+  }
 
   useEffect(() => {
     const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -44,6 +67,7 @@ export function App() {
           break;
         case "session.event":
           setChatState((s) => chatStateReducer(s, { kind: "session-event", threadId: push.threadId, event: push.event }));
+          if (push.event.kind === "turn-complete") void refreshCheckpoints(push.threadId);
           break;
         case "protocol-error":
           setChatState((s) => chatStateReducer(s, { kind: "protocol-error", message: push.message }));
@@ -76,6 +100,7 @@ export function App() {
       });
       setThread({ threadId, title: workspaceRoot });
       setSetup({ submitting: false });
+      void refreshCheckpoints(threadId);
     } catch (error) {
       setSetup({ submitting: false, error: error instanceof Error ? error.message : String(error) });
     }
@@ -92,6 +117,33 @@ export function App() {
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
       );
     }
+  }
+
+  async function fetchDiff(turnA: number, turnB: number) {
+    const client = clientRef.current;
+    if (!client || !thread) return;
+    setDiff({ text: null, loading: true, error: undefined });
+    try {
+      const result = await client.sendCommand<{ diff: string }>({
+        type: "thread.diff-checkpoints",
+        threadId: thread.threadId,
+        turnA,
+        turnB,
+      });
+      setDiff({ text: result.diff, loading: false, error: undefined });
+    } catch (error) {
+      setDiff({ text: null, loading: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  function handleSelectTurn(turn: number) {
+    void fetchDiff(turn - 1, turn);
+  }
+
+  function handleSinceStart() {
+    const latest = checkpoints.at(-1);
+    if (!latest || latest.turn === 0) return;
+    void fetchDiff(0, latest.turn);
   }
 
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
@@ -123,7 +175,18 @@ export function App() {
   return (
     <div className="flex h-screen flex-col">
       <div className="min-h-0 flex-1">
-        {tab === "chat" && <ChatView state={chatState} onSend={handleSend} onRespondPermission={handleRespondPermission} />}
+        {tab === "chat" && (
+          <ChatView
+            state={chatState}
+            onSend={handleSend}
+            onRespondPermission={handleRespondPermission}
+            checkpoints={checkpoints}
+            onSelectTurn={handleSelectTurn}
+            onSinceStart={handleSinceStart}
+            diff={diff}
+            onCloseDiff={() => setDiff(EMPTY_DIFF)}
+          />
+        )}
         {tab === "threads" && (
           <div className="flex h-full flex-col bg-neutral-950 p-4 text-neutral-100">
             <h2 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Threads</h2>
