@@ -32,6 +32,17 @@ export class WsClient {
   constructor(options: WsClientOptions) {
     this.socket = new WebSocket(options.url);
     this.socket.addEventListener("message", (event: MessageEvent) => this.handleMessage(event));
+    // A close/error after the connection was ever established (server
+    // restart, network drop) must reject any command still waiting on a
+    // reply — otherwise that sendCommand() promise hangs forever, since
+    // nothing else will ever settle it.
+    this.socket.addEventListener("close", () => this.rejectAllPending(new Error("WebSocket connection closed")));
+    this.socket.addEventListener("error", () => this.rejectAllPending(new Error("WebSocket connection error")));
+  }
+
+  private rejectAllPending(error: Error): void {
+    for (const pendingCommand of this.pending.values()) pendingCommand.reject(error);
+    this.pending.clear();
   }
 
   waitUntilOpen(): Promise<void> {

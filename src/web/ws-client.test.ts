@@ -149,4 +149,36 @@ describe("WsClient", () => {
 
     expect(pushes).toEqual([]);
   }, 15_000);
+
+  it(
+    "rejects a pending sendCommand instead of hanging forever when the socket closes before a reply arrives",
+    async () => {
+      // A dedicated server+client pair — closing the server is the point of
+      // this test, and the outer afterEach already closes the shared one.
+      const dedicatedServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+      const dedicatedClient = new WsClient({ url: `ws://127.0.0.1:${dedicatedServer.port}/ws` });
+      await dedicatedClient.waitUntilOpen();
+
+      // Close the underlying server connection out from under this in-flight
+      // command — simulating a server restart / network drop, not a clean
+      // client-initiated close().
+      const pending = dedicatedClient.sendCommand({ type: "project.create", workspaceRoot: repoDir, title: "Test Project" });
+      await dedicatedServer.close();
+
+      await expect(pending).rejects.toThrow();
+      dedicatedClient.close();
+    },
+    15_000,
+  );
 });

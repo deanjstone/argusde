@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PermissionOutcome } from "../shared/acp-events.js";
+import { WS_PATH } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
@@ -32,7 +33,7 @@ export function App() {
 
   useEffect(() => {
     const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const client = new WsClient({ url: `${wsProtocol}//${location.host}/ws` });
+    const client = new WsClient({ url: `${wsProtocol}//${location.host}${WS_PATH}` });
     clientRef.current = client;
 
     const unsubscribe = client.onPush((push) => {
@@ -96,7 +97,14 @@ export function App() {
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
-    void client.sendCommand({ type: "thread.respond-permission", threadId: thread.threadId, requestId, outcome });
+    client.sendCommand({ type: "thread.respond-permission", threadId: thread.threadId, requestId, outcome }).catch((error) => {
+      // The permission prompt is already cleared optimistically below — if
+      // the send actually failed, at least surface it instead of leaving
+      // the agent silently stuck waiting for a response that never arrived.
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    });
     setChatState((s) => chatStateReducer(s, { kind: "permission-responded", requestId }));
   }
 

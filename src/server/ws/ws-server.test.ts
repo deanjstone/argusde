@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import http from "node:http";
 import { WebSocket } from "ws";
 import { agent, methods } from "@agentclientprotocol/sdk";
 import { EventStore } from "../persistence/event-store.js";
@@ -305,5 +306,52 @@ describe("ws-server", () => {
       }
     },
     15_000,
+  );
+
+  it(
+    "close() doesn't stall on a lingering idle keep-alive HTTP connection",
+    async () => {
+      // Dedicated server — this test closes it itself, and the outer
+      // afterEach already closes the shared one.
+      const dedicatedServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+
+      // A keep-alive agent leaves its socket open (idle, pooled for reuse)
+      // after the response completes — exactly what a browser or fetch's
+      // connection pooling does for a static-asset request.
+      const keepAliveAgent = new http.Agent({ keepAlive: true });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const req = http.request({ host: "127.0.0.1", port: dedicatedServer.port, path: "/", agent: keepAliveAgent }, (res) => {
+            res.resume();
+            res.on("end", () => resolve());
+          });
+          req.on("error", reject);
+          req.end();
+        });
+
+        const start = Date.now();
+        await dedicatedServer.close();
+        const elapsedMs = Date.now() - start;
+
+        // Node's default keepAliveTimeout is 5000ms — without forcing the
+        // idle connection closed, close() waits close to that. A healthy
+        // close should be near-instant.
+        expect(elapsedMs).toBeLessThan(2000);
+      } finally {
+        keepAliveAgent.destroy();
+      }
+    },
+    10_000,
   );
 });

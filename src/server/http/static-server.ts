@@ -27,7 +27,16 @@ export function createStaticFileServer(rootDir: string): (req: IncomingMessage, 
   const resolvedRoot = path.resolve(rootDir);
 
   return function handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    const requestPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
+    let requestPath: string;
+    try {
+      requestPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
+    } catch {
+      // decodeURIComponent throws URIError on a malformed percent-escape
+      // (e.g. a bare "%"). Uncaught, this took down the whole server
+      // process, not just the one request.
+      res.writeHead(400).end("Bad request");
+      return;
+    }
     const relativePath = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
     const resolvedPath = path.resolve(resolvedRoot, relativePath);
 

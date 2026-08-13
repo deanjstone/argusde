@@ -6,10 +6,7 @@ import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
-import { ClientCommandSchema, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
-
-/** Path the WebSocket upgrade is served on — everything else on the same port/server is plain HTTP (the static web UI). */
-export const WS_PATH = "/ws";
+import { ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
 
 /**
  * Bumped whenever the WS protocol (protocol.ts) changes shape. Electron's
@@ -193,6 +190,12 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       await new Promise<void>((resolve, reject) => {
         wss.close((err) => (err ? reject(err) : resolve()));
       });
+      // httpServer.close()'s callback doesn't fire until every open
+      // connection ends — including idle keep-alive sockets left pooled by
+      // a browser or fetch's connection reuse, which can sit open for
+      // Node's default keepAliveTimeout (5s). Force them closed so
+      // shutdown doesn't stall on a connection nobody's actively using.
+      httpServer.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
         httpServer.close((err) => (err ? reject(err) : resolve()));
       });

@@ -77,4 +77,20 @@ describe("createStaticFileServer", () => {
     });
     expect([403, 404]).toContain(raw);
   });
+
+  it("responds 400 instead of crashing the server on a malformed percent-encoded URL", async () => {
+    const raw = await new Promise<number>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port: new URL(baseUrl).port, path: "/%" }, (r) => {
+        r.resume();
+        resolve(r.statusCode ?? 0);
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(raw).toBe(400);
+
+    // The server itself must still be alive and responsive afterward.
+    const followUp = await fetch(`${baseUrl}/`);
+    expect(followUp.status).toBe(200);
+  });
 });

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { WS_PATH } from "../shared/ws-protocol.js";
 import { startServer } from "./index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const webDistDir = path.join(__dirname, "../web");
 
   const server = await startServer({ host, port, dbPath, webDistDir });
-  console.log(`ArgusDE server listening on ws://${host}:${server.port}`);
+  console.log(`ArgusDE server listening at http://${host}:${server.port}/ (WebSocket API at ws://${host}:${server.port}${WS_PATH})`);
 
   let shuttingDown = false;
   const shutdown = () => {
