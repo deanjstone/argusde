@@ -1,14 +1,16 @@
 {
   "extends": "./tsconfig.node.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "rootDir": "."
   },
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.mts",
     "src/utility/**/*.ts",
     "src/shared/**/*.ts",
-    "src/server/**/*.ts"
+    "src/server/**/*.ts",
+    "test/**/*.ts"
   ],
   "exclude": []
 }
