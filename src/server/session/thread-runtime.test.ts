@@ -246,13 +246,18 @@ describe("ThreadRuntime", () => {
 
     const result = await runtime.revertToCheckpoint(1);
 
-    expect(result).toEqual({ newTurn: 3 });
+    // Two new checkpoints, not one: a safety snapshot of whatever was about
+    // to be overwritten (turn 3, unmarked — see the dedicated test below
+    // for why), then the actual restored state (turn 4, marked). Nothing
+    // is ever truncated or silently discarded either way.
+    expect(result).toEqual({ newTurn: 4 });
     expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\nturn 1\n");
     expect(eventStore.listCheckpoints("thread-1").map((c) => ({ turn: c.turn, revertedToTurn: c.revertedToTurn }))).toEqual([
       { turn: 0, revertedToTurn: null },
       { turn: 1, revertedToTurn: null },
       { turn: 2, revertedToTurn: null },
-      { turn: 3, revertedToTurn: 1 },
+      { turn: 3, revertedToTurn: null },
+      { turn: 4, revertedToTurn: 1 },
     ]);
   });
 
@@ -260,11 +265,28 @@ describe("ThreadRuntime", () => {
     const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
     await runtime.start(); // turn 0
     await runtime.sendMessage("first"); // turn 1
-    await runtime.revertToCheckpoint(0); // turn 2 (reverted-to-0)
+    await runtime.revertToCheckpoint(0); // turn 2 (safety snapshot) + turn 3 (reverted-to-0)
 
-    await runtime.sendMessage("second"); // should be turn 3, not colliding with anything
+    await runtime.sendMessage("second"); // should be turn 4, not colliding with anything
 
-    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1, 2, 3]);
+    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("revertToCheckpoint never silently discards workspace state that was never captured by a normal turn boundary", async () => {
+    // e.g. the user hand-edits a file outside the app, mid-conversation,
+    // between two turns — that state was never protected by a completed
+    // turn's own checkpoint, so restoreCheckpoint would otherwise wipe it
+    // out with no way to recover it.
+    const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
+    await runtime.start(); // turn 0, file.txt = "hello\n"
+    await runtime.sendMessage("first"); // turn 1, file.txt still "hello\n" (fake agent never touches files)
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nmanual edit outside the app\n");
+
+    await runtime.revertToCheckpoint(0); // turn 2 (safety snapshot of the manual edit) + turn 3 (reverted-to-0)
+
+    const safetySnapshotDiff = checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
+    expect(safetySnapshotDiff).toContain("+manual edit outside the app");
   });
 
   it("revertToCheckpoint rejects while a turn is still in flight", async () => {

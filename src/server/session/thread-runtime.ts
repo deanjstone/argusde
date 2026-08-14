@@ -111,10 +111,6 @@ export class ThreadRuntime {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
   }
 
-  isTurnInFlight(): boolean {
-    return this.turnInFlight;
-  }
-
   /**
    * Restores the workspace to an earlier checkpoint's snapshot, then
    * captures that restored state as a brand-new forward checkpoint marked
@@ -128,6 +124,24 @@ export class ThreadRuntime {
     if (this.turnInFlight) throw new Error("Cannot revert while a turn is still in flight");
 
     const { threadId, cwd, checkpointStore, eventStore } = this.options;
+
+    // Snapshot whatever is currently on disk BEFORE overwriting it —
+    // restoreCheckpoint force-rewrites the real working tree, and not
+    // every byte on disk is necessarily protected by an earlier checkpoint
+    // (e.g. a hand-edit made outside the app, between two turns). Without
+    // this, that state would be silently and permanently lost with no
+    // checkpoint ref to recover it from. Left unmarked (not a revert
+    // itself) — its only job is to make sure nothing is ever discarded.
+    const safetyTurn = this.nextTurn++;
+    const safetyRef = checkpointStore.captureCheckpoint(threadId, safetyTurn, cwd);
+    eventStore.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId,
+      turn: safetyTurn,
+      ref: safetyRef,
+      timestamp: new Date().toISOString(),
+    });
+
     checkpointStore.restoreCheckpoint(threadId, turn, cwd);
 
     const newTurn = this.nextTurn++;

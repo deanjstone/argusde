@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -123,6 +124,69 @@ describe("EventStore", () => {
       { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:00:00.000Z", revertedToTurn: null },
       { threadId: "thread-1", turn: 1, ref: "refs/argusde/checkpoints/thread-1/turn/1", createdAt: "2026-08-13T00:05:00.000Z", revertedToTurn: null },
     ]);
+  });
+
+  it("adds reverted_to_turn to a checkpoints table that predates it, instead of leaving an existing database permanently broken", () => {
+    // A fresh path of its own — beforeEach's `store` has already run
+    // ensureSchema (with the current, already-upgraded shape) against
+    // `dbPath`, so reusing it here couldn't simulate a real pre-existing
+    // database. CREATE TABLE IF NOT EXISTS is a no-op against an
+    // already-existing table — this builds one against the checkpoints
+    // table's original (narrower) shape, the way a real user's pre-Phase-9
+    // database file actually looks, then confirms opening an EventStore
+    // against it upgrades it instead of leaving it permanently broken.
+    const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-"));
+    const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
+    const legacyDb = new Database(legacyDbPath);
+    legacyDb.exec(`
+      CREATE TABLE checkpoints (
+        thread_id TEXT NOT NULL,
+        turn INTEGER NOT NULL,
+        ref TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (thread_id, turn)
+      );
+    `);
+    legacyDb.close();
+
+    // Constructing an EventStore (which runs ensureSchema) must not throw,
+    // and ordinary checkpoint capture — not just revert — must keep working
+    // against the now-upgraded table.
+    const upgraded = new EventStore(legacyDbPath);
+    try {
+      upgraded.appendEvent({
+        kind: "project.created",
+        projectId: "proj-1",
+        workspaceRoot: "/workspace",
+        title: "Project One",
+        timestamp: "2026-08-14T00:00:00.000Z",
+      });
+      upgraded.appendEvent({
+        kind: "thread.created",
+        threadId: "thread-1",
+        projectId: "proj-1",
+        title: "Fix the bug",
+        worktreePath: null,
+        timestamp: "2026-08-14T00:00:30.000Z",
+      });
+
+      expect(() =>
+        upgraded.appendEvent({
+          kind: "thread.checkpoint-captured",
+          threadId: "thread-1",
+          turn: 0,
+          ref: "refs/argusde/checkpoints/thread-1/turn/0",
+          timestamp: "2026-08-14T00:00:00.000Z",
+        }),
+      ).not.toThrow();
+
+      expect(upgraded.listCheckpoints("thread-1")).toEqual([
+        { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-14T00:00:00.000Z", revertedToTurn: null },
+      ]);
+    } finally {
+      upgraded.close();
+      fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
   });
 
   it("projects a revert-originated thread.checkpoint-captured event's revertedToTurn field", () => {

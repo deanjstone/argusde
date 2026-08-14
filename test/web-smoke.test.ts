@@ -154,9 +154,13 @@ describe("web smoke: server + browser round trip", () => {
 
       expect(fs.readFileSync(path.join(repoDir, "notes.txt"), "utf8")).toBe("hello from the web smoke test\n");
 
-      await page.waitForSelector('button:has-text("Turn 3")', { timeout: 10_000 });
-      const turn3Text = await page.getByRole("button", { name: /turn 3/i }).textContent();
-      expect(turn3Text).toMatch(/reverted to turn 1/i);
+      // Two new checkpoints land from one revert: an unmarked safety
+      // snapshot of whatever was about to be overwritten (Turn 3), then
+      // the actual restored state (Turn 4, marked) — nothing is ever
+      // silently discarded.
+      await page.waitForSelector('button:has-text("Turn 4")', { timeout: 10_000 });
+      const turn4Text = await page.getByRole("button", { name: /turn 4/i }).textContent();
+      expect(turn4Text).toMatch(/reverted to turn 1/i);
     },
     30_000,
   );

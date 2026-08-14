@@ -195,7 +195,10 @@ describe("ws-server", () => {
 
     const revertResult = await send({ type: "thread.revert-checkpoint", commandId: "rv5", threadId, turn: 1 });
     expect(revertResult.ok).toBe(true);
-    expect(revertResult.ok ? revertResult.result : null).toEqual({ newTurn: 3 });
+    // Two new checkpoints, not one: a safety snapshot of whatever was
+    // about to be overwritten (turn 3, unmarked), then the actual restored
+    // state (turn 4, marked) — nothing is ever silently discarded.
+    expect(revertResult.ok ? revertResult.result : null).toEqual({ newTurn: 4 });
 
     expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
 
@@ -205,7 +208,8 @@ describe("ws-server", () => {
       { turn: 0, revertedToTurn: null },
       { turn: 1, revertedToTurn: null },
       { turn: 2, revertedToTurn: null },
-      { turn: 3, revertedToTurn: 1 },
+      { turn: 3, revertedToTurn: null },
+      { turn: 4, revertedToTurn: 1 },
     ]);
   }, 20_000);
 
