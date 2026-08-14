@@ -30,6 +30,9 @@ export interface ChatViewProps {
   worktreePath?: string | null;
   onPromoteToWorktree?: () => void;
   promoting?: boolean;
+  onCloseThread?: () => void;
+  closing?: boolean;
+  threadClosed?: boolean;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -98,6 +101,9 @@ export function ChatView({
   worktreePath = null,
   onPromoteToWorktree = () => {},
   promoting = false,
+  onCloseThread,
+  closing = false,
+  threadClosed = false,
 }: ChatViewProps) {
   const [text, setText] = useState("");
   // Promoting relocates the thread's agent session to a fresh worktree —
@@ -132,19 +138,25 @@ export function ChatView({
 
       <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
-      {worktreePath !== null ? (
-        <div className="flex items-center justify-end gap-1.5 border-b border-neutral-800 px-3 py-2 text-xs text-amber-400">
-          <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
-          Running in an isolated worktree
-        </div>
-      ) : (
-        canPromote && (
-          <div className="flex justify-end border-b border-neutral-800 px-3 py-2">
+      {(worktreePath !== null || canPromote || (onCloseThread && !threadClosed)) && (
+        <div className="flex items-center justify-end gap-2 border-b border-neutral-800 px-3 py-2">
+          {worktreePath !== null && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+              <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
+              Running in an isolated worktree
+            </span>
+          )}
+          {worktreePath === null && canPromote && (
             <Button variant="outline" size="sm" aria-label="Promote to worktree" onClick={onPromoteToWorktree} disabled={promoting}>
               {promoting ? "Promoting…" : "Promote to worktree"}
             </Button>
-          </div>
-        )
+          )}
+          {onCloseThread && !threadClosed && (
+            <Button variant="outline" size="sm" onClick={onCloseThread} disabled={closing}>
+              {closing ? "Closing…" : "Close thread"}
+            </Button>
+          )}
+        </div>
       )}
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
@@ -175,9 +187,16 @@ export function ChatView({
         )}
       </div>
 
+      {threadClosed && <p className="border-t border-neutral-800 px-4 pt-2 text-xs text-neutral-500">This thread is closed.</p>}
       <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-neutral-800 p-3">
-        <Input placeholder="Message ArgusDE…" value={text} onChange={(event) => setText(event.target.value)} className="flex-1" />
-        <Button type="submit" size="icon" aria-label="Send">
+        <Input
+          placeholder="Message ArgusDE…"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          disabled={threadClosed}
+          className="flex-1"
+        />
+        <Button type="submit" size="icon" aria-label="Send" disabled={threadClosed}>
           →
         </Button>
       </form>

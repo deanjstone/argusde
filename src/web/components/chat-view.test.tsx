@@ -282,4 +282,38 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: /revert/i }));
     expect(onRevert).toHaveBeenCalled();
   });
+
+  it("renders a close-thread control that calls onCloseThread when clicked", () => {
+    const onCloseThread = vi.fn();
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /close thread/i }));
+    expect(onCloseThread).toHaveBeenCalled();
+  });
+
+  it("disables the close-thread control while closing is already in flight", () => {
+    const onCloseThread = vi.fn();
+    render(
+      <ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} closing={true} />,
+    );
+
+    const button = screen.getByRole("button", { name: /closing/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onCloseThread).not.toHaveBeenCalled();
+  });
+
+  it("hides the close-thread control once the thread is already closed", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={() => {}} threadClosed={true} />);
+    expect(screen.queryByRole("button", { name: /close thread/i })).not.toBeInTheDocument();
+  });
+
+  it("disables the message input and send button, with an explanatory note, once the thread is closed", () => {
+    const onSend = vi.fn();
+    render(<ChatView state={initialChatState} onSend={onSend} onRespondPermission={() => {}} threadClosed={true} />);
+
+    expect(screen.getByPlaceholderText(/message/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
+    expect(screen.getByText(/closed/i)).toBeInTheDocument();
+  });
 });

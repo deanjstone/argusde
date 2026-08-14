@@ -43,12 +43,15 @@ export function ThreadList({ threads, onSelectThread, onCreateThread, onBack, cr
             className="flex w-full items-center justify-between rounded-lg bg-neutral-900 px-3 py-2.5 text-left text-sm hover:bg-neutral-800"
           >
             <span>{thread.title}</span>
-            {thread.worktreePath !== null && (
-              <span className="flex items-center gap-1 text-xs text-amber-400">
-                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                worktree
-              </span>
-            )}
+            <span className="flex items-center gap-2">
+              {thread.worktreePath !== null && (
+                <span className="flex items-center gap-1 text-xs text-amber-400">
+                  <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  worktree
+                </span>
+              )}
+              {thread.closedAt !== null && <span className="text-xs text-neutral-500">closed</span>}
+            </span>
           </button>
         ))}
       </div>

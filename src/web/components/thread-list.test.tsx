@@ -29,6 +29,12 @@ describe("ThreadList", () => {
     expect(screen.getByRole("button", { name: /explore worktree/i })).toHaveTextContent(/worktree/i);
   });
 
+  it("marks a closed thread's row with a closed indicator", () => {
+    const withClosed = [...THREADS, { id: "t3", projectId: "p1", title: "Old chat", worktreePath: null, currentModeId: null, createdAt: "", closedAt: "2026-08-14T00:00:00.000Z" }];
+    render(<ThreadList threads={withClosed} onSelectThread={() => {}} onCreateThread={() => {}} onBack={() => {}} />);
+    expect(screen.getByRole("button", { name: /old chat/i })).toHaveTextContent(/closed/i);
+  });
+
   it("shows an empty-state message when the project has no threads yet", () => {
     render(<ThreadList threads={[]} onSelectThread={() => {}} onCreateThread={() => {}} onBack={() => {}} />);
     expect(screen.getByText(/no threads/i)).toBeInTheDocument();
