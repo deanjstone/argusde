@@ -15,6 +15,7 @@ interface SetupState {
 interface ThreadInfo {
   threadId: string;
   title: string;
+  worktreePath: string | null;
 }
 
 const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
@@ -98,7 +99,7 @@ export function App() {
         projectId,
         title: workspaceRoot,
       });
-      setThread({ threadId, title: workspaceRoot });
+      setThread({ threadId, title: workspaceRoot, worktreePath: null });
       setSetup({ submitting: false });
       void refreshCheckpoints(threadId);
     } catch (error) {
@@ -167,6 +168,22 @@ export function App() {
     });
   }
 
+  async function handlePromoteToWorktree() {
+    const client = clientRef.current;
+    if (!client || !thread) return;
+    try {
+      const result = await client.sendCommand<{ worktreePath: string }>({
+        type: "thread.promote-to-worktree",
+        threadId: thread.threadId,
+      });
+      setThread((t) => (t ? { ...t, worktreePath: result.worktreePath } : t));
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    }
+  }
+
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
@@ -208,6 +225,8 @@ export function App() {
             diff={diff}
             onCloseDiff={handleCloseDiff}
             onSetMode={handleSetMode}
+            worktreePath={thread.worktreePath}
+            onPromoteToWorktree={() => void handlePromoteToWorktree()}
           />
         )}
         {tab === "threads" && (
