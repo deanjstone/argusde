@@ -325,10 +325,13 @@ export function App() {
    * loadThreadHistoryAndBecomeActive as-is: a closed Thread, or one whose
    * server-side runtime isn't currently live, still resolves and renders
    * correctly (Phase 11), so this needs no special-casing for either. If
-   * the remembered id no longer resolves at all (e.g. a wiped/replaced
-   * database), the stale reference is cleared so a future reload doesn't
-   * keep repeating a futile round trip — falls through to the normal
-   * `!thread && !hasEverHadThread` → WorkspaceSetup gate either way.
+   * the server confirms the remembered Thread genuinely doesn't exist
+   * (e.g. a wiped/replaced database), the stale reference is cleared so a
+   * future reload doesn't keep repeating a futile round trip — but any
+   * other failure (a dropped connection, a transient network blip) leaves
+   * the reference alone, so a real network hiccup can't permanently
+   * disable resume. Either way, falls through to the normal
+   * `!thread && !hasEverHadThread` → WorkspaceSetup gate for this attempt.
    */
   async function attemptSessionRestore() {
     const rememberedThreadId = readLastActiveThreadId();
@@ -338,8 +341,19 @@ export function App() {
     }
     try {
       await loadThreadHistoryAndBecomeActive(rememberedThreadId);
-    } catch {
-      clearLastActiveThreadId();
+    } catch (error) {
+      // Only clear the remembered id when the server has actually said
+      // this Thread doesn't exist (requireThread's exact wording, in
+      // src/server/ws/ws-server.ts, propagated verbatim through
+      // command.result's error field) — every other failure here (a
+      // dropped WebSocket, a transient network blip mid-request, the kind
+      // of thing a phone PWA reload hits far more often than a desktop
+      // browser) is not evidence the Thread is gone. Clearing on those too
+      // would silently and permanently disable resume after one bad
+      // network moment, with no way for the user to even notice.
+      if (error instanceof Error && error.message.startsWith("Unknown thread:")) {
+        clearLastActiveThreadId();
+      }
     } finally {
       setRestoring(false);
     }
@@ -528,10 +542,26 @@ export function App() {
     setChatState((s) => chatStateReducer(s, { kind: "permission-responded", requestId }));
   }
 
-  if (!connected || restoring) {
+  // Two separate gates, not one combined check with a ternary: restoring
+  // only ever flips false from inside attemptSessionRestore, which itself
+  // only ever runs after setConnected(true) — so a single combined
+  // `!connected || restoring` with `restoring ? "Restoring…" : "Connecting…"`
+  // made "Connecting…" unreachable dead code (whenever !connected is true,
+  // restoring is too, by construction). Checking !connected first, on its
+  // own, is what actually lets it render during the real socket-handshake
+  // window.
+  if (!connected) {
     return (
       <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
-        <p className="text-sm">{restoring ? "Restoring your last session…" : "Connecting…"}</p>
+        <p className="text-sm">Connecting…</p>
+      </div>
+    );
+  }
+
+  if (restoring) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
+        <p className="text-sm">Restoring your last session…</p>
       </div>
     );
   }
