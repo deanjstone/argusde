@@ -10,6 +10,18 @@ import type { AcpSessionEvent } from "./acp-events.js";
 /** Path the WebSocket upgrade is served on — everything else on the same port/server is plain HTTP (the static web UI). Shared so client and server can't drift apart on it. */
 export const WS_PATH = "/ws";
 
+/**
+ * Bumped whenever this protocol (this file's shape) changes. The server
+ * announces this in its server.welcome push on every connect; Electron's
+ * native shell (src/main/version-check.ts, Phase 6) compares it against
+ * this same compiled-in constant and refuses to connect on mismatch — see
+ * spec #33's version-skew decision. Shared (not server-only) so both sides
+ * compile against the one source of truth, and so Electron's main process
+ * doesn't need to import the whole server module graph just to reach this
+ * string.
+ */
+export const API_VERSION = "1.0.0";
+
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
   z.object({ type: z.literal("thread.create"), commandId: z.string(), projectId: z.string(), title: z.string() }),
