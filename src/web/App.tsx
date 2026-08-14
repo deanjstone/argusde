@@ -151,7 +151,7 @@ export function App() {
         projectId,
         title: workspaceRoot,
       });
-      becomeActiveThread({ threadId, projectId, title: workspaceRoot, worktreePath: null }, [], null, []);
+      await loadThreadHistoryAndBecomeActive(threadId);
       setSetup({ submitting: false });
     } catch (error) {
       setSetup({ submitting: false, error: error instanceof Error ? error.message : String(error) });
@@ -190,26 +190,42 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId]);
 
-  async function handleSelectThread(threadId: string) {
+  /**
+   * Fetches a just-created (or existing) Thread's full state via
+   * thread.get-history and adopts it as the active Thread — deliberately
+   * NOT hardcoding empty history/null mode/no catalog for a brand-new
+   * Thread. ThreadRuntime.start() broadcasts its session-start event
+   * (carrying the mode catalog) synchronously, before the thread.create
+   * command's own response is sent — so that broadcast reaches the client
+   * before `thread` state (and activeThreadIdRef) is set to the new
+   * Thread's id, and the cross-thread event filter correctly drops it as
+   * not-yet-active. Re-fetching via get-history reads the same catalog
+   * back from ThreadRuntime's cache instead of racing the live broadcast.
+   */
+  async function loadThreadHistoryAndBecomeActive(threadId: string) {
     const client = clientRef.current;
     if (!client) return;
-    try {
-      const history = await client.sendCommand<{
-        threadId: string;
-        projectId: string;
-        title: string;
-        worktreePath: string | null;
-        currentModeId: string | null;
-        availableModes: SessionModeSummary[];
-        messages: ThreadHistoryMessage[];
-      }>({ type: "thread.get-history", threadId });
+    const history = await client.sendCommand<{
+      threadId: string;
+      projectId: string;
+      title: string;
+      worktreePath: string | null;
+      currentModeId: string | null;
+      availableModes: SessionModeSummary[];
+      messages: ThreadHistoryMessage[];
+    }>({ type: "thread.get-history", threadId });
 
-      becomeActiveThread(
-        { threadId: history.threadId, projectId: history.projectId, title: history.title, worktreePath: history.worktreePath },
-        history.messages,
-        history.currentModeId,
-        history.availableModes,
-      );
+    becomeActiveThread(
+      { threadId: history.threadId, projectId: history.projectId, title: history.title, worktreePath: history.worktreePath },
+      history.messages,
+      history.currentModeId,
+      history.availableModes,
+    );
+  }
+
+  async function handleSelectThread(threadId: string) {
+    try {
+      await loadThreadHistoryAndBecomeActive(threadId);
     } catch (error) {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
@@ -232,7 +248,7 @@ export function App() {
         projectId,
         title: workspaceRoot,
       });
-      becomeActiveThread({ threadId, projectId, title: workspaceRoot, worktreePath: null }, [], null, []);
+      await loadThreadHistoryAndBecomeActive(threadId);
     } catch (error) {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
@@ -252,7 +268,7 @@ export function App() {
         projectId: selectedProjectId,
         title,
       });
-      becomeActiveThread({ threadId, projectId: selectedProjectId, title, worktreePath: null }, [], null, []);
+      await loadThreadHistoryAndBecomeActive(threadId);
     } catch (error) {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),

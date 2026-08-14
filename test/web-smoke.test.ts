@@ -208,4 +208,74 @@ describe("web smoke: server + browser round trip", () => {
     },
     30_000,
   );
+
+  it(
+    "browses Projects→Threads, switches to an existing thread's real history, and never shows another thread's live content",
+    async () => {
+      const multiTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-multi-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: multiTestRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: multiTestRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: multiTestRepoDir });
+      fs.writeFileSync(path.join(multiTestRepoDir, "notes.txt"), "hello\n");
+      execFileSync("git", ["add", "-A"], { cwd: multiTestRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: multiTestRepoDir });
+
+      const secondPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        // A fresh Project + Thread B, on its own page/WS connection.
+        await secondPage.goto(`http://127.0.0.1:${server.port}/`);
+        await secondPage.getByLabel(/workspace path/i).fill(multiTestRepoDir);
+        await secondPage.getByRole("button", { name: /start/i }).click();
+        await secondPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await secondPage.getByPlaceholder(/message/i).fill("hello from thread B");
+        await secondPage.getByPlaceholder(/message/i).press("Enter");
+        await secondPage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
+
+        // Create a second Thread (C) in the same Project, from within the
+        // drill-down itself — leaves it fresh/empty, currently active.
+        await secondPage.getByRole("button", { name: "Threads" }).click();
+        await secondPage.waitForSelector("text=Projects", { timeout: 10_000 });
+        await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
+        await secondPage.waitForSelector("text=/back/i", { timeout: 10_000 });
+        await secondPage.getByRole("button", { name: /new thread/i }).click();
+        await secondPage.getByPlaceholder(/title/i).fill("Thread C");
+        await secondPage.getByRole("button", { name: /^create$/i }).click();
+        await secondPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        // While secondPage is viewing the now-empty Thread C, the *original*
+        // shared page (a different, unrelated Thread — call it A) sends a
+        // real message live. Its content must never reach secondPage's DOM —
+        // this is the cross-thread event-bleed fix, proven live, not by
+        // code inspection.
+        await page.getByPlaceholder(/message/i).fill("cross-thread isolation trigger");
+        await page.getByPlaceholder(/message/i).press("Enter");
+        await page.waitForSelector("text=cross-thread isolation trigger", { timeout: 15_000 });
+
+        await secondPage.waitForTimeout(1000); // give a leaked broadcast time to land, if the fix were absent
+        const threadCBody = await secondPage.textContent("body");
+        expect(threadCBody).not.toContain("cross-thread isolation trigger");
+        expect(threadCBody).not.toContain("hello from thread B");
+
+        // Now switch back to Thread B (title == the workspace path, from
+        // handleWorkspaceSubmit's own first-launch flow — distinct from
+        // "Thread C"'s title) via the drill-down, and confirm its real,
+        // correct history replays — not empty, not Thread C's, not Thread A's.
+        await secondPage.getByRole("button", { name: "Threads" }).click();
+        await secondPage.waitForSelector("text=Projects", { timeout: 10_000 });
+        await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
+        await secondPage.waitForSelector("text=/back/i", { timeout: 10_000 });
+        await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
+        await secondPage.waitForSelector("text=hello from thread B", { timeout: 15_000 });
+
+        const threadBBody = await secondPage.textContent("body");
+        expect(threadBBody).toContain("hello from thread B");
+        expect(threadBBody).not.toContain("cross-thread isolation trigger");
+      } finally {
+        await secondPage.close();
+        fs.rmSync(multiTestRepoDir, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
 });
