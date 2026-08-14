@@ -93,6 +93,28 @@ describe("ChatView", () => {
     expect(screen.getByText("stream closed")).toBeInTheDocument();
   });
 
+  it("renders no mode switcher when the agent has no available modes", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
+    expect(screen.queryByRole("combobox", { name: /agent mode/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the mode switcher from chat state and forwards mode selection", () => {
+    const onSetMode = vi.fn();
+    const state = stateWith({
+      currentModeId: "default",
+      availableModes: [
+        { id: "default", name: "Default" },
+        { id: "plan", name: "Plan" },
+      ],
+    });
+
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} onSetMode={onSetMode} />);
+
+    const select = screen.getByRole("combobox", { name: /agent mode/i });
+    fireEvent.change(select, { target: { value: "plan" } });
+    expect(onSetMode).toHaveBeenCalledWith("plan");
+  });
+
   it("renders no checkpoint strip or diff view when no checkpoints are passed", () => {
     render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.queryByRole("button", { name: "Turn 1" })).not.toBeInTheDocument();

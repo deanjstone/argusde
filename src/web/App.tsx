@@ -157,6 +157,16 @@ export function App() {
     setActiveTurn(undefined);
   }
 
+  function handleSetMode(modeId: string) {
+    const client = clientRef.current;
+    if (!client || !thread) return;
+    client.sendCommand({ type: "thread.set-mode", threadId: thread.threadId, modeId }).catch((error) => {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    });
+  }
+
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
@@ -197,6 +207,7 @@ export function App() {
             activeTurn={activeTurn}
             diff={diff}
             onCloseDiff={handleCloseDiff}
+            onSetMode={handleSetMode}
           />
         )}
         {tab === "threads" && (
