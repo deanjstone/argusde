@@ -424,6 +424,151 @@ describe("ws-server", () => {
     20_000,
   );
 
+  it("closes a non-worktree thread — disposes its session, captures a final checkpoint, and a subsequent send-message fails clearly", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cl1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cl2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "cl3", threadId, text: "hi" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nuncaptured edit before close\n");
+
+    const closeResult = await send({ type: "thread.close", commandId: "cl4", threadId });
+    expect(closeResult.ok).toBe(true);
+
+    // The final safety checkpoint (turn 2: baseline=0, first turn=1) must
+    // have captured the uncaptured edit before the runtime was torn down.
+    const listResult = await send({ type: "thread.list-checkpoints", commandId: "cl5", threadId });
+    const checkpoints = listResult.ok ? (listResult.result as { turn: number }[]) : [];
+    expect(checkpoints.map((c) => c.turn)).toEqual([0, 1, 2]);
+    const diff = checkpointStore.diffCheckpoints(threadId, 1, 2, repoDir);
+    expect(diff).toContain("+uncaptured edit before close");
+
+    const sendAfterClose = await send({ type: "thread.send-message", commandId: "cl6", threadId, text: "still there?" });
+    expect(sendAfterClose.ok).toBe(false);
+  }, 20_000);
+
+  it("closes a promoted thread — the worktree directory is actually removed from disk", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cl7", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cl8", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "cl9", threadId });
+    const { worktreePath } = promoteResult.ok ? (promoteResult.result as { worktreePath: string }) : { worktreePath: "" };
+    expect(fs.existsSync(worktreePath)).toBe(true);
+
+    const closeResult = await send({ type: "thread.close", commandId: "cl10", threadId });
+    expect(closeResult.ok).toBe(true);
+
+    expect(fs.existsSync(worktreePath)).toBe(false);
+  }, 20_000);
+
+  it("refuses to close an already-closed thread", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cl11", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cl12", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.close", commandId: "cl13", threadId });
+    const secondClose = await send({ type: "thread.close", commandId: "cl14", threadId });
+    expect(secondClose.ok).toBe(false);
+  }, 20_000);
+
+  it("read-only commands keep working on a closed thread — history stays browsable", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cl15", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cl16", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "cl17", threadId, text: "hi" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+    await send({ type: "thread.close", commandId: "cl18", threadId });
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "cl19", threadId });
+    expect(historyResult.ok).toBe(true);
+    const history = historyResult.ok ? (historyResult.result as { messages: unknown[] }) : { messages: [] };
+    expect(history.messages.length).toBeGreaterThan(0);
+
+    const listResult = await send({ type: "thread.list-checkpoints", commandId: "cl20", threadId });
+    expect(listResult.ok).toBe(true);
+  }, 20_000);
+
+  it(
+    "refuses to close a thread while a turn is still in flight",
+    async () => {
+      let releasePrompt: (() => void) | undefined;
+      const slowAgent = agent({ name: "slow-agent" })
+        .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+        .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+        .onRequest(
+          methods.agent.session.prompt,
+          () =>
+            new Promise((resolve) => {
+              releasePrompt = () => resolve({ stopReason: "end_turn" });
+            }),
+        );
+
+      const slowServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) => new AcpSession({ name: "argusde-slow-test", cwd, createTransport: () => slowAgent }),
+      });
+      const slowClient = new WebSocket(`ws://127.0.0.1:${slowServer.port}/ws`);
+      const slowReceived: ServerPush[] = [];
+      slowClient.on("message", (data) => slowReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        slowClient.once("open", () => resolve());
+        slowClient.once("error", reject);
+      });
+      const slowWaitFor = (predicate: (m: ServerPush[]) => boolean, timeoutMs = 10_000) =>
+        new Promise<void>((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            if (predicate(slowReceived)) return resolve();
+            if (Date.now() - start > timeoutMs) return reject(new Error(`slowWaitFor timed out; received: ${JSON.stringify(slowReceived)}`));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+      const slowSend = async (command: Record<string, unknown>) => {
+        slowClient.send(JSON.stringify(command));
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === command.commandId));
+        return slowReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as Extract<
+          ServerPush,
+          { type: "command.result" }
+        >;
+      };
+
+      try {
+        const projectResult = await slowSend({ type: "project.create", commandId: "s5", workspaceRoot: repoDir, title: "P" });
+        const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+        const threadResult = await slowSend({ type: "thread.create", commandId: "s6", projectId, title: "T" });
+        const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+        slowClient.send(JSON.stringify({ type: "thread.send-message", commandId: "s7", threadId, text: "go" }));
+        await new Promise<void>((resolve) => {
+          const check = () => (releasePrompt ? resolve() : setTimeout(check, 5));
+          check();
+        });
+
+        const closeResult = await slowSend({ type: "thread.close", commandId: "s8", threadId });
+        expect(closeResult.ok).toBe(false);
+
+        releasePrompt!();
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === "s7"));
+      } finally {
+        slowClient.close();
+        await slowServer.close();
+      }
+    },
+    20_000,
+  );
+
   it("lists projects and lists a project's threads via the WS API", async () => {
     const projectResult = await send({ type: "project.create", commandId: "pl1", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };

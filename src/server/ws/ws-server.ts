@@ -114,18 +114,21 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         return { threadId };
       }
       case "thread.send-message": {
+        requireOpenThread(command.threadId);
         const runtime = runtimes.get(command.threadId);
         if (!runtime) throw new Error(`Unknown thread: ${command.threadId}`);
         await runtime.sendMessage(command.text);
         return {};
       }
       case "thread.respond-permission": {
+        requireOpenThread(command.threadId);
         const runtime = runtimes.get(command.threadId);
         if (!runtime) throw new Error(`Unknown thread: ${command.threadId}`);
         runtime.respondToPermission(command.requestId, command.outcome);
         return {};
       }
       case "thread.set-mode": {
+        requireOpenThread(command.threadId);
         const runtime = runtimes.get(command.threadId);
         if (!runtime) throw new Error(`Unknown thread: ${command.threadId}`);
         await runtime.setMode(command.modeId);
@@ -141,7 +144,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         return { diff };
       }
       case "thread.revert-checkpoint": {
-        requireThread(command.threadId);
+        requireOpenThread(command.threadId);
         if (!eventStore.listCheckpoints(command.threadId).some((c) => c.turn === command.turn)) {
           throw new Error(`Unknown checkpoint: turn ${command.turn}`);
         }
@@ -150,7 +153,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         return await runtime.revertToCheckpoint(command.turn);
       }
       case "thread.promote-to-worktree": {
-        const thread = requireThread(command.threadId);
+        const thread = requireOpenThread(command.threadId);
         if (thread.worktreePath) throw new Error(`Thread already promoted to a worktree: ${thread.worktreePath}`);
         // Checking checkpoint count instead of this would be racy — a
         // checkpoint only lands once completeTurn() fires on turn-complete,
@@ -209,6 +212,28 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
 
         return { worktreePath };
       }
+      case "thread.close": {
+        const thread = requireOpenThread(command.threadId);
+
+        const runtime = runtimes.get(command.threadId);
+        if (runtime) {
+          // Throws (surfacing a clean protocol error) if a turn is still
+          // in flight — nothing below runs, so a rejected close leaves
+          // nothing half-done.
+          runtime.captureFinalCheckpoint();
+          await runtime.dispose();
+          runtimes.delete(command.threadId);
+        }
+
+        if (thread.worktreePath) {
+          const project = eventStore.getProject(thread.projectId);
+          if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
+          worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath);
+        }
+
+        eventStore.appendEvent({ kind: "thread.closed", threadId: command.threadId, timestamp: new Date().toISOString() });
+        return {};
+      }
       case "project.list":
         return eventStore.listProjects();
       case "thread.list":
@@ -239,6 +264,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           title: thread.title,
           worktreePath: thread.worktreePath,
           currentModeId: thread.currentModeId,
+          closedAt: thread.closedAt,
           availableModes,
           connectionState: connectionState.state,
           connectionError: connectionState.error,
@@ -252,6 +278,19 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   function requireThread(threadId: string): NonNullable<ReturnType<typeof eventStore.getThread>> {
     const thread = eventStore.getThread(threadId);
     if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    return thread;
+  }
+
+  /**
+   * requireThread, plus rejects a closed Thread — for every command that
+   * mutates a Thread (sends a message, changes mode, reverts, promotes, or
+   * closes it again). Read-only history queries (list-checkpoints,
+   * diff-checkpoints, get-history, list) deliberately stay on plain
+   * requireThread — viewing a closed Thread's history must keep working.
+   */
+  function requireOpenThread(threadId: string): NonNullable<ReturnType<typeof eventStore.getThread>> {
+    const thread = requireThread(threadId);
+    if (thread.closedAt) throw new Error(`Thread is closed: ${threadId}`);
     return thread;
   }
 
