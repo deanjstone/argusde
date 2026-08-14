@@ -107,11 +107,7 @@ export function ChatView({
         </div>
       )}
 
-      {state.availableModes.length > 0 && (
-        <div className="flex justify-end border-b border-neutral-800 px-3 py-2">
-          <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
-        </div>
-      )}
+      <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
       <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />

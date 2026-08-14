@@ -188,6 +188,27 @@ describe("chatStateReducer", () => {
     ]);
   });
 
+  it("clears the mode catalog on a fresh connecting transition, so a restarted session never shows a stale mode from before", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "mode-changed",
+          modeId: "plan",
+          availableModes: [
+            { id: "default", name: "Default" },
+            { id: "plan", name: "Plan" },
+          ],
+        },
+      },
+      { kind: "session-event", threadId: "t1", event: { kind: "connection-state", state: "connecting" } },
+    ]);
+
+    expect(state.currentModeId).toBeUndefined();
+    expect(state.availableModes).toEqual([]);
+  });
+
   it("returns the agent to idle on turn-complete", () => {
     const state = reduceAll([
       { kind: "user-message-sent", text: "hi" },

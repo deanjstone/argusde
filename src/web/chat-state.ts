@@ -56,7 +56,16 @@ const generateMessageId = createMessageIdGenerator();
 function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState {
   switch (event.kind) {
     case "connection-state":
-      return { ...state, connectionState: event.state, connectionError: event.error };
+      return {
+        ...state,
+        connectionState: event.state,
+        connectionError: event.error,
+        // A fresh "connecting" transition means a session is starting from
+        // scratch (initial connect or a future restart) — clear any mode
+        // catalog learned from a prior session so a restarted agent that
+        // doesn't advertise modes can't leave a stale one displayed.
+        ...(event.state === "connecting" ? { currentModeId: undefined, availableModes: [] } : {}),
+      };
     case "message-chunk":
       if (event.role === "agent-thought") return state;
       return {

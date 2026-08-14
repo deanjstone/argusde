@@ -141,9 +141,11 @@ describe("web smoke: server + browser round trip", () => {
 
       await modeSwitcher.selectOption("plan");
 
-      // The fixture agent's session.setMode handler notifies a real
-      // current_mode_update — waiting for the select's own value to update
-      // proves that round trip actually happened, not just an optimistic UI change.
+      // The fixture agent's session.setMode handler sends no notification
+      // (matching the real claude-agent-acp) — waiting for the select's own
+      // value to update proves AcpSession's synthesized mode-changed
+      // confirmation made the real WS round trip, not just an optimistic
+      // client-side change with nothing behind it.
       await expect
         .poll(async () => modeSwitcher.inputValue(), { timeout: 10_000 })
         .toBe("plan");

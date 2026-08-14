@@ -98,6 +98,7 @@ export class AcpSession extends EventEmitter {
   private activeSession: ActiveSession | undefined;
   private pendingPermissions = new Map<string, PendingPermissionRequest>();
   private permissionCounter = 0;
+  private modeRequestCounter = 0;
 
   constructor(options: AcpSessionOptions) {
     super();
@@ -156,7 +157,12 @@ export class AcpSession extends EventEmitter {
     // agent that doesn't advertise modes at all leaves this undefined, and
     // no event is emitted (no switcher should render for it).
     const modes = this.activeSession.modes;
-    if (modes) {
+    // The SDK's own response validation already replaces a malformed
+    // `modes` field with `undefined` before it reaches here (confirmed via
+    // its zod schema's defaultOnError fallback) — this guard is extra
+    // insurance against a shape violating that contract, not a scenario
+    // known to be reachable through a spec-compliant agent.
+    if (modes && Array.isArray(modes.availableModes)) {
       this.emitEvent({
         kind: "mode-changed",
         modeId: modes.currentModeId,
@@ -270,10 +276,16 @@ export class AcpSession extends EventEmitter {
     if (!this.connection || !this.activeSession) {
       throw new Error("AcpSession.setMode() called before start()");
     }
+    // Guards against out-of-order responses: nothing about the underlying
+    // connection guarantees requests resolve in the order they were sent,
+    // so a slow response to an earlier setMode() call must not overwrite
+    // the confirmation for a newer one that already resolved.
+    const requestId = ++this.modeRequestCounter;
     await this.connection.agent.request(methods.agent.session.setMode, {
       sessionId: this.activeSession.sessionId,
       modeId,
     });
+    if (requestId !== this.modeRequestCounter) return;
     // A successful response IS the confirmation — confirmed against the
     // real claude-agent-acp that it sends no current_mode_update
     // notification for a client-requested change (that notification is
