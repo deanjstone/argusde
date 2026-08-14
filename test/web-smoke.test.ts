@@ -339,4 +339,67 @@ describe("web smoke: server + browser round trip", () => {
     },
     45_000,
   );
+
+  it(
+    "closes a promoted thread via the UI — worktree actually removed from disk, message input disabled, lands on the Threads tab, history still browsable",
+    async () => {
+      // A separate page + repo — closing needs a promoted thread of its own,
+      // same isolation rationale as the promote-to-worktree test above.
+      const closeTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-close-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: closeTestRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: closeTestRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: closeTestRepoDir });
+      fs.writeFileSync(path.join(closeTestRepoDir, "notes.txt"), "original\n");
+      execFileSync("git", ["add", "-A"], { cwd: closeTestRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: closeTestRepoDir });
+
+      const closePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await closePage.goto(`http://127.0.0.1:${server.port}/`);
+        await closePage.getByLabel(/workspace path/i).fill(closeTestRepoDir);
+        await closePage.getByRole("button", { name: /start/i }).click();
+        await closePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await closePage.getByRole("button", { name: /promote to worktree/i }).click();
+        await closePage.waitForSelector("text=/running in an isolated worktree/i", { timeout: 15_000 });
+
+        const worktreesDir = `${closeTestRepoDir}-worktrees`;
+        const worktreeEntry = fs.readdirSync(worktreesDir)[0];
+        const worktreePath = path.join(worktreesDir, worktreeEntry!);
+        expect(fs.existsSync(worktreePath)).toBe(true);
+
+        await closePage.getByPlaceholder(/message/i).fill("hello from the thread being closed");
+        await closePage.getByPlaceholder(/message/i).press("Enter");
+        await closePage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
+
+        await closePage.getByRole("button", { name: /close thread/i }).click();
+
+        // handleCloseThread nulls `thread` and switches to the Threads tab
+        // on success — waiting for the Projects picker (not stuck on
+        // WorkspaceSetup) proves the hasEverHadThread fix actually works,
+        // not just that the click registered.
+        await closePage.waitForSelector("text=Projects", { timeout: 15_000 });
+        const bodyAfterClose = await closePage.textContent("body");
+        expect(bodyAfterClose).not.toMatch(/workspace path/i);
+
+        expect(fs.existsSync(worktreePath)).toBe(false);
+
+        // History stays browsable: drill back into the closed thread.
+        await closePage.getByRole("button", { name: closeTestRepoDir }).click();
+        await closePage.waitForSelector("text=/back/i", { timeout: 10_000 });
+        await closePage.waitForSelector("text=/closed/i", { timeout: 10_000 });
+
+        await closePage.getByRole("button", { name: closeTestRepoDir }).click();
+        await closePage.waitForSelector("text=hello from the thread being closed", { timeout: 15_000 });
+
+        expect(await closePage.getByPlaceholder(/message/i).isDisabled()).toBe(true);
+        expect(await closePage.textContent("body")).toMatch(/this thread is closed/i);
+      } finally {
+        await closePage.close();
+        fs.rmSync(closeTestRepoDir, { recursive: true, force: true });
+        fs.rmSync(`${closeTestRepoDir}-worktrees`, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });
