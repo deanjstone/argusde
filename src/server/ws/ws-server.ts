@@ -81,19 +81,32 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // `.trim()`ed client-side), not guaranteed to echo back a prior
         // exact string, so a bare trailing-slash retype is the realistic
         // case this needs to tolerate.
+        //
+        // Insert-first, not check-then-insert: a lookup followed by a
+        // separate write can't detect a second process (a second server
+        // instance pointed at the same db file) winning the same race
+        // between this process's check and its own write. Attempting the
+        // insert directly and falling back to a lookup only on the
+        // schema's own UNIQUE constraint failure (idx_projects_workspace_root
+        // in schema.ts) makes this atomic regardless of how many processes
+        // are writing to the database.
         const workspaceRoot = normalizeWorkspaceRoot(command.workspaceRoot);
-        const existing = eventStore.getProjectByWorkspaceRoot(workspaceRoot);
-        if (existing) return { projectId: existing.id };
-
         const projectId = randomUUID();
-        eventStore.appendEvent({
-          kind: "project.created",
-          projectId,
-          workspaceRoot,
-          title: command.title,
-          timestamp: new Date().toISOString(),
-        });
-        return { projectId };
+        try {
+          eventStore.appendEvent({
+            kind: "project.created",
+            projectId,
+            workspaceRoot,
+            title: command.title,
+            timestamp: new Date().toISOString(),
+          });
+          return { projectId };
+        } catch (error) {
+          if (!(error instanceof Error) || !/UNIQUE constraint failed/i.test(error.message)) throw error;
+          const existing = eventStore.getProjectByWorkspaceRoot(workspaceRoot);
+          if (!existing) throw error;
+          return { projectId: existing.id };
+        }
       }
       case "thread.create": {
         const project = eventStore.getProject(command.projectId);

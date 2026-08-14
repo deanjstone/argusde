@@ -21,13 +21,11 @@ export function ensureSchema(db: Database.Database): void {
       title TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root);
   `);
 
-  createUniqueIndexIfSafe(db, "idx_projects_workspace_root_unique", "projects", "workspace_root");
+  ensureWorkspaceRootIndex(db);
 
   db.exec(`
-
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id),
@@ -71,20 +69,25 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
 }
 
 /**
- * Attempts to upgrade the plain index on this column to a UNIQUE one, so the
- * dedup invariant ws-server.ts's project.create handler relies on is also
- * enforced at the schema level — not just by that one check-then-insert call
- * site. Falls back silently to leaving the existing non-unique index in
- * place when a real (pre-existing, already-dirty) database already has
+ * Enforces (and indexes) projects.workspace_root uniqueness at the schema
+ * level, so the dedup invariant ws-server.ts's project.create handler
+ * relies on isn't only enforced by that one call site. A single index name
+ * either way — CREATE ... IF NOT EXISTS treats an existing index of that
+ * name as satisfied regardless of its uniqueness, so this never ends up
+ * maintaining two indexes on the same column. Falls back to a plain
+ * (non-unique) index only when a real pre-existing database already has
  * duplicate rows for this column: re-deduplicating that data would mean
  * re-pointing foreign-key references from "losing" duplicate rows to a
  * "winning" one, well beyond what this fix is for.
  */
-function createUniqueIndexIfSafe(db: Database.Database, indexName: string, table: string, column: string): void {
+function ensureWorkspaceRootIndex(db: Database.Database): void {
   try {
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${indexName} ON ${table}(${column})`);
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
   } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) return;
+    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
+      return;
+    }
     throw error;
   }
 }
