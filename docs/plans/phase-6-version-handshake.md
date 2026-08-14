@@ -54,3 +54,16 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33)'s client/server vers
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean, including the new `version-check.test.ts` and the extended Electron test.
 2. Manual check: run `argusde serve`, launch the real built Electron app against it → connects normally (compatible case, unchanged from today). Then temporarily point Electron at a stubbed server announcing a different `apiVersion` and confirm the connect screen shows the specific incompatibility message.
 3. Work happens on a branch (`feature/version-handshake`), committed incrementally (shared constant move → version-check module + tests → main/index.ts wiring → electron-connect-screen test extension), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1-5), PR opened once complete and green. Plan copied to `docs/plans/phase-6-version-handshake.md` per the standing repo convention.
+
+## Outcome
+
+Landed as planned — the server-side half (`server.welcome`'s `apiVersion`) really was already fully built since Phase 1; this phase was the `API_VERSION` relocation, the throwaway pre-check module, and wiring it into Electron's `attemptConnect`.
+
+`/code-review high` on the completed branch found 2 real issues, both fixed:
+
+- **A destroyed-window race**: `attemptConnect`'s fallthrough `window.loadURL(url)` call had no `isDestroyed()` guard, even though the function is now async and awaits a real network round trip (`checkApiVersion`, up to a few seconds) before reaching it — a window closed while that check is still pending would hit a synchronous Electron throw on the destroyed window, surfacing as an unhandled rejection. The sibling `incompatible` branch was already safe (`showConnectScreen` guards this internally); the fallthrough branch wasn't. Fixed with the same `isDestroyed()` guard, applied once for both branches.
+- **Compounding timeouts on a specific unreachable-server case**: `checkApiVersion`'s pre-check runs *before* the caller's own `loadURL` attempt, so its timeout adds directly (not in parallel) to how long a server that's TCP-reachable but silently drops traffic (blackholed/firewalled, not a clean `ECONNREFUSED`) takes to report a failure to the user. Mitigated, not eliminated — reduced the default timeout from 5000ms to 2500ms; a full parallel/race redesign was judged disproportionate scope for a network condition that's rare given this app's local/tailnet-only deployment model, where round trips are normally well under 100ms and the ordinary `ECONNREFUSED` case is unaffected (resolves near-instantly, never waits out the timeout at all).
+
+Manually verified twice against the real `claude-agent-acp` (not just the fixture): the compatible-version path loads exactly as before (no behavior change for the common case), and a real mismatch — a bare WS server advertising a different `apiVersion`, Electron pointed at it from startup — shows the connect screen with `"ArgusDE (v1.0.0) can't connect to this server (v9.9.9) — please update ArgusDE."`, screenshot-confirmed legible and correctly styled.
+
+Verified after fixes: full suite green (149 tests, 21 files), typecheck clean.
