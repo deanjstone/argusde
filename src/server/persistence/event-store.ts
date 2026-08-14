@@ -49,15 +49,50 @@ export class EventStore {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     ensureSchema(this.db);
+    this.backfillThreadId();
+  }
+
+  /**
+   * One-time backfill for rows written before the thread_id column existed
+   * — addColumnIfMissing only adds the column, it can't retroactively
+   * populate it, and listEventsForThread now filters by it at the SQL
+   * level (argusde#47). Excludes kind = 'project.created' (the only event
+   * with no threadId at all) so this scan only ever re-examines rows that
+   * genuinely still need backfilling, instead of re-parsing every
+   * project.created row on every future startup forever. A row whose
+   * payload fails to parse (corruption, a partial write) is skipped rather
+   * than crashing startup — losing that one event's thread_id backfill is
+   * far better than the app refusing to start at all.
+   */
+  private backfillThreadId(): void {
+    const rows = this.db
+      .prepare("SELECT id, payload FROM events WHERE thread_id IS NULL AND kind <> 'project.created'")
+      .all() as { id: number; payload: string }[];
+    if (rows.length === 0) return;
+
+    const update = this.db.prepare("UPDATE events SET thread_id = ? WHERE id = ?");
+    const backfill = this.db.transaction(() => {
+      for (const row of rows) {
+        let event: { threadId?: string };
+        try {
+          event = JSON.parse(row.payload) as { threadId?: string };
+        } catch {
+          continue;
+        }
+        if (event.threadId) update.run(event.threadId, row.id);
+      }
+    });
+    backfill();
   }
 
   appendEvent(event: DomainEvent): void {
     const insertEvent = this.db.prepare(
-      "INSERT INTO events (kind, payload, created_at) VALUES (?, ?, ?)",
+      "INSERT INTO events (kind, payload, thread_id, created_at) VALUES (?, ?, ?, ?)",
     );
 
     const apply = this.db.transaction((e: DomainEvent) => {
-      insertEvent.run(e.kind, JSON.stringify(e), e.timestamp);
+      const threadId = "threadId" in e ? e.threadId : null;
+      insertEvent.run(e.kind, JSON.stringify(e), threadId, e.timestamp);
       this.project(e);
     });
     apply(event);
@@ -167,10 +202,10 @@ export class EventStore {
    * it) — this is the durable source of truth in the meantime.
    */
   listEventsForThread(threadId: string): DomainEvent[] {
-    const rows = this.db.prepare("SELECT payload FROM events ORDER BY id").all() as { payload: string }[];
-    return rows
-      .map((row) => JSON.parse(row.payload) as DomainEvent)
-      .filter((event): event is DomainEvent & { threadId: string } => "threadId" in event && event.threadId === threadId);
+    const rows = this.db.prepare("SELECT payload FROM events WHERE thread_id = ? ORDER BY id").all(threadId) as {
+      payload: string;
+    }[];
+    return rows.map((row) => JSON.parse(row.payload) as DomainEvent);
   }
 
   listCheckpoints(threadId: string): CheckpointRecord[] {
