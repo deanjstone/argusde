@@ -81,6 +81,8 @@ export interface ThreadRecord {
   worktreePath: string | null;
   currentModeId: string | null;
   createdAt: string;
+  /** Set once the Thread is closed — its live session is torn down and (if promoted) its worktree removed, but persisted history stays browsable. */
+  closedAt: string | null;
 }
 
 export type CommandResult =

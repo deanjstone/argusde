@@ -4,8 +4,16 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ThreadList } from "./thread-list.js";
 
 const THREADS = [
-  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "" },
-  { id: "t2", projectId: "p1", title: "Explore worktree", worktreePath: "/workspace-worktrees/t2", currentModeId: null, createdAt: "" },
+  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "", closedAt: null },
+  {
+    id: "t2",
+    projectId: "p1",
+    title: "Explore worktree",
+    worktreePath: "/workspace-worktrees/t2",
+    currentModeId: null,
+    createdAt: "",
+    closedAt: null,
+  },
 ];
 
 describe("ThreadList", () => {

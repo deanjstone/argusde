@@ -42,6 +42,7 @@ export function ensureSchema(db: Database.Database): void {
   `);
 
   addColumnIfMissing(db, "checkpoints", "reverted_to_turn", "INTEGER");
+  addColumnIfMissing(db, "threads", "closed_at", "TEXT");
 }
 
 /**

@@ -75,6 +75,7 @@ describe("EventStore", () => {
         worktreePath: null,
         currentModeId: null,
         createdAt: "2026-08-13T00:01:00.000Z",
+        closedAt: null,
       },
       {
         id: "thread-2",
@@ -83,6 +84,7 @@ describe("EventStore", () => {
         worktreePath: "/workspace-worktrees/thread-2",
         currentModeId: null,
         createdAt: "2026-08-13T00:02:00.000Z",
+        closedAt: null,
       },
     ]);
     expect(store.getThread("thread-2")?.worktreePath).toBe("/workspace-worktrees/thread-2");
@@ -283,6 +285,91 @@ describe("EventStore", () => {
     });
 
     expect(store.getThread("thread-1")?.worktreePath).toBe("/workspace-worktrees/thread-1");
+  });
+
+  it("projects a thread.closed event onto the thread's closedAt, leaving other threads untouched", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/workspace",
+      title: "Project One",
+      timestamp: "2026-08-14T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-14T00:01:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-2",
+      projectId: "proj-1",
+      title: "Unrelated thread",
+      worktreePath: null,
+      timestamp: "2026-08-14T00:01:30.000Z",
+    });
+
+    expect(store.getThread("thread-1")?.closedAt).toBeNull();
+
+    store.appendEvent({
+      kind: "thread.closed",
+      threadId: "thread-1",
+      timestamp: "2026-08-14T00:02:00.000Z",
+    });
+
+    expect(store.getThread("thread-1")?.closedAt).toBe("2026-08-14T00:02:00.000Z");
+    expect(store.getThread("thread-2")?.closedAt).toBeNull();
+  });
+
+  it("adds closed_at to a threads table that predates it, instead of leaving an existing database permanently broken", () => {
+    // Same rationale and pattern as the reverted_to_turn upgrade test above
+    // — a fresh path of its own, since beforeEach's `store` has already run
+    // ensureSchema with the current, already-upgraded shape.
+    const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-threads-"));
+    const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
+    const legacyDb = new Database(legacyDbPath);
+    legacyDb.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        worktree_path TEXT,
+        current_mode_id TEXT,
+        created_at TEXT NOT NULL
+      );
+    `);
+    legacyDb.close();
+
+    const upgraded = new EventStore(legacyDbPath);
+    try {
+      upgraded.appendEvent({
+        kind: "project.created",
+        projectId: "proj-1",
+        workspaceRoot: "/workspace",
+        title: "Project One",
+        timestamp: "2026-08-14T00:00:00.000Z",
+      });
+      upgraded.appendEvent({
+        kind: "thread.created",
+        threadId: "thread-1",
+        projectId: "proj-1",
+        title: "Fix the bug",
+        worktreePath: null,
+        timestamp: "2026-08-14T00:00:30.000Z",
+      });
+
+      expect(() =>
+        upgraded.appendEvent({ kind: "thread.closed", threadId: "thread-1", timestamp: "2026-08-14T00:01:00.000Z" }),
+      ).not.toThrow();
+
+      expect(upgraded.getThread("thread-1")?.closedAt).toBe("2026-08-14T00:01:00.000Z");
+    } finally {
+      upgraded.close();
+      fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
   });
 
   it("re-appending thread.checkpoint-captured for turn 0 replaces the prior ref instead of throwing a primary-key violation", () => {

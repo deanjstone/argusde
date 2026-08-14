@@ -72,4 +72,23 @@ describe("WorktreeStore", () => {
     store.createWorktree(repoDir, "thread-1");
     expect(() => store.createWorktree(repoDir, "thread-1")).toThrow();
   });
+
+  it("removeWorktree deletes the directory and deregisters it from the main repo's administrative area", () => {
+    const worktreePath = store.createWorktree(repoDir, "thread-1");
+    expect(fs.existsSync(worktreePath)).toBe(true);
+
+    store.removeWorktree(repoDir, worktreePath);
+
+    expect(fs.existsSync(worktreePath)).toBe(false);
+    const list = git(["worktree", "list", "--porcelain"]);
+    expect(list).not.toContain(worktreePath);
+
+    // The main repo itself must still be a fully working git checkout —
+    // removal must not have touched its own HEAD/index.
+    expect(git(["rev-parse", "--verify", "HEAD"]).trim()).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("removeWorktree throws a clean, catchable error for a path that was never a real worktree", () => {
+    expect(() => store.removeWorktree(repoDir, `${repoDir}-worktrees/never-created`)).toThrow();
+  });
 });

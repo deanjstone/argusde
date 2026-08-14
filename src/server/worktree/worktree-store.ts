@@ -16,6 +16,18 @@ export class WorktreeStore {
     execFileSync("git", ["worktree", "add", "--detach", worktreePath], { cwd: workspaceRoot });
     return worktreePath;
   }
+
+  /**
+   * Run from the main workspace, not the worktree being removed — you
+   * can't rmdir the cwd you're standing in. `--force` matches this
+   * codebase's posture elsewhere (checkpoint revert's `read-tree --reset`):
+   * checkpoint history is durable in git refs independent of any working
+   * copy, so git's own "worktree has local modifications" safety check
+   * isn't protecting anything that isn't already recoverable.
+   */
+  removeWorktree(workspaceRoot: string, worktreePath: string): void {
+    execFileSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: workspaceRoot });
+  }
 }
 
 function worktreePathFor(workspaceRoot: string, threadId: string): string {
