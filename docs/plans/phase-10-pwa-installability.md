@@ -1,6 +1,6 @@
 # Phase 10: PWA installability
 
-> Implemented via `feature/pwa-installability`, in progress.
+> Implemented via `feature/pwa-installability`.
 
 ## Context
 
@@ -57,3 +57,17 @@ if ("serviceWorker" in navigator) {
 2. `pnpm run build` (the full build, not just `build:web` — per Phase 9's own Outcome note about this exact gotcha) then manually open the served UI in a real browser and check DevTools' Application panel: manifest parses with no warnings, service worker shows as activated, icons render at the listed sizes.
 3. Recommended manual step for the user (not something I can fully verify myself): with the server reachable via Tailscale (Phase 3), open it on a real phone and confirm the browser's "Add to Home Screen"/install prompt appears and the installed icon/splash match.
 4. Work happens on a branch (`feature/pwa-installability`), committed incrementally (icon generation → manifest + HTML/main.tsx wiring → service worker → tests), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1–9), PR opened once complete and green. Plan copied to `docs/plans/phase-10-pwa-installability.md` per the standing repo convention.
+
+## Outcome
+
+Shipped as designed, with zero deviation from the plan and zero new dependencies. The icon set was generated once via the system's ImageMagick (`convert`), not a project dependency — a flat rounded-square `#7c3aed` icon with a light "A" glyph, matching the Electron connect-screen's existing purple accent (the only prior brand-color signal anywhere in the repo), plus a separately-padded maskable variant for Android's safe-zone requirement.
+
+`static-server.ts` needed zero changes — its existing `MIME_TYPES` map already covered `.json` and `.js`, confirmed before writing any code rather than assumed. `vite.config.web.ts` also needed zero changes — Vite's `public/` convention copies `manifest.json`/`sw.js`/`icons/` into `dist/web/` unprocessed automatically, confirmed via a real `pnpm run build:web` before committing to the approach.
+
+The service worker (`sw.js`) does no caching whatsoever, by design — install/activate/fetch handlers only, every request a pure pass-through to the network. This directly protects a real invariant spec #33 states explicitly (the web UI has no version-skew risk to solve "because the UI is always served fresh from the server," which is *why* Phase 6's version handshake only needed to cover Electron's native shell) — a caching service worker would have quietly broken that guarantee by potentially serving a stale, API-incompatible bundle after a server update.
+
+Verification: full suite green (`pnpm run typecheck` + `xvfb-run -a pnpm test`, 210 tests across 24 files, including a new real E2E case proving the manifest resolves/parses correctly and the service worker reaches "activated" state in a real Chromium engine — not just that the registration call resolved), plus a full `pnpm run build` (not just `build:web`, per Phase 9's own Outcome note about that exact gotcha) and a real standalone server + real browser manual check confirming every asset (manifest, icons, favicon, service worker) is reachable with correct content types and the manifest's own internal icon paths resolve correctly regardless of how the HTML's own `<link>` tags got rewritten by Vite's `base: "./"` config. `/code-review high` self-review completed before merge (see PR for findings/fixes, if any).
+
+**Recommended follow-up for the user, not something verifiable from this environment**: open the server via Tailscale on a real phone and confirm the browser's install prompt appears and the installed icon/splash screen render correctly — headless/automated checks can confirm every installability *precondition* (manifest validity, service worker activation, icon reachability) but not the actual OS-level install-prompt UI itself.
+
+Deferred items (no offline support, resume-most-recently-active-thread across reload, `Cache-Control` header changes) remain out of scope, unchanged from the plan above.
