@@ -111,6 +111,34 @@ describe("web smoke: server + browser round trip", () => {
   );
 
   it(
+    "is installable as a PWA — a valid manifest is linked and reachable, and the service worker actually activates",
+    async () => {
+      const manifestHref = await page.evaluate(
+        () => document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.href,
+      );
+      expect(manifestHref).toBeTruthy();
+
+      const manifestRes = await page.request.get(manifestHref!);
+      expect(manifestRes.ok()).toBe(true);
+      const manifest = await manifestRes.json();
+      expect(manifest.name).toBe("ArgusDE");
+      expect(manifest.display).toBe("standalone");
+      expect(Array.isArray(manifest.icons)).toBe(true);
+      expect(manifest.icons.length).toBeGreaterThan(0);
+
+      // Confirms main.tsx's registration call not only resolved but the
+      // worker actually reached the "active" state in a real browser
+      // engine — not just that the API exists.
+      const swActive = await page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.ready;
+        return registration.active?.state === "activated";
+      });
+      expect(swActive).toBe(true);
+    },
+    20_000,
+  );
+
+  it(
     "shows a real checkpoint diff after a second turn changes a file on disk",
     async () => {
       // A real filesystem change between turns (not through the fixture
