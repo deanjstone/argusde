@@ -202,6 +202,28 @@ describe("ChatView", () => {
     expect(container.firstElementChild?.className).toMatch(/border-(amber|emerald|violet)-\d+/);
   });
 
+  it("does not claim the worktree is still running once the thread is closed — the worktree was already destroyed by close", () => {
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        worktreePath="/workspace-worktrees/t1"
+        threadClosed={true}
+      />,
+    );
+
+    expect(screen.queryByText(/running in an isolated worktree/i)).not.toBeInTheDocument();
+  });
+
+  it("does not show a disconnected banner for a closed thread — disconnected is expected, not a connection problem", () => {
+    const state = stateWith({ connectionState: "disconnected" });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} threadClosed={true} />);
+
+    expect(screen.queryByText(/^disconnected/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/this thread is closed/i)).toBeInTheDocument();
+  });
+
   it("renders no checkpoint strip or diff view when no checkpoints are passed", () => {
     render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.queryByRole("button", { name: "Turn 1" })).not.toBeInTheDocument();
@@ -281,5 +303,39 @@ describe("ChatView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /revert/i }));
     expect(onRevert).toHaveBeenCalled();
+  });
+
+  it("renders a close-thread control that calls onCloseThread when clicked", () => {
+    const onCloseThread = vi.fn();
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /close thread/i }));
+    expect(onCloseThread).toHaveBeenCalled();
+  });
+
+  it("disables the close-thread control while closing is already in flight", () => {
+    const onCloseThread = vi.fn();
+    render(
+      <ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} closing={true} />,
+    );
+
+    const button = screen.getByRole("button", { name: /closing/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onCloseThread).not.toHaveBeenCalled();
+  });
+
+  it("hides the close-thread control once the thread is already closed", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={() => {}} threadClosed={true} />);
+    expect(screen.queryByRole("button", { name: /close thread/i })).not.toBeInTheDocument();
+  });
+
+  it("disables the message input and send button, with an explanatory note, once the thread is closed", () => {
+    const onSend = vi.fn();
+    render(<ChatView state={initialChatState} onSend={onSend} onRespondPermission={() => {}} threadClosed={true} />);
+
+    expect(screen.getByPlaceholderText(/message/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
+    expect(screen.getByText(/closed/i)).toBeInTheDocument();
   });
 });

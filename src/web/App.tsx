@@ -19,6 +19,7 @@ interface ThreadInfo {
   projectId: string;
   title: string;
   worktreePath: string | null;
+  closedAt: string | null;
 }
 
 interface ThreadHistoryMessage {
@@ -47,6 +48,26 @@ export function App() {
   const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
   const [promoting, setPromoting] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const [closing, setClosing] = useState(false);
+  // Once true, stays true for the rest of this page session — lets the
+  // top-level gate distinguish "genuinely first-ever load" (show
+  // WorkspaceSetup) from "closed the active Thread, but this session has
+  // definitely used the app before" (show the normal tab-bar shell, with
+  // no Thread active). Closing a Thread is the first code path that can
+  // ever set `thread` back to null after it was first set — without this,
+  // closing your current (possibly only) Thread would strand you back on
+  // the first-run screen even though your other Projects/Threads still
+  // exist. Deliberately doesn't attempt to solve full reload persistence
+  // (this flag itself resets on a real page reload) — a separate, already
+  // repeatedly deferred gap.
+  //
+  // Invariant a future code path must preserve: `thread` must never be
+  // set to null before `hasEverHadThread` is already true (today the only
+  // such path, handleCloseThread, satisfies this — it can only run once a
+  // Thread was already active). A future "delete Project" or similar flow
+  // that nulls `thread` without that ordering would silently reintroduce
+  // this exact regression.
+  const [hasEverHadThread, setHasEverHadThread] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
@@ -141,6 +162,7 @@ export function App() {
   ) {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
+    setHasEverHadThread(true);
     setChatState((s) =>
       chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
     );
@@ -234,6 +256,7 @@ export function App() {
       projectId: string;
       title: string;
       worktreePath: string | null;
+      closedAt: string | null;
       currentModeId: string | null;
       availableModes: SessionModeSummary[];
       connectionState: ConnectionState;
@@ -242,7 +265,13 @@ export function App() {
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
-      { threadId: history.threadId, projectId: history.projectId, title: history.title, worktreePath: history.worktreePath },
+      {
+        threadId: history.threadId,
+        projectId: history.projectId,
+        title: history.title,
+        worktreePath: history.worktreePath,
+        closedAt: history.closedAt,
+      },
       history.messages,
       history.currentModeId,
       history.availableModes,
@@ -403,6 +432,23 @@ export function App() {
     }
   }
 
+  async function handleCloseThread() {
+    const client = clientRef.current;
+    if (!client || !thread || closing || thread.closedAt) return;
+    setClosing(true);
+    try {
+      await client.sendCommand({ type: "thread.close", threadId: thread.threadId });
+      setThread(null);
+      setTab("threads");
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      setClosing(false);
+    }
+  }
+
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
@@ -425,32 +471,42 @@ export function App() {
     );
   }
 
-  if (!thread) {
+  if (!thread && !hasEverHadThread) {
     return <WorkspaceSetup onSubmit={handleWorkspaceSubmit} submitting={setup.submitting} error={setup.error} />;
   }
 
   return (
     <div className="flex h-screen flex-col">
       <div className="min-h-0 flex-1">
-        {tab === "chat" && (
-          <ChatView
-            state={chatState}
-            onSend={handleSend}
-            onRespondPermission={handleRespondPermission}
-            checkpoints={checkpoints}
-            onSelectTurn={handleSelectTurn}
-            onSinceStart={handleSinceStart}
-            activeTurn={activeTurn}
-            diff={diff}
-            onCloseDiff={handleCloseDiff}
-            onRevert={() => void handleRevertCheckpoint()}
-            reverting={reverting}
-            onSetMode={handleSetMode}
-            worktreePath={thread.worktreePath}
-            onPromoteToWorktree={() => void handlePromoteToWorktree()}
-            promoting={promoting}
-          />
-        )}
+        {tab === "chat" &&
+          (thread ? (
+            <ChatView
+              state={chatState}
+              onSend={handleSend}
+              onRespondPermission={handleRespondPermission}
+              checkpoints={checkpoints}
+              onSelectTurn={handleSelectTurn}
+              onSinceStart={handleSinceStart}
+              activeTurn={activeTurn}
+              diff={diff}
+              onCloseDiff={handleCloseDiff}
+              onRevert={() => void handleRevertCheckpoint()}
+              reverting={reverting}
+              onSetMode={handleSetMode}
+              worktreePath={thread.worktreePath}
+              onPromoteToWorktree={() => void handlePromoteToWorktree()}
+              promoting={promoting}
+              onCloseThread={() => void handleCloseThread()}
+              closing={closing}
+              threadClosed={thread.closedAt !== null}
+            />
+          ) : (
+            // Defensive fallback, not the primary flow — handleCloseThread
+            // already switches to the Threads tab on success.
+            <div className="flex h-full items-center justify-center bg-neutral-950 p-4 text-center text-sm text-neutral-500">
+              No thread selected — pick one from the Threads tab.
+            </div>
+          ))}
         {tab === "threads" &&
           (selectedProjectId === null ? (
             <ProjectPicker
@@ -472,7 +528,7 @@ export function App() {
           <div className="flex h-full flex-col gap-2 bg-neutral-950 p-4 text-sm text-neutral-100">
             <h2 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Connection</h2>
             <p>Server API version: {chatState.apiVersion ?? "unknown"}</p>
-            <p className="text-neutral-500">Thread ID: {thread.threadId}</p>
+            {thread && <p className="text-neutral-500">Thread ID: {thread.threadId}</p>}
           </div>
         )}
       </div>

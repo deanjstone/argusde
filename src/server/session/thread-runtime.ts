@@ -111,6 +111,48 @@ export class ThreadRuntime {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
   }
 
+  isTurnInFlight(): boolean {
+    return this.turnInFlight;
+  }
+
+  /**
+   * Captures whatever's currently on disk as the next turn — the shared
+   * "advance nextTurn, snapshot cwd, persist the event" sequence used by
+   * every checkpoint-capture path (completeTurn, revertToCheckpoint's own
+   * safety snapshot and its post-restore capture, and
+   * captureFinalCheckpoint). `revertedToTurn` is only ever passed by
+   * revertToCheckpoint; every other caller leaves it undefined, which the
+   * event-store projection already treats as "not a revert."
+   */
+  private captureCheckpointEvent(revertedToTurn?: number): number {
+    const { threadId, cwd, checkpointStore, eventStore } = this.options;
+    const turn = this.nextTurn++;
+    const ref = checkpointStore.captureCheckpoint(threadId, turn, cwd);
+    eventStore.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId,
+      turn,
+      ref,
+      revertedToTurn,
+      timestamp: new Date().toISOString(),
+    });
+    return turn;
+  }
+
+  /**
+   * Captures whatever's currently on disk as the next turn, unmarked (not
+   * a revert). Used by thread.close before disposing the runtime and (for
+   * a promoted Thread) removing its worktree — the same "capture whatever
+   * hasn't been checkpointed yet, before a destructive operation" idea
+   * revertToCheckpoint's own safety snapshot already established, applied
+   * here so a worktree removal never silently discards state that was
+   * never protected by a completed turn.
+   */
+  captureFinalCheckpoint(): number {
+    if (this.isTurnInFlight()) throw new Error("Cannot capture a final checkpoint while a turn is still in flight");
+    return this.captureCheckpointEvent();
+  }
+
   /**
    * Restores the workspace to an earlier checkpoint's snapshot, then
    * captures that restored state as a brand-new forward checkpoint marked
@@ -121,9 +163,7 @@ export class ThreadRuntime {
    * safe to run without the agent being involved at all.
    */
   async revertToCheckpoint(turn: number): Promise<{ newTurn: number }> {
-    if (this.turnInFlight) throw new Error("Cannot revert while a turn is still in flight");
-
-    const { threadId, cwd, checkpointStore, eventStore } = this.options;
+    if (this.isTurnInFlight()) throw new Error("Cannot revert while a turn is still in flight");
 
     // Snapshot whatever is currently on disk BEFORE overwriting it —
     // restoreCheckpoint force-rewrites the real working tree, and not
@@ -132,29 +172,11 @@ export class ThreadRuntime {
     // this, that state would be silently and permanently lost with no
     // checkpoint ref to recover it from. Left unmarked (not a revert
     // itself) — its only job is to make sure nothing is ever discarded.
-    const safetyTurn = this.nextTurn++;
-    const safetyRef = checkpointStore.captureCheckpoint(threadId, safetyTurn, cwd);
-    eventStore.appendEvent({
-      kind: "thread.checkpoint-captured",
-      threadId,
-      turn: safetyTurn,
-      ref: safetyRef,
-      timestamp: new Date().toISOString(),
-    });
+    this.captureCheckpointEvent();
 
-    checkpointStore.restoreCheckpoint(threadId, turn, cwd);
+    this.options.checkpointStore.restoreCheckpoint(this.options.threadId, turn, this.options.cwd);
 
-    const newTurn = this.nextTurn++;
-    const ref = checkpointStore.captureCheckpoint(threadId, newTurn, cwd);
-    eventStore.appendEvent({
-      kind: "thread.checkpoint-captured",
-      threadId,
-      turn: newTurn,
-      ref,
-      revertedToTurn: turn,
-      timestamp: new Date().toISOString(),
-    });
-
+    const newTurn = this.captureCheckpointEvent(turn);
     return { newTurn };
   }
 
@@ -205,7 +227,7 @@ export class ThreadRuntime {
   }
 
   private completeTurn(): void {
-    const { threadId, eventStore, checkpointStore, cwd } = this.options;
+    const { threadId, eventStore } = this.options;
     this.turnInFlight = false;
 
     for (const key of this.pendingAgentMessageOrder) {
@@ -223,14 +245,6 @@ export class ThreadRuntime {
     this.pendingAgentMessages.clear();
     this.pendingAgentMessageOrder = [];
 
-    const turn = this.nextTurn++;
-    const ref = checkpointStore.captureCheckpoint(threadId, turn, cwd);
-    eventStore.appendEvent({
-      kind: "thread.checkpoint-captured",
-      threadId,
-      turn,
-      ref,
-      timestamp: new Date().toISOString(),
-    });
+    this.captureCheckpointEvent();
   }
 }

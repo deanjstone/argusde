@@ -4,8 +4,16 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ThreadList } from "./thread-list.js";
 
 const THREADS = [
-  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "" },
-  { id: "t2", projectId: "p1", title: "Explore worktree", worktreePath: "/workspace-worktrees/t2", currentModeId: null, createdAt: "" },
+  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "", closedAt: null },
+  {
+    id: "t2",
+    projectId: "p1",
+    title: "Explore worktree",
+    worktreePath: "/workspace-worktrees/t2",
+    currentModeId: null,
+    createdAt: "",
+    closedAt: null,
+  },
 ];
 
 describe("ThreadList", () => {
@@ -19,6 +27,12 @@ describe("ThreadList", () => {
   it("marks a promoted thread's row with a worktree indicator", () => {
     render(<ThreadList threads={THREADS} onSelectThread={() => {}} onCreateThread={() => {}} onBack={() => {}} />);
     expect(screen.getByRole("button", { name: /explore worktree/i })).toHaveTextContent(/worktree/i);
+  });
+
+  it("marks a closed thread's row with a closed indicator", () => {
+    const withClosed = [...THREADS, { id: "t3", projectId: "p1", title: "Old chat", worktreePath: null, currentModeId: null, createdAt: "", closedAt: "2026-08-14T00:00:00.000Z" }];
+    render(<ThreadList threads={withClosed} onSelectThread={() => {}} onCreateThread={() => {}} onBack={() => {}} />);
+    expect(screen.getByRole("button", { name: /old chat/i })).toHaveTextContent(/closed/i);
   });
 
   it("shows an empty-state message when the project has no threads yet", () => {

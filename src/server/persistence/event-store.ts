@@ -33,7 +33,8 @@ export type DomainEvent =
       timestamp: string;
     }
   | { kind: "thread.mode-changed"; threadId: string; modeId: string; timestamp: string }
-  | { kind: "thread.worktree-promoted"; threadId: string; worktreePath: string; timestamp: string };
+  | { kind: "thread.worktree-promoted"; threadId: string; worktreePath: string; timestamp: string }
+  | { kind: "thread.closed"; threadId: string; timestamp: string };
 
 /**
  * Append-only event log plus the SQLite read-model projected from it.
@@ -106,6 +107,11 @@ export class EventStore {
           .prepare("UPDATE threads SET worktree_path = ? WHERE id = ?")
           .run(event.worktreePath, event.threadId);
         break;
+      case "thread.closed":
+        this.db
+          .prepare("UPDATE threads SET closed_at = ? WHERE id = ?")
+          .run(event.timestamp, event.threadId);
+        break;
       case "thread.message-recorded":
         // Turn/message history projection lands with the UI work that reads
         // it (Phase 2+) — the event is durable in the log either way.
@@ -130,7 +136,7 @@ export class EventStore {
     const row = this.db
       .prepare(
         `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
-                current_mode_id AS currentModeId, created_at AS createdAt
+                current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt
          FROM threads WHERE id = ?`,
       )
       .get(id) as ThreadRecord | undefined;
@@ -141,7 +147,7 @@ export class EventStore {
     return this.db
       .prepare(
         `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
-                current_mode_id AS currentModeId, created_at AS createdAt
+                current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt
          FROM threads WHERE project_id = ? ORDER BY created_at`,
       )
       .all(projectId) as ThreadRecord[];
