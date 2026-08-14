@@ -40,4 +40,25 @@ export function ensureSchema(db: Database.Database): void {
       PRIMARY KEY (thread_id, turn)
     );
   `);
+
+  addColumnIfMissing(db, "checkpoints", "reverted_to_turn", "INTEGER");
+}
+
+/**
+ * CREATE TABLE IF NOT EXISTS only helps a brand-new database — it's a
+ * no-op against a table that already exists from an earlier version, so a
+ * column added here later would silently never land on a real user's
+ * existing database file, breaking every future INSERT that references it
+ * (not just the new feature the column was added for). SQLite has no
+ * "ADD COLUMN IF NOT EXISTS", so this is the standard idiom: attempt the
+ * ALTER, and ignore the one specific error it raises when the column is
+ * already there (from a fresh CREATE TABLE that already included it).
+ */
+function addColumnIfMissing(db: Database.Database, table: string, column: string, type: string): void {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  } catch (error) {
+    if (error instanceof Error && /duplicate column name/i.test(error.message)) return;
+    throw error;
+  }
 }

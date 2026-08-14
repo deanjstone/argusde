@@ -140,6 +140,15 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         const diff = checkpointStore.diffCheckpoints(command.threadId, command.turnA, command.turnB, cwd);
         return { diff };
       }
+      case "thread.revert-checkpoint": {
+        requireThread(command.threadId);
+        if (!eventStore.listCheckpoints(command.threadId).some((c) => c.turn === command.turn)) {
+          throw new Error(`Unknown checkpoint: turn ${command.turn}`);
+        }
+        const runtime = runtimes.get(command.threadId);
+        if (!runtime) throw new Error(`Unknown thread: ${command.threadId}`);
+        return await runtime.revertToCheckpoint(command.turn);
+      }
       case "thread.promote-to-worktree": {
         const thread = requireThread(command.threadId);
         if (thread.worktreePath) throw new Error(`Thread already promoted to a worktree: ${thread.worktreePath}`);

@@ -39,6 +39,11 @@ export function CheckpointStrip({ checkpoints, onSelectTurn, onSinceStart, activ
             )}
           >
             Turn {checkpoint.turn}
+            {checkpoint.revertedToTurn !== null && (
+              <span className="ml-1 text-amber-400" title={`Reverted to turn ${checkpoint.revertedToTurn}`}>
+                ↩ reverted to turn {checkpoint.revertedToTurn}
+              </span>
+            )}
           </button>
         ),
       )}

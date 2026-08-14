@@ -177,6 +177,121 @@ describe("ws-server", () => {
     expect(diff).toContain("+world");
   }, 20_000);
 
+  it("reverts a thread's workspace to an earlier checkpoint, capturing the restore forward as a new checkpoint", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "rv1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "rv2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "rv3", threadId, text: "first turn" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
+    await send({ type: "thread.send-message", commandId: "rv4", threadId, text: "second turn" });
+    await waitFor(
+      (messages) =>
+        messages.filter((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete").length === 2,
+    );
+
+    const revertResult = await send({ type: "thread.revert-checkpoint", commandId: "rv5", threadId, turn: 1 });
+    expect(revertResult.ok).toBe(true);
+    // Two new checkpoints, not one: a safety snapshot of whatever was
+    // about to be overwritten (turn 3, unmarked), then the actual restored
+    // state (turn 4, marked) — nothing is ever silently discarded.
+    expect(revertResult.ok ? revertResult.result : null).toEqual({ newTurn: 4 });
+
+    expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+
+    const listResult = await send({ type: "thread.list-checkpoints", commandId: "rv6", threadId });
+    const checkpoints = listResult.ok ? (listResult.result as { turn: number; revertedToTurn: number | null }[]) : [];
+    expect(checkpoints.map((c) => ({ turn: c.turn, revertedToTurn: c.revertedToTurn }))).toEqual([
+      { turn: 0, revertedToTurn: null },
+      { turn: 1, revertedToTurn: null },
+      { turn: 2, revertedToTurn: null },
+      { turn: 3, revertedToTurn: null },
+      { turn: 4, revertedToTurn: 1 },
+    ]);
+  }, 20_000);
+
+  it("refuses to revert to an unknown checkpoint turn", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "rv7", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "rv8", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const revertResult = await send({ type: "thread.revert-checkpoint", commandId: "rv9", threadId, turn: 99 });
+    expect(revertResult.ok).toBe(false);
+  }, 20_000);
+
+  it(
+    "refuses to revert while a turn is still in flight (message sent, not yet complete)",
+    async () => {
+      let releasePrompt: (() => void) | undefined;
+      const slowAgent = agent({ name: "slow-agent" })
+        .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+        .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+        .onRequest(
+          methods.agent.session.prompt,
+          () =>
+            new Promise((resolve) => {
+              releasePrompt = () => resolve({ stopReason: "end_turn" });
+            }),
+        );
+
+      const slowServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) => new AcpSession({ name: "argusde-slow-test", cwd, createTransport: () => slowAgent }),
+      });
+      const slowClient = new WebSocket(`ws://127.0.0.1:${slowServer.port}/ws`);
+      const slowReceived: ServerPush[] = [];
+      slowClient.on("message", (data) => slowReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        slowClient.once("open", () => resolve());
+        slowClient.once("error", reject);
+      });
+
+      async function slowSend(command: Record<string, unknown>) {
+        slowClient.send(JSON.stringify(command));
+        await new Promise<void>((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            if (slowReceived.some((m) => m.type === "command.result" && m.commandId === command.commandId)) return resolve();
+            if (Date.now() - start > 10_000) return reject(new Error("timed out waiting for command.result"));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+        return slowReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as Extract<
+          ServerPush,
+          { type: "command.result" }
+        >;
+      }
+
+      try {
+        const projectResult = await slowSend({ type: "project.create", commandId: "sl1", workspaceRoot: repoDir, title: "P" });
+        const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+        const threadResult = await slowSend({ type: "thread.create", commandId: "sl2", projectId, title: "T" });
+        const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+        slowClient.send(JSON.stringify({ type: "thread.send-message", commandId: "sl3", threadId, text: "hello" }));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        const revertResult = await slowSend({ type: "thread.revert-checkpoint", commandId: "sl4", threadId, turn: 0 });
+        expect(revertResult.ok).toBe(false);
+
+        releasePrompt?.();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } finally {
+        slowClient.close();
+        await slowServer.close();
+      }
+    },
+    20_000,
+  );
+
   it("promotes a fresh thread to a real worktree, relocates its session, and shares checkpoint refs with the main repo", async () => {
     const projectResult = await send({ type: "project.create", commandId: "wt1", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };

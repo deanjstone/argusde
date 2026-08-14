@@ -53,6 +53,11 @@ export class ThreadRuntime {
   // thread.get-history.
   private lastKnownConnectionState: ConnectionState = "disconnected";
   private lastKnownConnectionError: string | undefined;
+  // Set the instant sendMessage() persists the user's message (synchronous,
+  // before the actual agent round trip is awaited), cleared the instant
+  // completeTurn() fires — a revert mid-turn would force-overwrite the
+  // workspace out from under whatever the agent is actively doing to it.
+  private turnInFlight = false;
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
@@ -82,6 +87,7 @@ export class ThreadRuntime {
       content: [{ type: "text", text }],
       timestamp: new Date().toISOString(),
     });
+    this.turnInFlight = true;
     await this.options.session.sendMessage(text);
   }
 
@@ -103,6 +109,53 @@ export class ThreadRuntime {
 
   getConnectionState(): { state: ConnectionState; error: string | undefined } {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
+  }
+
+  /**
+   * Restores the workspace to an earlier checkpoint's snapshot, then
+   * captures that restored state as a brand-new forward checkpoint marked
+   * with which turn it reverted to — nothing is ever truncated or
+   * overwritten (matches spec #33's durable-checkpoint-history design), and
+   * `nextTurn` is never reset, so a normal send afterward just continues.
+   * Pure git + persistence — no ACP/agent-session interaction, so this is
+   * safe to run without the agent being involved at all.
+   */
+  async revertToCheckpoint(turn: number): Promise<{ newTurn: number }> {
+    if (this.turnInFlight) throw new Error("Cannot revert while a turn is still in flight");
+
+    const { threadId, cwd, checkpointStore, eventStore } = this.options;
+
+    // Snapshot whatever is currently on disk BEFORE overwriting it —
+    // restoreCheckpoint force-rewrites the real working tree, and not
+    // every byte on disk is necessarily protected by an earlier checkpoint
+    // (e.g. a hand-edit made outside the app, between two turns). Without
+    // this, that state would be silently and permanently lost with no
+    // checkpoint ref to recover it from. Left unmarked (not a revert
+    // itself) — its only job is to make sure nothing is ever discarded.
+    const safetyTurn = this.nextTurn++;
+    const safetyRef = checkpointStore.captureCheckpoint(threadId, safetyTurn, cwd);
+    eventStore.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId,
+      turn: safetyTurn,
+      ref: safetyRef,
+      timestamp: new Date().toISOString(),
+    });
+
+    checkpointStore.restoreCheckpoint(threadId, turn, cwd);
+
+    const newTurn = this.nextTurn++;
+    const ref = checkpointStore.captureCheckpoint(threadId, newTurn, cwd);
+    eventStore.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId,
+      turn: newTurn,
+      ref,
+      revertedToTurn: turn,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { newTurn };
   }
 
   private handleEvent(event: AcpSessionEvent): void {
@@ -153,6 +206,7 @@ export class ThreadRuntime {
 
   private completeTurn(): void {
     const { threadId, eventStore, checkpointStore, cwd } = this.options;
+    this.turnInFlight = false;
 
     for (const key of this.pendingAgentMessageOrder) {
       const content = this.pendingAgentMessages.get(key);

@@ -133,6 +133,39 @@ describe("web smoke: server + browser round trip", () => {
   );
 
   it(
+    "reverts a real checkpoint via the UI, actually rewriting the file on disk",
+    async () => {
+      // Turn 1 predates the "and a second line" edit from the previous test
+      // — reverting to it is a real, observable change, not a no-op.
+      await page.getByRole("button", { name: "Turn 1" }).click();
+      await page.waitForSelector("text=/revert/i", { timeout: 10_000 });
+
+      await page.getByRole("button", { name: /revert to this checkpoint/i }).click();
+
+      // handleRevertCheckpoint closes the whole diff panel (DiffView
+      // unmounts) on success — waiting for its always-present Close button
+      // to disappear (rather than a fixed sleep) proves the round trip
+      // actually completed, not just that the click registered. Using its
+      // aria-label ("Close diff") rather than a "revert" text match — the
+      // checkpoint strip's own new "reverted to turn 1" badge (asserted
+      // below) also contains "revert" and its parent button's accessible
+      // name would otherwise match too, since it's nested text.
+      await page.getByRole("button", { name: "Close diff" }).waitFor({ state: "detached", timeout: 15_000 });
+
+      expect(fs.readFileSync(path.join(repoDir, "notes.txt"), "utf8")).toBe("hello from the web smoke test\n");
+
+      // Two new checkpoints land from one revert: an unmarked safety
+      // snapshot of whatever was about to be overwritten (Turn 3), then
+      // the actual restored state (Turn 4, marked) — nothing is ever
+      // silently discarded.
+      await page.waitForSelector('button:has-text("Turn 4")', { timeout: 10_000 });
+      const turn4Text = await page.getByRole("button", { name: /turn 4/i }).textContent();
+      expect(turn4Text).toMatch(/reverted to turn 1/i);
+    },
+    30_000,
+  );
+
+  it(
     "shows the agent's mode catalog and switches modes via a real session/set_mode round trip",
     async () => {
       const modeSwitcher = page.getByRole("combobox", { name: /agent mode/i });
