@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { agent, methods } from "@agentclientprotocol/sdk";
 import { AcpSession } from "../../utility/acp-session.js";
 import { createFakeAgent, type FakeAgentStep } from "../../utility/fake-agent.js";
 import { EventStore } from "../persistence/event-store.js";
@@ -231,6 +232,69 @@ describe("ThreadRuntime", () => {
 
     await runtime.start();
     expect(runtime.getConnectionState()).toEqual({ state: "connected", error: undefined });
+  });
+
+  it("revertToCheckpoint restores the workspace and captures a new forward checkpoint marked with the turn it reverted to", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
+    await runtime.start(); // turn 0, file.txt = "hello\n"
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nturn 1\n");
+    await runtime.sendMessage("first"); // turn 1
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nturn 1\nturn 2\n");
+    await runtime.sendMessage("second"); // turn 2
+
+    const result = await runtime.revertToCheckpoint(1);
+
+    expect(result).toEqual({ newTurn: 3 });
+    expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\nturn 1\n");
+    expect(eventStore.listCheckpoints("thread-1").map((c) => ({ turn: c.turn, revertedToTurn: c.revertedToTurn }))).toEqual([
+      { turn: 0, revertedToTurn: null },
+      { turn: 1, revertedToTurn: null },
+      { turn: 2, revertedToTurn: null },
+      { turn: 3, revertedToTurn: 1 },
+    ]);
+  });
+
+  it("revertToCheckpoint doesn't reset the turn counter — a normal send afterward continues at the next sequential turn", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
+    await runtime.start(); // turn 0
+    await runtime.sendMessage("first"); // turn 1
+    await runtime.revertToCheckpoint(0); // turn 2 (reverted-to-0)
+
+    await runtime.sendMessage("second"); // should be turn 3, not colliding with anything
+
+    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("revertToCheckpoint rejects while a turn is still in flight", async () => {
+    // The standard fake agent resolves session/prompt synchronously/fast —
+    // no real in-flight window to observe. This one holds the request
+    // open until the test releases it, matching ws-server.test.ts's
+    // existing "refuses to promote while a turn is still in flight"
+    // precedent verbatim.
+    let releasePrompt: (() => void) | undefined;
+    const slowAgent = agent({ name: "slow-agent" })
+      .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+      .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+      .onRequest(
+        methods.agent.session.prompt,
+        () =>
+          new Promise((resolve) => {
+            releasePrompt = () => resolve({ stopReason: "end_turn" });
+          }),
+      );
+
+    const session = new AcpSession({ name: "argusde-server-test", cwd: repoDir, createTransport: () => slowAgent });
+    const runtime = new ThreadRuntime({ threadId: "thread-1", cwd: repoDir, session, eventStore, checkpointStore, onEvent: () => {} });
+    await runtime.start();
+
+    const sendPromise = runtime.sendMessage("hello");
+
+    await expect(runtime.revertToCheckpoint(0)).rejects.toThrow(/in flight/);
+
+    releasePrompt?.();
+    await sendPromise;
   });
 
   it("respondToPermission forwards to the underlying session, unblocking the turn", async () => {
