@@ -43,6 +43,8 @@ export function ensureSchema(db: Database.Database): void {
 
   addColumnIfMissing(db, "checkpoints", "reverted_to_turn", "INTEGER");
   addColumnIfMissing(db, "threads", "closed_at", "TEXT");
+  addColumnIfMissing(db, "events", "thread_id", "TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id)");
 }
 
 /**

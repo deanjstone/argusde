@@ -49,15 +49,43 @@ export class EventStore {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     ensureSchema(this.db);
+    this.backfillThreadId();
+  }
+
+  /**
+   * One-time backfill for rows written before the thread_id column existed
+   * — addColumnIfMissing only adds the column, it can't retroactively
+   * populate it, and listEventsForThread now filters by it at the SQL
+   * level (argusde#47). Cheap to re-run on every startup: after the first
+   * successful backfill, only genuinely thread-less events (project.created)
+   * still have a NULL thread_id, and there are always few of those for a
+   * personal-scale app.
+   */
+  private backfillThreadId(): void {
+    const rows = this.db.prepare("SELECT id, payload FROM events WHERE thread_id IS NULL").all() as {
+      id: number;
+      payload: string;
+    }[];
+    if (rows.length === 0) return;
+
+    const update = this.db.prepare("UPDATE events SET thread_id = ? WHERE id = ?");
+    const backfill = this.db.transaction(() => {
+      for (const row of rows) {
+        const event = JSON.parse(row.payload) as { threadId?: string };
+        if (event.threadId) update.run(event.threadId, row.id);
+      }
+    });
+    backfill();
   }
 
   appendEvent(event: DomainEvent): void {
     const insertEvent = this.db.prepare(
-      "INSERT INTO events (kind, payload, created_at) VALUES (?, ?, ?)",
+      "INSERT INTO events (kind, payload, thread_id, created_at) VALUES (?, ?, ?, ?)",
     );
 
     const apply = this.db.transaction((e: DomainEvent) => {
-      insertEvent.run(e.kind, JSON.stringify(e), e.timestamp);
+      const threadId = "threadId" in e ? e.threadId : null;
+      insertEvent.run(e.kind, JSON.stringify(e), threadId, e.timestamp);
       this.project(e);
     });
     apply(event);
@@ -159,10 +187,10 @@ export class EventStore {
    * it) — this is the durable source of truth in the meantime.
    */
   listEventsForThread(threadId: string): DomainEvent[] {
-    const rows = this.db.prepare("SELECT payload FROM events ORDER BY id").all() as { payload: string }[];
-    return rows
-      .map((row) => JSON.parse(row.payload) as DomainEvent)
-      .filter((event): event is DomainEvent & { threadId: string } => "threadId" in event && event.threadId === threadId);
+    const rows = this.db.prepare("SELECT payload FROM events WHERE thread_id = ? ORDER BY id").all(threadId) as {
+      payload: string;
+    }[];
+    return rows.map((row) => JSON.parse(row.payload) as DomainEvent);
   }
 
   listCheckpoints(threadId: string): CheckpointRecord[] {

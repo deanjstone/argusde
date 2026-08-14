@@ -509,4 +509,53 @@ describe("EventStore", () => {
     expect(events.map((e) => e.kind)).toEqual(["thread.created", "thread.message-recorded"]);
     expect(events.every((e) => "threadId" in e && e.threadId === "thread-1")).toBe(true);
   });
+
+  it("backfills thread_id for events written before the column existed, so listEventsForThread still finds them", () => {
+    // Same rationale and pattern as the reverted_to_turn/closed_at upgrade
+    // tests — a fresh path of its own, since beforeEach's `store` has
+    // already run ensureSchema with the current, already-upgraded shape.
+    // This one also has to hand-insert real event rows (not just an empty
+    // legacy table), because the thing under test is backfilling existing
+    // data, not just tolerating a missing column on write.
+    const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-events-"));
+    const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
+    const legacyDb = new Database(legacyDbPath);
+    legacyDb.exec(`
+      CREATE TABLE events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+    const insertLegacyEvent = legacyDb.prepare("INSERT INTO events (kind, payload, created_at) VALUES (?, ?, ?)");
+    const threadCreated = {
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-14T00:00:00.000Z",
+    };
+    const messageRecorded = {
+      kind: "thread.message-recorded",
+      threadId: "thread-1",
+      messageId: "msg-1",
+      role: "agent",
+      content: [{ type: "text", text: "hello" }],
+      timestamp: "2026-08-14T00:01:00.000Z",
+    };
+    insertLegacyEvent.run(threadCreated.kind, JSON.stringify(threadCreated), threadCreated.timestamp);
+    insertLegacyEvent.run(messageRecorded.kind, JSON.stringify(messageRecorded), messageRecorded.timestamp);
+    legacyDb.close();
+
+    const upgraded = new EventStore(legacyDbPath);
+    try {
+      const events = upgraded.listEventsForThread("thread-1");
+      expect(events.map((e) => e.kind)).toEqual(["thread.created", "thread.message-recorded"]);
+    } finally {
+      upgraded.close();
+      fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
+  });
 });
