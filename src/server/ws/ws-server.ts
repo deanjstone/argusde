@@ -27,6 +27,17 @@ export interface WsServerHandle {
   close(): Promise<void>;
 }
 
+/**
+ * Strips exactly one trailing slash — the realistic free-typed-input
+ * variance a project.create dedup check needs to tolerate, not full path
+ * canonicalization (resolving "..", symlinks, case-folding), which needs
+ * real filesystem access and varies by OS/filesystem — out of scope for a
+ * personal single-user app where this covers the common case.
+ */
+function normalizeWorkspaceRoot(workspaceRoot: string): string {
+  return workspaceRoot.length > 1 && workspaceRoot.endsWith("/") ? workspaceRoot.slice(0, -1) : workspaceRoot;
+}
+
 export async function startWsServer(options: WsServerOptions): Promise<WsServerHandle> {
   const { eventStore, checkpointStore, createSession } = options;
   const worktreeStore = options.worktreeStore ?? new WorktreeStore();
@@ -64,15 +75,21 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // which surfaces every existing Project right there) for a path
         // that already has one silently creates a duplicate row. Existing
         // project wins as-is (title included) — a duplicate submission
-        // doesn't rename it.
-        const existing = eventStore.getProjectByWorkspaceRoot(command.workspaceRoot);
+        // doesn't rename it. Normalized before both the lookup and the
+        // write (not just the lookup) — both WorkspaceSetup and the "+ New
+        // project" form are plain free-typed <Input> fields (only
+        // `.trim()`ed client-side), not guaranteed to echo back a prior
+        // exact string, so a bare trailing-slash retype is the realistic
+        // case this needs to tolerate.
+        const workspaceRoot = normalizeWorkspaceRoot(command.workspaceRoot);
+        const existing = eventStore.getProjectByWorkspaceRoot(workspaceRoot);
         if (existing) return { projectId: existing.id };
 
         const projectId = randomUUID();
         eventStore.appendEvent({
           kind: "project.created",
           projectId,
-          workspaceRoot: command.workspaceRoot,
+          workspaceRoot,
           title: command.title,
           timestamp: new Date().toISOString(),
         });

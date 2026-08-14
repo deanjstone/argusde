@@ -22,6 +22,11 @@ export function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root);
+  `);
+
+  createUniqueIndexIfSafe(db, "idx_projects_workspace_root_unique", "projects", "workspace_root");
+
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
@@ -61,6 +66,25 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   } catch (error) {
     if (error instanceof Error && /duplicate column name/i.test(error.message)) return;
+    throw error;
+  }
+}
+
+/**
+ * Attempts to upgrade the plain index on this column to a UNIQUE one, so the
+ * dedup invariant ws-server.ts's project.create handler relies on is also
+ * enforced at the schema level — not just by that one check-then-insert call
+ * site. Falls back silently to leaving the existing non-unique index in
+ * place when a real (pre-existing, already-dirty) database already has
+ * duplicate rows for this column: re-deduplicating that data would mean
+ * re-pointing foreign-key references from "losing" duplicate rows to a
+ * "winning" one, well beyond what this fix is for.
+ */
+function createUniqueIndexIfSafe(db: Database.Database, indexName: string, table: string, column: string): void {
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${indexName} ON ${table}(${column})`);
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) return;
     throw error;
   }
 }

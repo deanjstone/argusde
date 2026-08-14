@@ -159,6 +159,18 @@ describe("ws-server", () => {
     expect(eventStore.getProject(firstId)?.title).toBe("First title");
   }, 20_000);
 
+  it("project.create dedup tolerates a trailing slash — the realistic free-typed-input variance, not just a byte-identical resubmission", async () => {
+    const firstResult = await send({ type: "project.create", commandId: "dp3", workspaceRoot: repoDir, title: "P" });
+    const { projectId: firstId } = firstResult.ok ? (firstResult.result as { projectId: string }) : { projectId: "" };
+
+    const secondResult = await send({ type: "project.create", commandId: "dp4", workspaceRoot: `${repoDir}/`, title: "P" });
+    expect(secondResult.ok).toBe(true);
+    const { projectId: secondId } = secondResult.ok ? (secondResult.result as { projectId: string }) : { projectId: "" };
+
+    expect(secondId).toBe(firstId);
+    expect(eventStore.listProjects().filter((p) => p.workspaceRoot.replace(/\/$/, "") === repoDir)).toHaveLength(1);
+  }, 20_000);
+
   it("lists checkpoints and diffs two of them via the WS API, reflecting a real filesystem change", async () => {
     const projectResult = await send({ type: "project.create", commandId: "cp1", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
