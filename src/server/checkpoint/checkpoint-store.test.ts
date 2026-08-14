@@ -81,4 +81,38 @@ describe("CheckpointStore", () => {
     expect(git(["rev-parse", refA]).trim()).not.toBe("");
     expect(git(["rev-parse", refB]).trim()).not.toBe("");
   });
+
+  it("restoreCheckpoint rewrites the real working tree to match an earlier checkpoint, including deleting a file added afterward", () => {
+    store.captureBaseline("thread-1", repoDir);
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
+    store.captureCheckpoint("thread-1", 1, repoDir);
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\nagain\n");
+    fs.writeFileSync(path.join(repoDir, "new.txt"), "added at turn 2\n");
+    store.captureCheckpoint("thread-1", 2, repoDir);
+
+    store.restoreCheckpoint("thread-1", 1, repoDir);
+
+    expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\nworld\n");
+    expect(fs.existsSync(path.join(repoDir, "new.txt"))).toBe(false);
+  });
+
+  it("restoreCheckpoint restores a file that was deleted after the target turn", () => {
+    store.captureBaseline("thread-1", repoDir);
+    store.captureCheckpoint("thread-1", 1, repoDir);
+
+    fs.rmSync(path.join(repoDir, "file.txt"));
+    store.captureCheckpoint("thread-1", 2, repoDir);
+
+    store.restoreCheckpoint("thread-1", 1, repoDir);
+
+    expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
+  });
+
+  it("restoreCheckpoint throws a clear domain error for an unknown turn, not a raw git error", () => {
+    store.captureBaseline("thread-1", repoDir);
+
+    expect(() => store.restoreCheckpoint("thread-1", 99, repoDir)).toThrow(/Unknown checkpoint/);
+  });
 });

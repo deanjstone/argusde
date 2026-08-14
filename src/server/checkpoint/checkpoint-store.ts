@@ -44,6 +44,31 @@ export class CheckpointStore {
     const refB = refFor(threadId, turnB);
     return git(cwd, process.env, ["diff", `${refA}^{commit}`, `${refB}^{commit}`]);
   }
+
+  /**
+   * Rewrites the REAL working tree and index to exactly match an earlier
+   * checkpoint — unlike capture, this can't isolate itself behind a
+   * GIT_INDEX_FILE, since mutating the real workspace is the entire point.
+   * `read-tree -u --reset` replaces the index and working tree wholesale
+   * (deleting paths absent from the target tree, not just updating ones
+   * present in it), which plain `checkout <ref> -- .` would not do.
+   */
+  restoreCheckpoint(threadId: string, turn: number, cwd: string): void {
+    const ref = refFor(threadId, turn);
+    const exists = git(cwd, process.env, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], { allowFailure: true }) !== null;
+    if (!exists) throw new Error(`Unknown checkpoint ref: ${ref}`);
+
+    git(cwd, process.env, ["read-tree", "-u", "--reset", `${ref}^{commit}`]);
+    // read-tree only reconciles paths that were already in the real index —
+    // a file created after the target checkpoint but never `git add`ed for
+    // real (every capture stages into an isolated GIT_INDEX_FILE, never the
+    // real one) is untracked from the real index's perspective the whole
+    // time, so read-tree has no reason to touch it. Safe to sweep with
+    // clean -fd (no -x, matching capture's own gitignore-respecting `add
+    // -A`): anything present at the target checkpoint was itself captured
+    // via the same full-tree `add -A`, so it's never wrongly swept here.
+    git(cwd, process.env, ["clean", "-fd"]);
+  }
 }
 
 function refFor(threadId: string, turn: number): string {
