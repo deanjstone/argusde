@@ -1,4 +1,4 @@
-import type { AcpSessionEvent, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
+import type { AcpSessionEvent, ChatContentBlock, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
 import { appendOrMergeMessage, createMessageIdGenerator, upsertToolCall, type TimelineItem } from "../shared/timeline.js";
 
 export type { MessageRole, TimelineMessage, TimelineToolCall, TimelineItem } from "../shared/timeline.js";
@@ -49,7 +49,15 @@ export type ChatEvent =
   | { kind: "session-event"; threadId: string; event: AcpSessionEvent }
   | { kind: "protocol-error"; message: string }
   | { kind: "user-message-sent"; text: string }
-  | { kind: "permission-responded"; requestId: string };
+  | { kind: "permission-responded"; requestId: string }
+  | {
+      kind: "history-loaded";
+      messages: Array<{ messageId: string; role: "user" | "agent"; content: ChatContentBlock[] }>;
+      currentModeId: string | null;
+      availableModes: SessionModeSummary[];
+      connectionState: ConnectionState;
+      connectionError: string | undefined;
+    };
 
 const generateMessageId = createMessageIdGenerator();
 
@@ -130,5 +138,19 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
       return state.pendingPermissionRequest?.requestId === event.requestId
         ? { ...state, pendingPermissionRequest: undefined }
         : state;
+    case "history-loaded":
+      // A full "this is a different conversation now" reset — deliberately
+      // not appendOrMergeMessage's single-append semantics, which would
+      // merge this thread's history into whatever was already displayed.
+      return {
+        ...state,
+        timeline: event.messages.map((m) => ({ type: "message", id: m.messageId, role: m.role, content: m.content })),
+        currentModeId: event.currentModeId ?? undefined,
+        availableModes: event.availableModes,
+        connectionState: event.connectionState,
+        connectionError: event.connectionError,
+        pendingPermissionRequest: undefined,
+        agentStatus: "idle",
+      };
   }
 }

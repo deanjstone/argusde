@@ -43,6 +43,9 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     turnB: z.number(),
   }),
   z.object({ type: z.literal("thread.promote-to-worktree"), commandId: z.string(), threadId: z.string() }),
+  z.object({ type: z.literal("project.list"), commandId: z.string() }),
+  z.object({ type: z.literal("thread.list"), commandId: z.string(), projectId: z.string() }),
+  z.object({ type: z.literal("thread.get-history"), commandId: z.string(), threadId: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -57,6 +60,23 @@ export interface CheckpointRecord {
   threadId: string;
   turn: number;
   ref: string;
+  createdAt: string;
+}
+
+/** Canonical shapes for project.list/thread.list — shared for the same reason as CheckpointRecord above. */
+export interface ProjectRecord {
+  id: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: string;
+}
+
+export interface ThreadRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  worktreePath: string | null;
+  currentModeId: string | null;
   createdAt: string;
 }
 

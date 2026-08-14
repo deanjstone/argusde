@@ -1,5 +1,5 @@
 import type { AcpSession } from "../../utility/acp-session.js";
-import type { AcpSessionEvent, ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
+import type { AcpSessionEvent, ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../../shared/acp-events.js";
 import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 
@@ -38,6 +38,21 @@ export class ThreadRuntime {
   private pendingAgentMessages = new Map<string, ChatContentBlock[]>();
   private pendingAgentMessageOrder: string[] = [];
   private anonymousMessageCounter = 0;
+  // The mode catalog is never persisted — only ever broadcast live, once,
+  // from AcpSession.start(). Cached here (in memory, for this runtime's
+  // whole lifetime) so a client that switches to this Thread later, after
+  // missing that original broadcast, can still learn what modes it
+  // supports — see thread.get-history in ws-server.ts.
+  private lastKnownModes: SessionModeSummary[] = [];
+  // Same rationale as lastKnownModes, but this one genuinely changes across
+  // a session's lifetime (not just a one-shot catalog) — every
+  // "connection-state" event updates it, so a client that missed the live
+  // broadcast (the exact race that also motivated lastKnownModes: start()
+  // broadcasts synchronously before the triggering command's own response
+  // reaches the client) can still learn the current status via
+  // thread.get-history.
+  private lastKnownConnectionState: ConnectionState = "disconnected";
+  private lastKnownConnectionError: string | undefined;
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
@@ -82,14 +97,30 @@ export class ThreadRuntime {
     await this.options.session.dispose();
   }
 
+  getAvailableModes(): SessionModeSummary[] {
+    return this.lastKnownModes;
+  }
+
+  getConnectionState(): { state: ConnectionState; error: string | undefined } {
+    return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
+  }
+
   private handleEvent(event: AcpSessionEvent): void {
     this.options.onEvent(event);
 
     switch (event.kind) {
+      case "connection-state":
+        this.lastKnownConnectionState = event.state;
+        this.lastKnownConnectionError = event.error;
+        break;
       case "message-chunk":
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
         break;
       case "mode-changed":
+        // Only the session-start event carries the catalog — a mid-session
+        // change (client-requested or autonomous) doesn't, and must not
+        // wipe out the one already cached.
+        if (event.availableModes) this.lastKnownModes = event.availableModes;
         this.options.eventStore.appendEvent({
           kind: "thread.mode-changed",
           threadId: this.options.threadId,

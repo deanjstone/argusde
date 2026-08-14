@@ -309,6 +309,111 @@ describe("ws-server", () => {
     20_000,
   );
 
+  it("lists projects and lists a project's threads via the WS API", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "pl1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const thread1Result = await send({ type: "thread.create", commandId: "pl2", projectId, title: "First" });
+    const { threadId: threadId1 } = thread1Result.ok ? (thread1Result.result as { threadId: string }) : { threadId: "" };
+    const thread2Result = await send({ type: "thread.create", commandId: "pl3", projectId, title: "Second" });
+    const { threadId: threadId2 } = thread2Result.ok ? (thread2Result.result as { threadId: string }) : { threadId: "" };
+
+    const projectsResult = await send({ type: "project.list", commandId: "pl4" });
+    expect(projectsResult.ok).toBe(true);
+    const projects = projectsResult.ok ? (projectsResult.result as { id: string }[]) : [];
+    expect(projects.map((p) => p.id)).toContain(projectId);
+
+    const threadsResult = await send({ type: "thread.list", commandId: "pl5", projectId });
+    expect(threadsResult.ok).toBe(true);
+    const threads = threadsResult.ok ? (threadsResult.result as { id: string; title: string }[]) : [];
+    expect(threads.map((t) => t.id).sort()).toEqual([threadId1, threadId2].sort());
+    expect(threads.map((t) => t.title).sort()).toEqual(["First", "Second"]);
+  }, 20_000);
+
+  it("thread.get-history returns a thread's persisted messages, mode catalog, and worktree state", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "gh1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "gh2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "gh3", threadId, text: "what's broken?" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "gh4", threadId });
+    expect(historyResult.ok).toBe(true);
+    const history = historyResult.ok
+      ? (historyResult.result as {
+          threadId: string;
+          projectId: string;
+          title: string;
+          worktreePath: string | null;
+          currentModeId: string | null;
+          availableModes: unknown[];
+          messages: { role: string; content: unknown[] }[];
+        })
+      : null;
+
+    expect(history?.threadId).toBe(threadId);
+    expect(history?.projectId).toBe(projectId);
+    expect(history?.title).toBe("T");
+    expect(history?.worktreePath).toBeNull();
+    expect(history?.messages.map((m) => m.role)).toEqual(["user", "agent"]);
+    expect(history?.messages[0]?.content).toEqual([{ type: "text", text: "what's broken?" }]);
+    expect(history?.messages[1]?.content).toEqual([{ type: "text", text: "the fix is ready" }]);
+  }, 20_000);
+
+  it("thread.get-history includes the connected runtime's last-known connection state, not just its mode/message history", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cs1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cs2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "cs3", threadId });
+    expect(historyResult.ok).toBe(true);
+    const history = historyResult.ok ? (historyResult.result as { connectionState: string; connectionError: string | undefined }) : null;
+    expect(history?.connectionState).toBe("connected");
+    expect(history?.connectionError).toBeUndefined();
+  }, 20_000);
+
+  it("thread.get-history includes the mode catalog cached from a still-live runtime, even though it's never persisted", async () => {
+    process.env.ARGUSDE_FAKE_AGENT_MODES = JSON.stringify({
+      currentModeId: "default",
+      availableModes: [
+        { id: "default", name: "Default" },
+        { id: "plan", name: "Plan" },
+      ],
+    });
+    try {
+      const projectResult = await send({ type: "project.create", commandId: "gh5", workspaceRoot: repoDir, title: "P" });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: "gh6", projectId, title: "T" });
+      const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+      const historyResult = await send({ type: "thread.get-history", commandId: "gh7", threadId });
+      expect(historyResult.ok).toBe(true);
+      const availableModes = historyResult.ok ? (historyResult.result as { availableModes: { id: string }[] }).availableModes : [];
+      expect(availableModes.map((m) => m.id)).toEqual(["default", "plan"]);
+    } finally {
+      delete process.env.ARGUSDE_FAKE_AGENT_MODES;
+    }
+  }, 20_000);
+
+  it("a Thread's live events don't bleed into another Thread's history — cross-thread isolation at the protocol level", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "ci1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadAResult = await send({ type: "thread.create", commandId: "ci2", projectId, title: "A" });
+    const { threadId: threadIdA } = threadAResult.ok ? (threadAResult.result as { threadId: string }) : { threadId: "" };
+    const threadBResult = await send({ type: "thread.create", commandId: "ci3", projectId, title: "B" });
+    const { threadId: threadIdB } = threadBResult.ok ? (threadBResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "ci4", threadId: threadIdA, text: "hello from A" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadIdA && m.event.kind === "turn-complete"));
+
+    const historyB = await send({ type: "thread.get-history", commandId: "ci5", threadId: threadIdB });
+    expect(historyB.ok).toBe(true);
+    const messagesB = historyB.ok ? (historyB.result as { messages: unknown[] }).messages : [];
+    expect(messagesB).toEqual([]);
+  }, 20_000);
+
   it(
     "replies with ok: false and an error message for a command referencing an unknown thread",
     async () => {

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { PermissionOutcome } from "../shared/acp-events.js";
-import { WS_PATH, type CheckpointRecord } from "../shared/ws-protocol.js";
+import type { ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
+import { WS_PATH, type CheckpointRecord, type ProjectRecord, type ThreadRecord } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
 import { ChatView, type DiffState } from "./components/chat-view.js";
 import { TabBar, type Tab } from "./components/tab-bar.js";
+import { ProjectPicker } from "./components/project-picker.js";
+import { ThreadList } from "./components/thread-list.js";
 
 interface SetupState {
   submitting: boolean;
@@ -14,8 +16,15 @@ interface SetupState {
 
 interface ThreadInfo {
   threadId: string;
+  projectId: string;
   title: string;
   worktreePath: string | null;
+}
+
+interface ThreadHistoryMessage {
+  messageId: string;
+  role: "user" | "agent";
+  content: ChatContentBlock[];
 }
 
 const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
@@ -37,10 +46,34 @@ export function App() {
   const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
   const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
   const [promoting, setPromoting] = useState(false);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [creatingThread, setCreatingThread] = useState(false);
   // Guards against an in-flight fetchDiff call overwriting a *later* one's
   // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
   // request already rendered, which would silently show a stale diff.
   const diffRequestRef = useRef(0);
+  // Same request-ordering guard as diffRequestRef, one per independently-
+  // refreshable list — see refreshProjects/refreshThreads below.
+  const projectsRequestIdRef = useRef(0);
+  const threadsRequestIdRef = useRef(0);
+  // The WS push handler below is registered once (in a [] useEffect) and
+  // would otherwise read a stale `thread` from mount time — this ref is
+  // kept in sync so it can filter out a *different* Thread's live events
+  // without a stale-closure bug. Without this filter, a background Thread
+  // (nothing stops creating one) would silently bleed its streamed events
+  // into whatever Thread is currently being viewed.
+  //
+  // Set synchronously inside becomeActiveThread (the only place the active
+  // Thread ever changes), NOT via a useEffect keyed on `thread` — a passive
+  // effect runs asynchronously after commit/paint, leaving a real gap
+  // during which a live event for the Thread just switched to would still
+  // read the *previous* Thread's id here and get dropped. Writing the ref
+  // in the same synchronous call as setThread (no `await` in between)
+  // closes that gap entirely — nothing else in JS can run mid-function.
+  const activeThreadIdRef = useRef<string | null>(null);
 
   async function refreshCheckpoints(threadId: string) {
     const client = clientRef.current;
@@ -68,8 +101,13 @@ export function App() {
           setConnected(true);
           break;
         case "session.event":
-          setChatState((s) => chatStateReducer(s, { kind: "session-event", threadId: push.threadId, event: push.event }));
-          if (push.event.kind === "turn-complete") void refreshCheckpoints(push.threadId);
+          // Only the currently-active Thread's events reach chat state — a
+          // background Thread's events are still received (the connection
+          // is shared) but silently dropped for UI purposes.
+          if (push.threadId === activeThreadIdRef.current) {
+            setChatState((s) => chatStateReducer(s, { kind: "session-event", threadId: push.threadId, event: push.event }));
+            if (push.event.kind === "turn-complete") void refreshCheckpoints(push.threadId);
+          }
           break;
         case "protocol-error":
           setChatState((s) => chatStateReducer(s, { kind: "protocol-error", message: push.message }));
@@ -84,6 +122,33 @@ export function App() {
       client.close();
     };
   }, []);
+
+  /**
+   * The shared "this is the active Thread now" tail — used whether the
+   * Thread is brand new (empty history) or an existing one whose history
+   * was just fetched via thread.get-history. A full chat-state reset (not
+   * appendOrMergeMessage's append semantics) since this may be an entirely
+   * different conversation than whatever was showing before.
+   */
+  function becomeActiveThread(
+    info: ThreadInfo,
+    messages: ThreadHistoryMessage[],
+    currentModeId: string | null,
+    availableModes: SessionModeSummary[],
+    connectionState: ConnectionState,
+    connectionError: string | undefined,
+  ) {
+    activeThreadIdRef.current = info.threadId;
+    setThread(info);
+    setChatState((s) =>
+      chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
+    );
+    setDiff(EMPTY_DIFF);
+    setActiveTurn(undefined);
+    setSelectedProjectId(null);
+    setTab("chat");
+    void refreshCheckpoints(info.threadId);
+  }
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
     const client = clientRef.current;
@@ -100,11 +165,143 @@ export function App() {
         projectId,
         title: workspaceRoot,
       });
-      setThread({ threadId, title: workspaceRoot, worktreePath: null });
+      await loadThreadHistoryAndBecomeActive(threadId);
       setSetup({ submitting: false });
-      void refreshCheckpoints(threadId);
     } catch (error) {
       setSetup({ submitting: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  async function refreshProjects() {
+    const client = clientRef.current;
+    if (!client) return;
+    const requestId = ++projectsRequestIdRef.current;
+    try {
+      const result = await client.sendCommand<ProjectRecord[]>({ type: "project.list" });
+      // A newer refreshProjects call already resolved (or is in flight) —
+      // applying this older response now would overwrite it with stale data.
+      if (requestId !== projectsRequestIdRef.current) return;
+      setProjects(result);
+    } catch (error) {
+      console.error("Failed to load projects:", error);
+    }
+  }
+
+  async function refreshThreads(projectId: string) {
+    const client = clientRef.current;
+    if (!client) return;
+    const requestId = ++threadsRequestIdRef.current;
+    try {
+      const result = await client.sendCommand<ThreadRecord[]>({ type: "thread.list", projectId });
+      // Same rationale as refreshProjects above — e.g. selecting Project A
+      // then quickly selecting Project B before A's slower response lands
+      // must not let A's threads overwrite B's already-rendered list.
+      if (requestId !== threadsRequestIdRef.current) return;
+      setThreadsInProject(result);
+    } catch (error) {
+      console.error("Failed to load threads:", error);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "threads" && selectedProjectId === null) void refreshProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedProjectId]);
+
+  useEffect(() => {
+    if (selectedProjectId) void refreshThreads(selectedProjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId]);
+
+  /**
+   * Fetches a just-created (or existing) Thread's full state via
+   * thread.get-history and adopts it as the active Thread — deliberately
+   * NOT hardcoding empty history/null mode/no catalog for a brand-new
+   * Thread. ThreadRuntime.start() broadcasts its session-start event
+   * (carrying the mode catalog) synchronously, before the thread.create
+   * command's own response is sent — so that broadcast reaches the client
+   * before `thread` state (and activeThreadIdRef) is set to the new
+   * Thread's id, and the cross-thread event filter correctly drops it as
+   * not-yet-active. Re-fetching via get-history reads the same catalog
+   * back from ThreadRuntime's cache instead of racing the live broadcast.
+   */
+  async function loadThreadHistoryAndBecomeActive(threadId: string) {
+    const client = clientRef.current;
+    if (!client) return;
+    const history = await client.sendCommand<{
+      threadId: string;
+      projectId: string;
+      title: string;
+      worktreePath: string | null;
+      currentModeId: string | null;
+      availableModes: SessionModeSummary[];
+      connectionState: ConnectionState;
+      connectionError: string | undefined;
+      messages: ThreadHistoryMessage[];
+    }>({ type: "thread.get-history", threadId });
+
+    becomeActiveThread(
+      { threadId: history.threadId, projectId: history.projectId, title: history.title, worktreePath: history.worktreePath },
+      history.messages,
+      history.currentModeId,
+      history.availableModes,
+      history.connectionState,
+      history.connectionError,
+    );
+  }
+
+  async function handleSelectThread(threadId: string) {
+    try {
+      await loadThreadHistoryAndBecomeActive(threadId);
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    }
+  }
+
+  async function handleCreateProject(workspaceRoot: string) {
+    const client = clientRef.current;
+    if (!client || creatingProject) return;
+    setCreatingProject(true);
+    try {
+      const { projectId } = await client.sendCommand<{ projectId: string }>({
+        type: "project.create",
+        workspaceRoot,
+        title: workspaceRoot,
+      });
+      const { threadId } = await client.sendCommand<{ threadId: string }>({
+        type: "thread.create",
+        projectId,
+        title: workspaceRoot,
+      });
+      await loadThreadHistoryAndBecomeActive(threadId);
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  async function handleCreateThread(title: string) {
+    const client = clientRef.current;
+    if (!client || !selectedProjectId || creatingThread) return;
+    setCreatingThread(true);
+    try {
+      const { threadId } = await client.sendCommand<{ threadId: string }>({
+        type: "thread.create",
+        projectId: selectedProjectId,
+        title,
+      });
+      await loadThreadHistoryAndBecomeActive(threadId);
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      setCreatingThread(false);
     }
   }
 
@@ -234,12 +431,23 @@ export function App() {
             promoting={promoting}
           />
         )}
-        {tab === "threads" && (
-          <div className="flex h-full flex-col bg-neutral-950 p-4 text-neutral-100">
-            <h2 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Threads</h2>
-            <div className="rounded-lg bg-neutral-900 px-3 py-2.5 text-sm">{thread.title}</div>
-          </div>
-        )}
+        {tab === "threads" &&
+          (selectedProjectId === null ? (
+            <ProjectPicker
+              projects={projects}
+              onSelectProject={setSelectedProjectId}
+              onCreateProject={(workspaceRoot) => void handleCreateProject(workspaceRoot)}
+              creating={creatingProject}
+            />
+          ) : (
+            <ThreadList
+              threads={threadsInProject}
+              onSelectThread={(threadId) => void handleSelectThread(threadId)}
+              onCreateThread={(title) => void handleCreateThread(title)}
+              onBack={() => setSelectedProjectId(null)}
+              creating={creatingThread}
+            />
+          ))}
         {tab === "settings" && (
           <div className="flex h-full flex-col gap-2 bg-neutral-950 p-4 text-sm text-neutral-100">
             <h2 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Connection</h2>

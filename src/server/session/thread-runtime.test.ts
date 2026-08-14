@@ -189,6 +189,50 @@ describe("ThreadRuntime", () => {
     );
   });
 
+  it("getAvailableModes() returns the catalog cached from start(), and it survives a later mode-changed event with no catalog of its own", async () => {
+    const session = new AcpSession({
+      name: "argusde-server-test",
+      cwd: repoDir,
+      createTransport: () =>
+        createFakeAgent({
+          steps: [{ type: "mode-change", modeId: "plan" }],
+          modes: {
+            currentModeId: "default",
+            availableModes: [
+              { id: "default", name: "Default" },
+              { id: "plan", name: "Plan" },
+            ],
+          },
+        }),
+    });
+    const runtime = new ThreadRuntime({ threadId: "thread-1", cwd: repoDir, session, eventStore, checkpointStore, onEvent: () => {} });
+
+    expect(runtime.getAvailableModes()).toEqual([]);
+
+    await runtime.start();
+    expect(runtime.getAvailableModes()).toEqual([
+      { id: "default", name: "Default" },
+      { id: "plan", name: "Plan" },
+    ]);
+
+    // A later, real mid-session mode change carries no catalog of its own —
+    // must not wipe out the one already cached from start().
+    await runtime.sendMessage("switch to plan mode");
+    expect(runtime.getAvailableModes()).toEqual([
+      { id: "default", name: "Default" },
+      { id: "plan", name: "Plan" },
+    ]);
+  });
+
+  it("getConnectionState() reflects the last-known connection status, defaulting to disconnected before start()", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "hi there" }], () => {});
+
+    expect(runtime.getConnectionState()).toEqual({ state: "disconnected", error: undefined });
+
+    await runtime.start();
+    expect(runtime.getConnectionState()).toEqual({ state: "connected", error: undefined });
+  });
+
   it("respondToPermission forwards to the underlying session, unblocking the turn", async () => {
     const events: AcpSessionEvent[] = [];
     const runtime = runtimeWithSteps(

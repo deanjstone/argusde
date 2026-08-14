@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
 import { ensureSchema } from "./schema.js";
 import type { ChatContentBlock } from "../../shared/acp-events.js";
-import type { CheckpointRecord } from "../../shared/ws-protocol.js";
+import type { CheckpointRecord, ProjectRecord, ThreadRecord } from "../../shared/ws-protocol.js";
 
-export type { CheckpointRecord };
+export type { CheckpointRecord, ProjectRecord, ThreadRecord };
 
 export type DomainEvent =
   | { kind: "project.created"; projectId: string; workspaceRoot: string; title: string; timestamp: string }
@@ -26,22 +26,6 @@ export type DomainEvent =
     }
   | { kind: "thread.mode-changed"; threadId: string; modeId: string; timestamp: string }
   | { kind: "thread.worktree-promoted"; threadId: string; worktreePath: string; timestamp: string };
-
-export interface ProjectRecord {
-  id: string;
-  workspaceRoot: string;
-  title: string;
-  createdAt: string;
-}
-
-export interface ThreadRecord {
-  id: string;
-  projectId: string;
-  title: string;
-  worktreePath: string | null;
-  currentModeId: string | null;
-  createdAt: string;
-}
 
 /**
  * Append-only event log plus the SQLite read-model projected from it.
