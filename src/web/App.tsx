@@ -55,16 +55,25 @@ export function App() {
   // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
   // request already rendered, which would silently show a stale diff.
   const diffRequestRef = useRef(0);
+  // Same request-ordering guard as diffRequestRef, one per independently-
+  // refreshable list — see refreshProjects/refreshThreads below.
+  const projectsRequestIdRef = useRef(0);
+  const threadsRequestIdRef = useRef(0);
   // The WS push handler below is registered once (in a [] useEffect) and
   // would otherwise read a stale `thread` from mount time — this ref is
   // kept in sync so it can filter out a *different* Thread's live events
   // without a stale-closure bug. Without this filter, a background Thread
   // (nothing stops creating one) would silently bleed its streamed events
   // into whatever Thread is currently being viewed.
+  //
+  // Set synchronously inside becomeActiveThread (the only place the active
+  // Thread ever changes), NOT via a useEffect keyed on `thread` — a passive
+  // effect runs asynchronously after commit/paint, leaving a real gap
+  // during which a live event for the Thread just switched to would still
+  // read the *previous* Thread's id here and get dropped. Writing the ref
+  // in the same synchronous call as setThread (no `await` in between)
+  // closes that gap entirely — nothing else in JS can run mid-function.
   const activeThreadIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    activeThreadIdRef.current = thread?.threadId ?? null;
-  }, [thread]);
 
   async function refreshCheckpoints(threadId: string) {
     const client = clientRef.current;
@@ -129,6 +138,7 @@ export function App() {
     connectionState: ConnectionState,
     connectionError: string | undefined,
   ) {
+    activeThreadIdRef.current = info.threadId;
     setThread(info);
     setChatState((s) =>
       chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
@@ -165,8 +175,12 @@ export function App() {
   async function refreshProjects() {
     const client = clientRef.current;
     if (!client) return;
+    const requestId = ++projectsRequestIdRef.current;
     try {
       const result = await client.sendCommand<ProjectRecord[]>({ type: "project.list" });
+      // A newer refreshProjects call already resolved (or is in flight) —
+      // applying this older response now would overwrite it with stale data.
+      if (requestId !== projectsRequestIdRef.current) return;
       setProjects(result);
     } catch (error) {
       console.error("Failed to load projects:", error);
@@ -176,8 +190,13 @@ export function App() {
   async function refreshThreads(projectId: string) {
     const client = clientRef.current;
     if (!client) return;
+    const requestId = ++threadsRequestIdRef.current;
     try {
       const result = await client.sendCommand<ThreadRecord[]>({ type: "thread.list", projectId });
+      // Same rationale as refreshProjects above — e.g. selecting Project A
+      // then quickly selecting Project B before A's slower response lands
+      // must not let A's threads overwrite B's already-rendered list.
+      if (requestId !== threadsRequestIdRef.current) return;
       setThreadsInProject(result);
     } catch (error) {
       console.error("Failed to load threads:", error);
