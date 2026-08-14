@@ -1,5 +1,5 @@
 import type { AcpSession } from "../../utility/acp-session.js";
-import type { AcpSessionEvent, ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
+import type { AcpSessionEvent, ChatContentBlock, PermissionOutcome, SessionModeSummary } from "../../shared/acp-events.js";
 import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 
@@ -38,6 +38,12 @@ export class ThreadRuntime {
   private pendingAgentMessages = new Map<string, ChatContentBlock[]>();
   private pendingAgentMessageOrder: string[] = [];
   private anonymousMessageCounter = 0;
+  // The mode catalog is never persisted — only ever broadcast live, once,
+  // from AcpSession.start(). Cached here (in memory, for this runtime's
+  // whole lifetime) so a client that switches to this Thread later, after
+  // missing that original broadcast, can still learn what modes it
+  // supports — see thread.get-history in ws-server.ts.
+  private lastKnownModes: SessionModeSummary[] = [];
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
@@ -82,6 +88,10 @@ export class ThreadRuntime {
     await this.options.session.dispose();
   }
 
+  getAvailableModes(): SessionModeSummary[] {
+    return this.lastKnownModes;
+  }
+
   private handleEvent(event: AcpSessionEvent): void {
     this.options.onEvent(event);
 
@@ -90,6 +100,10 @@ export class ThreadRuntime {
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
         break;
       case "mode-changed":
+        // Only the session-start event carries the catalog — a mid-session
+        // change (client-requested or autonomous) doesn't, and must not
+        // wipe out the one already cached.
+        if (event.availableModes) this.lastKnownModes = event.availableModes;
         this.options.eventStore.appendEvent({
           kind: "thread.mode-changed",
           threadId: this.options.threadId,
