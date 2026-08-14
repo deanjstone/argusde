@@ -30,6 +30,36 @@ interface ThreadHistoryMessage {
 
 const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
 
+const LAST_ACTIVE_THREAD_KEY = "argusde:lastActiveThreadId";
+
+// Small pure read/write functions, matching src/main/server-config.ts's own
+// persistence shape (fail-soft on any error, sane default, no library) —
+// localStorage can throw in some browser storage/privacy configurations,
+// and losing reload-resume is a soft failure, never worth crashing over.
+function readLastActiveThreadId(): string | null {
+  try {
+    return localStorage.getItem(LAST_ACTIVE_THREAD_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastActiveThreadId(threadId: string): void {
+  try {
+    localStorage.setItem(LAST_ACTIVE_THREAD_KEY, threadId);
+  } catch {
+    // best-effort only
+  }
+}
+
+function clearLastActiveThreadId(): void {
+  try {
+    localStorage.removeItem(LAST_ACTIVE_THREAD_KEY);
+  } catch {
+    // best-effort only
+  }
+}
+
 /**
  * Thin composition root — wires WsClient + the chat-state reducer + the
  * three components together. Not unit-tested directly (same precedent as
@@ -68,6 +98,11 @@ export function App() {
   // that nulls `thread` without that ordering would silently reintroduce
   // this exact regression.
   const [hasEverHadThread, setHasEverHadThread] = useState(false);
+  // Starts true unconditionally — resolved to false in the same tick
+  // server.welcome arrives, whether or not there's actually a remembered
+  // Thread to restore (see attemptSessionRestore below), so a fresh
+  // install sees no extra delay beyond the existing !connected gate.
+  const [restoring, setRestoring] = useState(true);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
@@ -121,6 +156,7 @@ export function App() {
         case "server.welcome":
           setChatState((s) => chatStateReducer(s, { kind: "welcome", apiVersion: push.apiVersion }));
           setConnected(true);
+          void attemptSessionRestore();
           break;
         case "session.event":
           // Only the currently-active Thread's events reach chat state — a
@@ -163,6 +199,7 @@ export function App() {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
     setHasEverHadThread(true);
+    writeLastActiveThreadId(info.threadId);
     setChatState((s) =>
       chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
     );
@@ -278,6 +315,34 @@ export function App() {
       history.connectionState,
       history.connectionError,
     );
+  }
+
+  /**
+   * Called once, from the WS push handler's server.welcome case — attempts
+   * to restore whichever Thread was most recently active (spec #33 Story
+   * 28), so a reload doesn't force the user back through first-run setup
+   * or a manual Projects→Threads drill-down. Reuses
+   * loadThreadHistoryAndBecomeActive as-is: a closed Thread, or one whose
+   * server-side runtime isn't currently live, still resolves and renders
+   * correctly (Phase 11), so this needs no special-casing for either. If
+   * the remembered id no longer resolves at all (e.g. a wiped/replaced
+   * database), the stale reference is cleared so a future reload doesn't
+   * keep repeating a futile round trip — falls through to the normal
+   * `!thread && !hasEverHadThread` → WorkspaceSetup gate either way.
+   */
+  async function attemptSessionRestore() {
+    const rememberedThreadId = readLastActiveThreadId();
+    if (!rememberedThreadId) {
+      setRestoring(false);
+      return;
+    }
+    try {
+      await loadThreadHistoryAndBecomeActive(rememberedThreadId);
+    } catch {
+      clearLastActiveThreadId();
+    } finally {
+      setRestoring(false);
+    }
   }
 
   async function handleSelectThread(threadId: string) {
@@ -463,10 +528,10 @@ export function App() {
     setChatState((s) => chatStateReducer(s, { kind: "permission-responded", requestId }));
   }
 
-  if (!connected) {
+  if (!connected || restoring) {
     return (
       <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
-        <p className="text-sm">Connecting…</p>
+        <p className="text-sm">{restoring ? "Restoring your last session…" : "Connecting…"}</p>
       </div>
     );
   }
