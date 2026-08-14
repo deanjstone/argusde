@@ -14,6 +14,8 @@ describe("chatStateReducer", () => {
       pendingPermissionRequest: undefined,
       agentStatus: "idle",
       apiVersion: undefined,
+      currentModeId: undefined,
+      availableModes: [],
     });
   });
 
@@ -136,6 +138,53 @@ describe("chatStateReducer", () => {
     expect(userMessages.map((m) => (m.type === "message" ? m.content : null))).toEqual([
       [{ type: "text", text: "first question" }],
       [{ type: "text", text: "second question" }],
+    ]);
+  });
+
+  it("records the mode catalog and current mode from an initial mode-changed event (with availableModes)", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "mode-changed",
+          modeId: "default",
+          availableModes: [
+            { id: "default", name: "Default" },
+            { id: "plan", name: "Plan", description: "Plan before editing" },
+          ],
+        },
+      },
+    ]);
+
+    expect(state.currentModeId).toBe("default");
+    expect(state.availableModes).toEqual([
+      { id: "default", name: "Default" },
+      { id: "plan", name: "Plan", description: "Plan before editing" },
+    ]);
+  });
+
+  it("updates only currentModeId on a later mode-changed event with no availableModes, leaving the catalog untouched", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "mode-changed",
+          modeId: "default",
+          availableModes: [
+            { id: "default", name: "Default" },
+            { id: "plan", name: "Plan" },
+          ],
+        },
+      },
+      { kind: "session-event", threadId: "t1", event: { kind: "mode-changed", modeId: "plan" } },
+    ]);
+
+    expect(state.currentModeId).toBe("plan");
+    expect(state.availableModes).toEqual([
+      { id: "default", name: "Default" },
+      { id: "plan", name: "Plan" },
     ]);
   });
 

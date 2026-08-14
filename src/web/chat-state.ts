@@ -1,4 +1,4 @@
-import type { AcpSessionEvent, ConnectionState } from "../shared/acp-events.js";
+import type { AcpSessionEvent, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
 import { appendOrMergeMessage, createMessageIdGenerator, upsertToolCall, type TimelineItem } from "../shared/timeline.js";
 
 export type { MessageRole, TimelineMessage, TimelineToolCall, TimelineItem } from "../shared/timeline.js";
@@ -18,6 +18,9 @@ export interface ChatState {
   agentStatus: "idle" | "working";
   /** From the server's welcome push — shown on the Settings tab. */
   apiVersion: string | undefined;
+  currentModeId: string | undefined;
+  /** The mode catalog, learned once from the session-start mode-changed event — empty when the connected agent doesn't advertise modes at all. */
+  availableModes: SessionModeSummary[];
 }
 
 export const initialChatState: ChatState = {
@@ -27,6 +30,8 @@ export const initialChatState: ChatState = {
   pendingPermissionRequest: undefined,
   agentStatus: "idle",
   apiVersion: undefined,
+  currentModeId: undefined,
+  availableModes: [],
 };
 
 /**
@@ -74,8 +79,16 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
       };
     case "turn-complete":
       return { ...state, agentStatus: "idle" };
-    case "plan":
     case "mode-changed":
+      return {
+        ...state,
+        currentModeId: event.modeId,
+        // Only the session-start event carries the catalog — a mid-session
+        // current_mode_update has no availableModes, and mustn't clobber
+        // the one already learned.
+        availableModes: event.availableModes ?? state.availableModes,
+      };
+    case "plan":
       return state;
   }
 }
