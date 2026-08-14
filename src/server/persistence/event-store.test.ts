@@ -42,6 +42,25 @@ describe("EventStore", () => {
     expect(store.getProject("missing")).toBeUndefined();
   });
 
+  it("getProjectByWorkspaceRoot finds an existing project by its exact workspaceRoot, or returns undefined", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/home/deanj/repos/argusde",
+      title: "ArgusDE",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+
+    expect(store.getProjectByWorkspaceRoot("/home/deanj/repos/argusde")).toEqual({
+      id: "proj-1",
+      workspaceRoot: "/home/deanj/repos/argusde",
+      title: "ArgusDE",
+      createdAt: "2026-08-13T00:00:00.000Z",
+    });
+    expect(store.getProjectByWorkspaceRoot("/home/deanj/repos/argusde/")).toBeUndefined();
+    expect(store.getProjectByWorkspaceRoot("/no/such/path")).toBeUndefined();
+  });
+
   it("projects a thread.created event into listThreads/getThread, scoped by project", () => {
     store.appendEvent({
       kind: "project.created",

@@ -145,6 +145,20 @@ describe("ws-server", () => {
     expect(eventStore.listCheckpoints(threadId).map((c) => c.turn)).toEqual([0, 1]);
   }, 20_000);
 
+  it("project.create is idempotent by workspaceRoot — a second call for the same path returns the existing project, not a duplicate", async () => {
+    const firstResult = await send({ type: "project.create", commandId: "dp1", workspaceRoot: repoDir, title: "First title" });
+    const { projectId: firstId } = firstResult.ok ? (firstResult.result as { projectId: string }) : { projectId: "" };
+
+    const secondResult = await send({ type: "project.create", commandId: "dp2", workspaceRoot: repoDir, title: "Second title" });
+    expect(secondResult.ok).toBe(true);
+    const { projectId: secondId } = secondResult.ok ? (secondResult.result as { projectId: string }) : { projectId: "" };
+
+    expect(secondId).toBe(firstId);
+    expect(eventStore.listProjects().filter((p) => p.workspaceRoot === repoDir)).toHaveLength(1);
+    // The original title is kept — a duplicate submission doesn't silently rename the existing project.
+    expect(eventStore.getProject(firstId)?.title).toBe("First title");
+  }, 20_000);
+
   it("lists checkpoints and diffs two of them via the WS API, reflecting a real filesystem change", async () => {
     const projectResult = await send({ type: "project.create", commandId: "cp1", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };

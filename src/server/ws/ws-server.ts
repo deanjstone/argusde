@@ -59,6 +59,15 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   async function handleCommand(command: ClientCommand): Promise<unknown> {
     switch (command.type) {
       case "project.create": {
+        // Idempotent by workspaceRoot — otherwise every resubmission of
+        // WorkspaceSetup (or the Threads tab's own "+ New project" form,
+        // which surfaces every existing Project right there) for a path
+        // that already has one silently creates a duplicate row. Existing
+        // project wins as-is (title included) — a duplicate submission
+        // doesn't rename it.
+        const existing = eventStore.getProjectByWorkspaceRoot(command.workspaceRoot);
+        if (existing) return { projectId: existing.id };
+
         const projectId = randomUUID();
         eventStore.appendEvent({
           kind: "project.created",

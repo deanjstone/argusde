@@ -21,6 +21,7 @@ export function ensureSchema(db: Database.Database): void {
       title TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root);
 
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
