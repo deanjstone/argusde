@@ -558,4 +558,43 @@ describe("EventStore", () => {
       fs.rmSync(legacyDbDir, { recursive: true, force: true });
     }
   });
+
+  it("skips a malformed payload during thread_id backfill rather than crashing startup for every thread", () => {
+    // A single corrupted row (crash mid-write, manual edit, whatever the
+    // cause) shouldn't take down the whole app on the next startup —
+    // review finding on argusde#47's backfill. The good row alongside it
+    // must still backfill and remain readable.
+    const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-malformed-"));
+    const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
+    const legacyDb = new Database(legacyDbPath);
+    legacyDb.exec(`
+      CREATE TABLE events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+    const insertLegacyEvent = legacyDb.prepare("INSERT INTO events (kind, payload, created_at) VALUES (?, ?, ?)");
+    const threadCreated = {
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-14T00:00:00.000Z",
+    };
+    insertLegacyEvent.run(threadCreated.kind, JSON.stringify(threadCreated), threadCreated.timestamp);
+    insertLegacyEvent.run("thread.message-recorded", "{not valid json", "2026-08-14T00:01:00.000Z");
+    legacyDb.close();
+
+    let upgraded: EventStore | undefined;
+    try {
+      expect(() => (upgraded = new EventStore(legacyDbPath))).not.toThrow();
+      expect(upgraded!.listEventsForThread("thread-1").map((e) => e.kind)).toEqual(["thread.created"]);
+    } finally {
+      upgraded?.close();
+      fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
+  });
 });

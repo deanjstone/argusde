@@ -56,22 +56,29 @@ export class EventStore {
    * One-time backfill for rows written before the thread_id column existed
    * — addColumnIfMissing only adds the column, it can't retroactively
    * populate it, and listEventsForThread now filters by it at the SQL
-   * level (argusde#47). Cheap to re-run on every startup: after the first
-   * successful backfill, only genuinely thread-less events (project.created)
-   * still have a NULL thread_id, and there are always few of those for a
-   * personal-scale app.
+   * level (argusde#47). Excludes kind = 'project.created' (the only event
+   * with no threadId at all) so this scan only ever re-examines rows that
+   * genuinely still need backfilling, instead of re-parsing every
+   * project.created row on every future startup forever. A row whose
+   * payload fails to parse (corruption, a partial write) is skipped rather
+   * than crashing startup — losing that one event's thread_id backfill is
+   * far better than the app refusing to start at all.
    */
   private backfillThreadId(): void {
-    const rows = this.db.prepare("SELECT id, payload FROM events WHERE thread_id IS NULL").all() as {
-      id: number;
-      payload: string;
-    }[];
+    const rows = this.db
+      .prepare("SELECT id, payload FROM events WHERE thread_id IS NULL AND kind <> 'project.created'")
+      .all() as { id: number; payload: string }[];
     if (rows.length === 0) return;
 
     const update = this.db.prepare("UPDATE events SET thread_id = ? WHERE id = ?");
     const backfill = this.db.transaction(() => {
       for (const row of rows) {
-        const event = JSON.parse(row.payload) as { threadId?: string };
+        let event: { threadId?: string };
+        try {
+          event = JSON.parse(row.payload) as { threadId?: string };
+        } catch {
+          continue;
+        }
         if (event.threadId) update.run(event.threadId, row.id);
       }
     });
