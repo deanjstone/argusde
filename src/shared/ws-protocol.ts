@@ -63,6 +63,23 @@ export interface CheckpointRecord {
   createdAt: string;
 }
 
+/** Canonical shapes for project.list/thread.list — shared for the same reason as CheckpointRecord above. */
+export interface ProjectRecord {
+  id: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: string;
+}
+
+export interface ThreadRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  worktreePath: string | null;
+  currentModeId: string | null;
+  createdAt: string;
+}
+
 export type CommandResult =
   | { type: "command.result"; commandId: string; ok: true; result: unknown }
   | { type: "command.result"; commandId: string; ok: false; error: string };
