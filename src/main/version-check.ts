@@ -20,8 +20,16 @@ function toWsUrl(serverUrl: string): string {
  * compiled-in expected version — never rejects, since a real connection
  * failure here isn't this function's job to explain (the caller's normal
  * loadURL attempt will surface that on its own).
+ *
+ * The default timeout is deliberately short (not the 5s+ that would be
+ * reasonable for a real user action) — this check runs *before* the
+ * caller's own loadURL attempt, so its timeout adds directly to how long a
+ * genuinely unreachable server takes to report a failure (the ordinary
+ * ECONNREFUSED case resolves near-instantly via the socket's own error
+ * event and never waits out this timeout at all). ArgusDE's servers are
+ * local/tailnet by design, so round trips are normally well under 100ms.
  */
-export async function checkApiVersion(serverUrl: string, expectedVersion: string, timeoutMs = 5000): Promise<VersionCheckResult> {
+export async function checkApiVersion(serverUrl: string, expectedVersion: string, timeoutMs = 2500): Promise<VersionCheckResult> {
   return new Promise((resolve) => {
     let settled = false;
     const settle = (result: VersionCheckResult): void => {

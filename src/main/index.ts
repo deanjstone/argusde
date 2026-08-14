@@ -56,6 +56,12 @@ async function attemptConnect(window: BrowserWindow, url: string): Promise<void>
   // failure on its own via did-fail-load. Only a *confirmed* mismatch skips
   // loadURL entirely, per spec #33's version-skew decision.
   const versionCheck = await checkApiVersion(url, API_VERSION);
+  // The window can close (or the app quit) while checkApiVersion's network
+  // round trip is still pending — calling loadURL on an already-destroyed
+  // window/webContents throws synchronously, before the .catch() below ever
+  // attaches, surfacing as an unhandled rejection. showConnectScreen already
+  // guards this same race internally; this covers the other branch.
+  if (window.isDestroyed()) return;
   if (versionCheck.status === "incompatible") {
     void showConnectScreen(
       window,
