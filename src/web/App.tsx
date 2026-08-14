@@ -30,6 +30,36 @@ interface ThreadHistoryMessage {
 
 const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
 
+const LAST_ACTIVE_THREAD_KEY = "argusde:lastActiveThreadId";
+
+// Small pure read/write functions, matching src/main/server-config.ts's own
+// persistence shape (fail-soft on any error, sane default, no library) —
+// localStorage can throw in some browser storage/privacy configurations,
+// and losing reload-resume is a soft failure, never worth crashing over.
+function readLastActiveThreadId(): string | null {
+  try {
+    return localStorage.getItem(LAST_ACTIVE_THREAD_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastActiveThreadId(threadId: string): void {
+  try {
+    localStorage.setItem(LAST_ACTIVE_THREAD_KEY, threadId);
+  } catch {
+    // best-effort only
+  }
+}
+
+function clearLastActiveThreadId(): void {
+  try {
+    localStorage.removeItem(LAST_ACTIVE_THREAD_KEY);
+  } catch {
+    // best-effort only
+  }
+}
+
 /**
  * Thin composition root — wires WsClient + the chat-state reducer + the
  * three components together. Not unit-tested directly (same precedent as
@@ -68,6 +98,11 @@ export function App() {
   // that nulls `thread` without that ordering would silently reintroduce
   // this exact regression.
   const [hasEverHadThread, setHasEverHadThread] = useState(false);
+  // Starts true unconditionally — resolved to false in the same tick
+  // server.welcome arrives, whether or not there's actually a remembered
+  // Thread to restore (see attemptSessionRestore below), so a fresh
+  // install sees no extra delay beyond the existing !connected gate.
+  const [restoring, setRestoring] = useState(true);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
@@ -121,6 +156,7 @@ export function App() {
         case "server.welcome":
           setChatState((s) => chatStateReducer(s, { kind: "welcome", apiVersion: push.apiVersion }));
           setConnected(true);
+          void attemptSessionRestore();
           break;
         case "session.event":
           // Only the currently-active Thread's events reach chat state — a
@@ -163,6 +199,7 @@ export function App() {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
     setHasEverHadThread(true);
+    writeLastActiveThreadId(info.threadId);
     setChatState((s) =>
       chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
     );
@@ -278,6 +315,48 @@ export function App() {
       history.connectionState,
       history.connectionError,
     );
+  }
+
+  /**
+   * Called once, from the WS push handler's server.welcome case — attempts
+   * to restore whichever Thread was most recently active (spec #33 Story
+   * 28), so a reload doesn't force the user back through first-run setup
+   * or a manual Projects→Threads drill-down. Reuses
+   * loadThreadHistoryAndBecomeActive as-is: a closed Thread, or one whose
+   * server-side runtime isn't currently live, still resolves and renders
+   * correctly (Phase 11), so this needs no special-casing for either. If
+   * the server confirms the remembered Thread genuinely doesn't exist
+   * (e.g. a wiped/replaced database), the stale reference is cleared so a
+   * future reload doesn't keep repeating a futile round trip — but any
+   * other failure (a dropped connection, a transient network blip) leaves
+   * the reference alone, so a real network hiccup can't permanently
+   * disable resume. Either way, falls through to the normal
+   * `!thread && !hasEverHadThread` → WorkspaceSetup gate for this attempt.
+   */
+  async function attemptSessionRestore() {
+    const rememberedThreadId = readLastActiveThreadId();
+    if (!rememberedThreadId) {
+      setRestoring(false);
+      return;
+    }
+    try {
+      await loadThreadHistoryAndBecomeActive(rememberedThreadId);
+    } catch (error) {
+      // Only clear the remembered id when the server has actually said
+      // this Thread doesn't exist (requireThread's exact wording, in
+      // src/server/ws/ws-server.ts, propagated verbatim through
+      // command.result's error field) — every other failure here (a
+      // dropped WebSocket, a transient network blip mid-request, the kind
+      // of thing a phone PWA reload hits far more often than a desktop
+      // browser) is not evidence the Thread is gone. Clearing on those too
+      // would silently and permanently disable resume after one bad
+      // network moment, with no way for the user to even notice.
+      if (error instanceof Error && error.message.startsWith("Unknown thread:")) {
+        clearLastActiveThreadId();
+      }
+    } finally {
+      setRestoring(false);
+    }
   }
 
   async function handleSelectThread(threadId: string) {
@@ -463,10 +542,26 @@ export function App() {
     setChatState((s) => chatStateReducer(s, { kind: "permission-responded", requestId }));
   }
 
+  // Two separate gates, not one combined check with a ternary: restoring
+  // only ever flips false from inside attemptSessionRestore, which itself
+  // only ever runs after setConnected(true) — so a single combined
+  // `!connected || restoring` with `restoring ? "Restoring…" : "Connecting…"`
+  // made "Connecting…" unreachable dead code (whenever !connected is true,
+  // restoring is too, by construction). Checking !connected first, on its
+  // own, is what actually lets it render during the real socket-handshake
+  // window.
   if (!connected) {
     return (
       <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
         <p className="text-sm">Connecting…</p>
+      </div>
+    );
+  }
+
+  if (restoring) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
+        <p className="text-sm">Restoring your last session…</p>
       </div>
     );
   }

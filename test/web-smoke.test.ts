@@ -402,4 +402,66 @@ describe("web smoke: server + browser round trip", () => {
     },
     30_000,
   );
+
+  it(
+    "resumes the most-recently-active Thread after a page reload, without redoing first-run setup",
+    async () => {
+      // A separate page + repo — `browser.newPage()` gives its own
+      // isolated localStorage, so this doesn't collide with (or get
+      // polluted by) any other test's remembered Thread.
+      const reloadTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-reload-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: reloadTestRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: reloadTestRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: reloadTestRepoDir });
+      fs.writeFileSync(path.join(reloadTestRepoDir, "notes.txt"), "hello\n");
+      execFileSync("git", ["add", "-A"], { cwd: reloadTestRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: reloadTestRepoDir });
+
+      const reloadPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await reloadPage.goto(`http://127.0.0.1:${server.port}/`);
+        await reloadPage.getByLabel(/workspace path/i).fill(reloadTestRepoDir);
+        await reloadPage.getByRole("button", { name: /start/i }).click();
+        await reloadPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await reloadPage.getByPlaceholder(/message/i).fill("remember me across reload");
+        await reloadPage.getByPlaceholder(/message/i).press("Enter");
+        await reloadPage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
+
+        await reloadPage.reload();
+
+        // Must land directly back in Chat with history intact — never
+        // WorkspaceSetup again, and no manual Threads-tab navigation needed.
+        await reloadPage.waitForSelector("text=remember me across reload", { timeout: 15_000 });
+        const bodyAfterReload = await reloadPage.textContent("body");
+        expect(bodyAfterReload).not.toMatch(/workspace path/i);
+        expect(bodyAfterReload).toContain("Hello from the web smoke test agent");
+      } finally {
+        await reloadPage.close();
+        fs.rmSync(reloadTestRepoDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "falls back to first-run setup if the remembered Thread no longer resolves, instead of getting stuck restoring",
+    async () => {
+      const staleIdPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await staleIdPage.goto(`http://127.0.0.1:${server.port}/`);
+        // Simulates a stale localStorage entry (e.g. a wiped/replaced
+        // database) — this key must match LAST_ACTIVE_THREAD_KEY in
+        // src/web/App.tsx.
+        await staleIdPage.evaluate(() => localStorage.setItem("argusde:lastActiveThreadId", "does-not-exist"));
+
+        await staleIdPage.reload();
+
+        await staleIdPage.waitForSelector("text=/workspace path/i", { timeout: 15_000 });
+      } finally {
+        await staleIdPage.close();
+      }
+    },
+    20_000,
+  );
 });
