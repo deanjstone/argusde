@@ -54,6 +54,12 @@ export interface PlanEntrySummary {
 
 export type PermissionOutcome = "cancelled" | { optionId: string };
 
+export interface SessionModeSummary {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export type AcpSessionEvent =
   | { kind: "connection-state"; state: ConnectionState; error?: string }
   | {
@@ -67,4 +73,4 @@ export type AcpSessionEvent =
   | { kind: "plan"; entries: PlanEntrySummary[] }
   | { kind: "permission-request"; request: PermissionRequestSummary }
   | { kind: "turn-complete"; stopReason: string }
-  | { kind: "mode-changed"; modeId: string };
+  | { kind: "mode-changed"; modeId: string; availableModes?: SessionModeSummary[] };

@@ -121,6 +121,37 @@ describe("AcpSession", () => {
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
   });
 
+  it("emits the mode catalog as a mode-changed event during start() when the agent advertises modes", async () => {
+    const fakeAgent = createFakeAgent({
+      steps: [],
+      modes: {
+        currentModeId: "default",
+        availableModes: [
+          { id: "default", name: "Default" },
+          { id: "plan", name: "Plan", description: "Plan before editing" },
+        ],
+      },
+    });
+    const session = new AcpSession({ name: "argusde-test", cwd: "/tmp/argusde-test", createTransport: () => fakeAgent });
+
+    const events = await collectEvents(session, () => session.start());
+
+    expect(events).toContainEqual({
+      kind: "mode-changed",
+      modeId: "default",
+      availableModes: [
+        { id: "default", name: "Default", description: undefined },
+        { id: "plan", name: "Plan", description: "Plan before editing" },
+      ],
+    });
+  });
+
+  it("does not emit a mode-changed event during start() when the agent doesn't advertise modes", async () => {
+    const session = sessionWithSteps([]);
+    const events = await collectEvents(session, () => session.start());
+    expect(events.filter((e) => e.kind === "mode-changed")).toHaveLength(0);
+  });
+
   it("emits a permission-request event and resolves the agent's request once respondToPermission is called", async () => {
     const session = sessionWithSteps([
       {

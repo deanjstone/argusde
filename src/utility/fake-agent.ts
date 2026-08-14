@@ -29,6 +29,11 @@ export type FakeAgentStep =
 export interface FakeAgentOptions {
   sessionId?: string;
   steps?: FakeAgentStep[];
+  /** Mirrors the real SDK's NewSessionResponse.modes field — omit to simulate an agent that doesn't advertise modes at all. */
+  modes?: {
+    currentModeId: string;
+    availableModes: Array<{ id: string; name: string; description?: string }>;
+  };
 }
 
 /**
@@ -52,6 +57,7 @@ export function createFakeAgent(options: FakeAgentOptions = {}): AgentApp {
     }))
     .onRequest(methods.agent.session.new, async () => ({
       sessionId,
+      modes: options.modes,
     }))
     .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
       await client.notify(methods.client.session.update, {

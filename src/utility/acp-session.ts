@@ -150,6 +150,23 @@ export class AcpSession extends EventEmitter {
 
     this.activeSession = await connection.agent.buildSession(this.options.cwd).start();
     this.setState("connected");
+
+    // Unlike `current_mode_update` (a change signal only), the mode catalog
+    // is only ever available here, on the session's own start response — an
+    // agent that doesn't advertise modes at all leaves this undefined, and
+    // no event is emitted (no switcher should render for it).
+    const modes = this.activeSession.modes;
+    if (modes) {
+      this.emitEvent({
+        kind: "mode-changed",
+        modeId: modes.currentModeId,
+        availableModes: modes.availableModes.map((mode) => ({
+          id: mode.id,
+          name: mode.name,
+          description: mode.description ?? undefined,
+        })),
+      });
+    }
   }
 
   private handleSessionNotification(notification: SessionNotification): void {
