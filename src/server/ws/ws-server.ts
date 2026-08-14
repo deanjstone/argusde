@@ -142,11 +142,17 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           // The Thread's persisted record (and its turn-0 checkpoint) is
           // already durable at this point — thread.created has to precede
           // any checkpoint event to satisfy the checkpoints table's foreign
-          // key, so a failed start can't be un-persisted. What we can and
-          // must do is not leak the partially-connected session; retrying
-          // thread creation for this same threadId isn't supported yet
-          // (tracked in argusde#35).
+          // key, so a failed start can't be un-persisted. Dispose the
+          // partially-connected session, then mark the Thread closed
+          // (argusde#35) so it doesn't sit around as a permanently
+          // unusable-but-open record: requireOpenThread rejects any further
+          // command against it with a clear "Thread is closed" error, the
+          // client's existing closed-thread UI already renders that
+          // cleanly, and its (empty) history stays browsable read-only. No
+          // retry-in-place — the client's only recourse is a fresh Thread,
+          // same as a normal close.
           await runtime.dispose().catch(() => undefined);
+          eventStore.appendEvent({ kind: "thread.closed", threadId, timestamp: new Date().toISOString() });
           throw error;
         }
         runtimes.set(threadId, runtime);
@@ -232,12 +238,14 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         try {
           await runtime.start();
         } catch (error) {
-          // Mirrors thread.create's own accepted failure-recovery gap
-          // (argusde#35): a failed promotion leaves this Thread with no
-          // active runtime, and the worktree directory itself is left
-          // behind on disk — not retried automatically. Same class of
-          // rare-failure resource leak, not solved here either.
+          // Mirrors thread.create's own fix for the stuck-Thread half of
+          // argusde#35: dispose the partially-connected session and mark
+          // the Thread closed so it's not left permanently open-but-unusable
+          // (requireOpenThread now rejects it cleanly). The worktree
+          // directory itself is still left behind on disk — a separate,
+          // known resource-leak gap, not solved here either.
           await runtime.dispose().catch(() => undefined);
+          eventStore.appendEvent({ kind: "thread.closed", threadId: command.threadId, timestamp: new Date().toISOString() });
           throw error;
         }
         runtimes.set(command.threadId, runtime);

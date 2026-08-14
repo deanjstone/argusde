@@ -839,6 +839,46 @@ describe("ws-server", () => {
       expect(threadResult.ok).toBe(false);
       if (!threadResult.ok) expect(threadResult.error).toEqual(expect.any(String));
 
+      // argusde#35: the Thread record is durable (thread.created had to
+      // precede the turn-0 checkpoint event) but its runtime failed to
+      // start — it must not be left permanently open-but-unusable. Marked
+      // closed instead, so it's inert (requireOpenThread rejects further
+      // commands cleanly) rather than a silent dead end.
+      const failedThreadId = eventStore.listThreads(projectId!)[0]!.id;
+      failingClient.send(JSON.stringify({ type: "thread.get-history", commandId: "t1-history", threadId: failedThreadId }));
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const check = () => {
+          if (failingReceived.some((m) => m.type === "command.result" && m.commandId === "t1-history")) return resolve();
+          if (Date.now() - start > 5000) return reject(new Error("timed out"));
+          setTimeout(check, 20);
+        };
+        check();
+      });
+      const historyResult = failingReceived.find((m) => m.type === "command.result" && m.commandId === "t1-history") as Extract<
+        ServerPush,
+        { type: "command.result" }
+      >;
+      expect(historyResult.ok).toBe(true);
+      if (historyResult.ok) expect((historyResult.result as { closedAt: string | null }).closedAt).toEqual(expect.any(String));
+
+      failingClient.send(JSON.stringify({ type: "thread.send-message", commandId: "t1-send", threadId: failedThreadId, text: "hi" }));
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const check = () => {
+          if (failingReceived.some((m) => m.type === "command.result" && m.commandId === "t1-send")) return resolve();
+          if (Date.now() - start > 5000) return reject(new Error("timed out"));
+          setTimeout(check, 20);
+        };
+        check();
+      });
+      const sendResult = failingReceived.find((m) => m.type === "command.result" && m.commandId === "t1-send") as Extract<
+        ServerPush,
+        { type: "command.result" }
+      >;
+      expect(sendResult.ok).toBe(false);
+      if (!sendResult.ok) expect(sendResult.error).toMatch(/closed/i);
+
       // The server itself must still be responsive after the failed thread.create.
       failingClient.send(JSON.stringify({ type: "project.create", commandId: "p2", workspaceRoot: repoDir, title: "P2" }));
       await new Promise<void>((resolve, reject) => {
@@ -853,6 +893,75 @@ describe("ws-server", () => {
 
       failingClient.terminate();
       await failingServer.close();
+    },
+    15_000,
+  );
+
+  it(
+    "thread.promote-to-worktree marks the Thread closed when the relocated agent fails to start (argusde#35)",
+    async () => {
+      const flakyServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        // The initial (main-workspace) session must succeed so thread.create
+        // itself works — only the relocated session, started against the
+        // worktree cwd, fails.
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () =>
+              cwd.includes("-worktrees")
+                ? agent({ name: "failing-agent" }).onRequest(methods.agent.initialize, async () => {
+                    throw new Error("simulated worktree agent startup failure");
+                  })
+                : spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+      const flakyClient = new WebSocket(`ws://127.0.0.1:${flakyServer.port}/ws`);
+      const flakyReceived: ServerPush[] = [];
+      flakyClient.on("message", (data) => flakyReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        flakyClient.once("open", () => resolve());
+        flakyClient.once("error", reject);
+      });
+
+      function flakySend(command: Record<string, unknown>): Promise<Extract<ServerPush, { type: "command.result" }>> {
+        flakyClient.send(JSON.stringify(command));
+        return new Promise((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            const result = flakyReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as
+              | Extract<ServerPush, { type: "command.result" }>
+              | undefined;
+            if (result) return resolve(result);
+            if (Date.now() - start > 5000) return reject(new Error("timed out"));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+      }
+
+      const projectResult = await flakySend({ type: "project.create", commandId: "fp1", workspaceRoot: repoDir, title: "P" });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await flakySend({ type: "thread.create", commandId: "fp2", projectId, title: "T" });
+      const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+      const promoteResult = await flakySend({ type: "thread.promote-to-worktree", commandId: "fp3", threadId });
+      expect(promoteResult.ok).toBe(false);
+
+      const historyResult = await flakySend({ type: "thread.get-history", commandId: "fp4", threadId });
+      expect(historyResult.ok).toBe(true);
+      if (historyResult.ok) expect((historyResult.result as { closedAt: string | null }).closedAt).toEqual(expect.any(String));
+
+      const sendResult = await flakySend({ type: "thread.send-message", commandId: "fp5", threadId, text: "hi" });
+      expect(sendResult.ok).toBe(false);
+      if (!sendResult.ok) expect(sendResult.error).toMatch(/closed/i);
+
+      flakyClient.terminate();
+      await flakyServer.close();
     },
     15_000,
   );
