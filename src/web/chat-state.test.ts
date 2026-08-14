@@ -188,6 +188,45 @@ describe("chatStateReducer", () => {
     ]);
   });
 
+  it("history-loaded replaces the whole timeline and resets mode/permission/agent-status state — switching to a different thread, not appending to the current one", () => {
+    const state = reduceAll([
+      { kind: "user-message-sent", text: "old thread message" },
+      {
+        kind: "history-loaded",
+        messages: [
+          { messageId: "m1", role: "user", content: [{ type: "text", text: "what's broken?" }] },
+          { messageId: "m2", role: "agent", content: [{ type: "text", text: "the retry handler." }] },
+        ],
+        currentModeId: "plan",
+        availableModes: [{ id: "plan", name: "Plan" }],
+      },
+    ]);
+
+    expect(state.timeline).toEqual([
+      { type: "message", id: "m1", role: "user", content: [{ type: "text", text: "what's broken?" }] },
+      { type: "message", id: "m2", role: "agent", content: [{ type: "text", text: "the retry handler." }] },
+    ]);
+    expect(state.currentModeId).toBe("plan");
+    expect(state.availableModes).toEqual([{ id: "plan", name: "Plan" }]);
+    expect(state.agentStatus).toBe("idle");
+    expect(state.pendingPermissionRequest).toBeUndefined();
+  });
+
+  it("history-loaded with a null currentModeId (agent doesn't support modes) clears any prior mode state", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
+      },
+      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [] },
+    ]);
+
+    expect(state.currentModeId).toBeUndefined();
+    expect(state.availableModes).toEqual([]);
+    expect(state.timeline).toEqual([]);
+  });
+
   it("clears the mode catalog on a fresh connecting transition, so a restarted session never shows a stale mode from before", () => {
     const state = reduceAll([
       {
