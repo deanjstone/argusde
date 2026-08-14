@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AcpSession } from "../../utility/acp-session.js";
-import type { EventStore } from "../persistence/event-store.js";
+import type { EventStore, DomainEvent } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
@@ -199,6 +199,32 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         });
 
         return { worktreePath };
+      }
+      case "project.list":
+        return eventStore.listProjects();
+      case "thread.list":
+        return eventStore.listThreads(command.projectId);
+      case "thread.get-history": {
+        const thread = requireThread(command.threadId);
+        const messages = eventStore
+          .listEventsForThread(command.threadId)
+          .filter((e): e is Extract<DomainEvent, { kind: "thread.message-recorded" }> => e.kind === "thread.message-recorded")
+          .map((e) => ({ messageId: e.messageId, role: e.role, content: e.content }));
+        // The mode catalog is never persisted — only ever broadcast live,
+        // once, from AcpSession.start(). A Thread whose runtime isn't
+        // currently active (a genuine edge case; runtimes are never
+        // removed except at server shutdown) degrades to an empty catalog
+        // rather than erroring.
+        const availableModes = runtimes.get(command.threadId)?.getAvailableModes() ?? [];
+        return {
+          threadId: thread.id,
+          projectId: thread.projectId,
+          title: thread.title,
+          worktreePath: thread.worktreePath,
+          currentModeId: thread.currentModeId,
+          availableModes,
+          messages,
+        };
       }
     }
   }

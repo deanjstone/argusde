@@ -43,6 +43,9 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
     turnB: z.number(),
   }),
   z.object({ type: z.literal("thread.promote-to-worktree"), commandId: z.string(), threadId: z.string() }),
+  z.object({ type: z.literal("project.list"), commandId: z.string() }),
+  z.object({ type: z.literal("thread.list"), commandId: z.string(), projectId: z.string() }),
+  z.object({ type: z.literal("thread.get-history"), commandId: z.string(), threadId: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
