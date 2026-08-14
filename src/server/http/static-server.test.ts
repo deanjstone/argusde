@@ -66,6 +66,19 @@ describe("createStaticFileServer", () => {
     expect(swRes.headers.get("content-type")).toMatch(/javascript/);
   });
 
+  it("sends a Content-Security-Policy header on served content", async () => {
+    const res = await fetch(`${baseUrl}/`);
+    const csp = res.headers.get("content-security-policy");
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+  });
+
+  it("sends the Content-Security-Policy header on error responses too", async () => {
+    const res = await fetch(`${baseUrl}/does-not-exist.js`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'self'");
+  });
+
   it("returns 404 for a missing file", async () => {
     const res = await fetch(`${baseUrl}/does-not-exist.js`);
     expect(res.status).toBe(404);
