@@ -28,19 +28,19 @@ afterEach(() => {
 });
 
 describe("CheckpointStore", () => {
-  it("captureBaseline creates a turn-0 ref that resolves to a commit", () => {
-    const ref = store.captureBaseline("thread-1", repoDir);
+  it("captureBaseline creates a turn-0 ref that resolves to a commit", async () => {
+    const ref = await store.captureBaseline("thread-1", repoDir);
 
     expect(ref).toBe("refs/argusde/checkpoints/thread-1/turn/0");
     const sha = git(["rev-parse", ref]).trim();
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  it("captureCheckpoint snapshots uncommitted working-tree changes without touching the real git state", () => {
-    store.captureBaseline("thread-1", repoDir);
+  it("captureCheckpoint snapshots uncommitted working-tree changes without touching the real git state", async () => {
+    await store.captureBaseline("thread-1", repoDir);
 
     fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
-    const ref = store.captureCheckpoint("thread-1", 1, repoDir);
+    const ref = await store.captureCheckpoint("thread-1", 1, repoDir);
 
     expect(ref).toBe("refs/argusde/checkpoints/thread-1/turn/1");
     // The real index/working tree must be untouched by the isolated capture
@@ -50,10 +50,10 @@ describe("CheckpointStore", () => {
     expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\nworld\n");
   });
 
-  it("captureCheckpoint produces a parentless commit each time (full snapshot, not incremental)", () => {
-    const baselineRef = store.captureBaseline("thread-1", repoDir);
+  it("captureCheckpoint produces a parentless commit each time (full snapshot, not incremental)", async () => {
+    const baselineRef = await store.captureBaseline("thread-1", repoDir);
     fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
-    const turn1Ref = store.captureCheckpoint("thread-1", 1, repoDir);
+    const turn1Ref = await store.captureCheckpoint("thread-1", 1, repoDir);
 
     const baselineParents = git(["log", "--pretty=%P", "-1", baselineRef]).trim();
     const turn1Parents = git(["log", "--pretty=%P", "-1", turn1Ref]).trim();
@@ -62,35 +62,35 @@ describe("CheckpointStore", () => {
     expect(turn1Parents).toBe("");
   });
 
-  it("diffCheckpoints reports the change between two checkpoints", () => {
-    store.captureBaseline("thread-1", repoDir);
+  it("diffCheckpoints reports the change between two checkpoints", async () => {
+    await store.captureBaseline("thread-1", repoDir);
     fs.writeFileSync(path.join(repoDir, "file.txt"), "goodbye\n");
-    store.captureCheckpoint("thread-1", 1, repoDir);
+    await store.captureCheckpoint("thread-1", 1, repoDir);
 
-    const diff = store.diffCheckpoints("thread-1", 0, 1, repoDir);
+    const diff = await store.diffCheckpoints("thread-1", 0, 1, repoDir);
 
     expect(diff).toContain("-hello");
     expect(diff).toContain("+goodbye");
   });
 
-  it("scopes refs by threadId so two threads don't collide on the same turn number", () => {
-    const refA = store.captureBaseline("thread-a", repoDir);
-    const refB = store.captureBaseline("thread-b", repoDir);
+  it("scopes refs by threadId so two threads don't collide on the same turn number", async () => {
+    const refA = await store.captureBaseline("thread-a", repoDir);
+    const refB = await store.captureBaseline("thread-b", repoDir);
 
     expect(refA).not.toBe(refB);
     expect(git(["rev-parse", refA]).trim()).not.toBe("");
     expect(git(["rev-parse", refB]).trim()).not.toBe("");
   });
 
-  it("restoreCheckpoint rewrites the real working tree to match an earlier checkpoint, including deleting a file added afterward", () => {
-    store.captureBaseline("thread-1", repoDir);
+  it("restoreCheckpoint rewrites the real working tree to match an earlier checkpoint, including deleting a file added afterward", async () => {
+    await store.captureBaseline("thread-1", repoDir);
 
     fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\n");
-    store.captureCheckpoint("thread-1", 1, repoDir);
+    await store.captureCheckpoint("thread-1", 1, repoDir);
 
     fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nworld\nagain\n");
     fs.writeFileSync(path.join(repoDir, "new.txt"), "added at turn 2\n");
-    store.captureCheckpoint("thread-1", 2, repoDir);
+    await store.captureCheckpoint("thread-1", 2, repoDir);
 
     store.restoreCheckpoint("thread-1", 1, repoDir);
 
@@ -98,20 +98,20 @@ describe("CheckpointStore", () => {
     expect(fs.existsSync(path.join(repoDir, "new.txt"))).toBe(false);
   });
 
-  it("restoreCheckpoint restores a file that was deleted after the target turn", () => {
-    store.captureBaseline("thread-1", repoDir);
-    store.captureCheckpoint("thread-1", 1, repoDir);
+  it("restoreCheckpoint restores a file that was deleted after the target turn", async () => {
+    await store.captureBaseline("thread-1", repoDir);
+    await store.captureCheckpoint("thread-1", 1, repoDir);
 
     fs.rmSync(path.join(repoDir, "file.txt"));
-    store.captureCheckpoint("thread-1", 2, repoDir);
+    await store.captureCheckpoint("thread-1", 2, repoDir);
 
     store.restoreCheckpoint("thread-1", 1, repoDir);
 
     expect(fs.readFileSync(path.join(repoDir, "file.txt"), "utf8")).toBe("hello\n");
   });
 
-  it("restoreCheckpoint throws a clear domain error for an unknown turn, not a raw git error", () => {
-    store.captureBaseline("thread-1", repoDir);
+  it("restoreCheckpoint throws a clear domain error for an unknown turn, not a raw git error", async () => {
+    await store.captureBaseline("thread-1", repoDir);
 
     expect(() => store.restoreCheckpoint("thread-1", 99, repoDir)).toThrow(/Unknown checkpoint/);
   });

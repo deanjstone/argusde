@@ -179,7 +179,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       }
       case "thread.diff-checkpoints": {
         const cwd = resolveThreadCwd(command.threadId);
-        const diff = checkpointStore.diffCheckpoints(command.threadId, command.turnA, command.turnB, cwd);
+        const diff = await checkpointStore.diffCheckpoints(command.threadId, command.turnA, command.turnB, cwd);
         return { diff };
       }
       case "thread.revert-checkpoint": {
@@ -259,7 +259,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           // Throws (surfacing a clean protocol error) if a turn is still
           // in flight — nothing below runs, so a rejected close leaves
           // nothing half-done.
-          runtime.captureFinalCheckpoint();
+          await runtime.captureFinalCheckpoint();
           // If dispose() itself throws (e.g. a broken pipe closing an
           // already-exited child process), this handler throws before
           // reaching runtimes.delete()/appending thread.closed — the same
@@ -279,7 +279,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           // that doesn't exist here.
           const existing = eventStore.listCheckpoints(command.threadId);
           const nextTurn = existing.length > 0 ? Math.max(...existing.map((c) => c.turn)) + 1 : 0;
-          const ref = checkpointStore.captureCheckpoint(command.threadId, nextTurn, thread.worktreePath);
+          const ref = await checkpointStore.captureCheckpoint(command.threadId, nextTurn, thread.worktreePath);
           eventStore.appendEvent({
             kind: "thread.checkpoint-captured",
             threadId: command.threadId,
