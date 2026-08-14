@@ -14,4 +14,4 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 - [Phase 5: Mode switcher UI](phase-5-mode-switcher-ui.md) — surfaces the agent's mode catalog and lets the user switch modes from the chat view. Merged [#43](https://github.com/deanjstone/argusde/pull/43).
 - [Phase 6: Version compatibility handshake](phase-6-version-handshake.md) — Electron's native shell refuses to connect to an incompatible server, showing a clear update message. Merged [#44](https://github.com/deanjstone/argusde/pull/44).
 - [Phase 7: Worktree promotion UI](phase-7-worktree-promotion.md) — promote a fresh Thread to an isolated git worktree, with a colored-border indicator. Merged [#45](https://github.com/deanjstone/argusde/pull/45).
-- [Phase 8: Multi-project UI](phase-8-multi-project-ui.md) — real Projects→Threads drill-down, switching the active chat between existing Threads. In progress on `feature/multi-project-ui`.
+- [Phase 8: Multi-project UI](phase-8-multi-project-ui.md) — real Projects→Threads drill-down, switching the active chat between existing Threads. Merged [#48](https://github.com/deanjstone/argusde/pull/48).
