@@ -53,6 +53,19 @@ describe("createStaticFileServer", () => {
     expect(cssRes.headers.get("content-type")).toMatch(/text\/css/);
   });
 
+  it("serves manifest.json and sw.js with the content types a PWA install/registration check expects", async () => {
+    fs.writeFileSync(path.join(rootDir, "manifest.json"), JSON.stringify({ name: "ArgusDE" }));
+    fs.writeFileSync(path.join(rootDir, "sw.js"), "self.addEventListener('fetch', () => {});");
+
+    const manifestRes = await fetch(`${baseUrl}/manifest.json`);
+    expect(manifestRes.status).toBe(200);
+    expect(manifestRes.headers.get("content-type")).toMatch(/application\/json/);
+
+    const swRes = await fetch(`${baseUrl}/sw.js`);
+    expect(swRes.status).toBe(200);
+    expect(swRes.headers.get("content-type")).toMatch(/javascript/);
+  });
+
   it("returns 404 for a missing file", async () => {
     const res = await fetch(`${baseUrl}/does-not-exist.js`);
     expect(res.status).toBe(404);
