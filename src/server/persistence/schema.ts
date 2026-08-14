@@ -21,7 +21,11 @@ export function ensureSchema(db: Database.Database): void {
       title TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+  `);
 
+  ensureWorkspaceRootIndex(db);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id),
@@ -60,6 +64,30 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   } catch (error) {
     if (error instanceof Error && /duplicate column name/i.test(error.message)) return;
+    throw error;
+  }
+}
+
+/**
+ * Enforces (and indexes) projects.workspace_root uniqueness at the schema
+ * level, so the dedup invariant ws-server.ts's project.create handler
+ * relies on isn't only enforced by that one call site. A single index name
+ * either way — CREATE ... IF NOT EXISTS treats an existing index of that
+ * name as satisfied regardless of its uniqueness, so this never ends up
+ * maintaining two indexes on the same column. Falls back to a plain
+ * (non-unique) index only when a real pre-existing database already has
+ * duplicate rows for this column: re-deduplicating that data would mean
+ * re-pointing foreign-key references from "losing" duplicate rows to a
+ * "winning" one, well beyond what this fix is for.
+ */
+function ensureWorkspaceRootIndex(db: Database.Database): void {
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
+      db.exec("CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
+      return;
+    }
     throw error;
   }
 }

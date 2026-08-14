@@ -42,6 +42,79 @@ describe("EventStore", () => {
     expect(store.getProject("missing")).toBeUndefined();
   });
 
+  it("getProjectByWorkspaceRoot finds an existing project by its exact workspaceRoot, or returns undefined", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/home/deanj/repos/argusde",
+      title: "ArgusDE",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+
+    expect(store.getProjectByWorkspaceRoot("/home/deanj/repos/argusde")).toEqual({
+      id: "proj-1",
+      workspaceRoot: "/home/deanj/repos/argusde",
+      title: "ArgusDE",
+      createdAt: "2026-08-13T00:00:00.000Z",
+    });
+    expect(store.getProjectByWorkspaceRoot("/home/deanj/repos/argusde/")).toBeUndefined();
+    expect(store.getProjectByWorkspaceRoot("/no/such/path")).toBeUndefined();
+  });
+
+  it("enforces workspace_root uniqueness at the database level on a fresh install — not just via ws-server.ts's own check-then-insert", () => {
+    // appendEvent itself has no dedup logic (only ws-server.ts's
+    // project.create handler does, via getProjectByWorkspaceRoot) — this
+    // probes the constraint directly, independent of that one call site,
+    // so a future caller that bypasses it (a batch import, a refactor)
+    // still can't insert a second row for the same workspace_root.
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-a",
+      workspaceRoot: "/dup",
+      title: "A",
+      timestamp: "2026-08-14T00:00:00.000Z",
+    });
+    expect(() =>
+      store.appendEvent({
+        kind: "project.created",
+        projectId: "proj-b",
+        workspaceRoot: "/dup",
+        title: "B",
+        timestamp: "2026-08-14T00:00:01.000Z",
+      }),
+    ).toThrow(/UNIQUE constraint failed/);
+  });
+
+  it("upgrading a database that already has duplicate workspace_root rows (from before this constraint existed) doesn't break — falls back to a non-unique index", () => {
+    const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-dup-projects-"));
+    const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
+    const legacyDb = new Database(legacyDbPath);
+    legacyDb.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        workspace_root TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+    legacyDb
+      .prepare("INSERT INTO projects (id, workspace_root, title, created_at) VALUES (?, ?, ?, ?)")
+      .run("proj-a", "/dup", "A", "2026-08-14T00:00:00.000Z");
+    legacyDb
+      .prepare("INSERT INTO projects (id, workspace_root, title, created_at) VALUES (?, ?, ?, ?)")
+      .run("proj-b", "/dup", "B", "2026-08-14T00:00:01.000Z");
+    legacyDb.close();
+
+    expect(() => new EventStore(legacyDbPath)).not.toThrow();
+    const upgraded = new EventStore(legacyDbPath);
+    try {
+      expect(upgraded.listProjects().map((p) => p.id)).toEqual(["proj-a", "proj-b"]);
+    } finally {
+      upgraded.close();
+      fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
+  });
+
   it("projects a thread.created event into listThreads/getThread, scoped by project", () => {
     store.appendEvent({
       kind: "project.created",

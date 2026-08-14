@@ -132,6 +132,14 @@ export class EventStore {
       .all() as ProjectRecord[];
   }
 
+  /** Exact-string match only — no path normalization (resolving `..`, trailing slashes, symlinks). The client always sends back whatever raw string the user typed or a prior project.list response already returned, so this is sufficient without adding filesystem-touching logic here. */
+  getProjectByWorkspaceRoot(workspaceRoot: string): ProjectRecord | undefined {
+    const row = this.db
+      .prepare("SELECT id, workspace_root AS workspaceRoot, title, created_at AS createdAt FROM projects WHERE workspace_root = ?")
+      .get(workspaceRoot) as ProjectRecord | undefined;
+    return row;
+  }
+
   getThread(id: string): ThreadRecord | undefined {
     const row = this.db
       .prepare(
