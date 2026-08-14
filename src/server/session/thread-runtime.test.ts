@@ -319,6 +319,66 @@ describe("ThreadRuntime", () => {
     await sendPromise;
   });
 
+  it("captureFinalCheckpoint captures whatever's currently on disk as the next turn, unmarked (not a revert)", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
+    await runtime.start(); // turn 0
+    await runtime.sendMessage("first"); // turn 1
+
+    fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nuncaptured edit\n");
+
+    const turn = runtime.captureFinalCheckpoint();
+
+    expect(turn).toBe(2);
+    expect(eventStore.listCheckpoints("thread-1").map((c) => ({ turn: c.turn, revertedToTurn: c.revertedToTurn }))).toEqual([
+      { turn: 0, revertedToTurn: null },
+      { turn: 1, revertedToTurn: null },
+      { turn: 2, revertedToTurn: null },
+    ]);
+    const diff = checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
+    expect(diff).toContain("+uncaptured edit");
+  });
+
+  it("captureFinalCheckpoint rejects while a turn is still in flight", async () => {
+    let releasePrompt: (() => void) | undefined;
+    const slowAgent = agent({ name: "slow-agent" })
+      .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+      .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+      .onRequest(
+        methods.agent.session.prompt,
+        () =>
+          new Promise((resolve) => {
+            releasePrompt = () => resolve({ stopReason: "end_turn" });
+          }),
+      );
+
+    const session = new AcpSession({ name: "argusde-server-test", cwd: repoDir, createTransport: () => slowAgent });
+    const runtime = new ThreadRuntime({ threadId: "thread-1", cwd: repoDir, session, eventStore, checkpointStore, onEvent: () => {} });
+    await runtime.start();
+
+    const sendPromise = runtime.sendMessage("hello");
+
+    // turnInFlight is set synchronously inside sendMessage(), before its own
+    // internal await — but the slow-agent's prompt handler (and therefore
+    // releasePrompt) needs the underlying transport's promise chain to
+    // actually run, which takes real event-loop ticks even for an
+    // in-process transport. Poll rather than guess a fixed number of hops.
+    await expect.poll(() => releasePrompt !== undefined, { timeout: 2000 }).toBe(true);
+
+    expect(() => runtime.captureFinalCheckpoint()).toThrow(/in flight/);
+
+    releasePrompt?.();
+    await sendPromise;
+  });
+
+  it("isTurnInFlight() reflects the true send-to-complete window", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "ok" }], () => {});
+    await runtime.start();
+    expect(runtime.isTurnInFlight()).toBe(false);
+
+    await runtime.sendMessage("hello"); // standard fake agent resolves synchronously/fast
+    expect(runtime.isTurnInFlight()).toBe(false);
+  });
+
   it("respondToPermission forwards to the underlying session, unblocking the turn", async () => {
     const events: AcpSessionEvent[] = [];
     const runtime = runtimeWithSteps(

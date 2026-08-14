@@ -111,6 +111,35 @@ export class ThreadRuntime {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
   }
 
+  isTurnInFlight(): boolean {
+    return this.turnInFlight;
+  }
+
+  /**
+   * Captures whatever's currently on disk as the next turn, unmarked (not
+   * a revert). Used by thread.close before disposing the runtime and (for
+   * a promoted Thread) removing its worktree — the same "capture whatever
+   * hasn't been checkpointed yet, before a destructive operation" idea
+   * revertToCheckpoint's own safety snapshot already established, applied
+   * here so a worktree removal never silently discards state that was
+   * never protected by a completed turn.
+   */
+  captureFinalCheckpoint(): number {
+    if (this.turnInFlight) throw new Error("Cannot capture a final checkpoint while a turn is still in flight");
+
+    const { threadId, cwd, checkpointStore, eventStore } = this.options;
+    const turn = this.nextTurn++;
+    const ref = checkpointStore.captureCheckpoint(threadId, turn, cwd);
+    eventStore.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId,
+      turn,
+      ref,
+      timestamp: new Date().toISOString(),
+    });
+    return turn;
+  }
+
   /**
    * Restores the workspace to an earlier checkpoint's snapshot, then
    * captures that restored state as a brand-new forward checkpoint marked
