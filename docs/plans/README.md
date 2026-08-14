@@ -10,4 +10,5 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 - [Phase 2: shared web UI](phase-2-shared-web-ui.md) — server-served UI, functional parity chat in a browser. Merged [#37](https://github.com/deanjstone/argusde/pull/37).
 - [Phase 2b: Electron cutover](phase-2b-electron-cutover.md) — Electron loads the shared UI via loadURL, retires the old renderer/IPC path. Merged [#38](https://github.com/deanjstone/argusde/pull/38).
 - [Phase 3: Tailscale serve + startup QR code](phase-3-tailscale-remote-access.md) — `argusde serve` wires up `tailscale serve` and prints a scannable QR code on startup. Merged [#40](https://github.com/deanjstone/argusde/pull/40).
-- [Phase 4: Checkpoint diff + timeline UI](phase-4-checkpoint-diff-ui.md) — surfaces checkpoint diffing and a timeline strip in the chat view. In progress on `feature/checkpoint-diff-ui`.
+- [Phase 4: Checkpoint diff + timeline UI](phase-4-checkpoint-diff-ui.md) — surfaces checkpoint diffing and a timeline strip in the chat view. Merged [#42](https://github.com/deanjstone/argusde/pull/42).
+- [Phase 5: Mode switcher UI](phase-5-mode-switcher-ui.md) — surfaces the agent's mode catalog and lets the user switch modes from the chat view. In progress on `feature/mode-switcher-ui`.
