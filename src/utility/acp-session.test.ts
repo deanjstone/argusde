@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { agent, methods } from "@agentclientprotocol/sdk";
 import { AcpSession } from "./acp-session.js";
 import { createFakeAgent, type FakeAgentStep } from "./fake-agent.js";
 import type { AcpSessionEvent } from "../shared/acp-events.js";
@@ -112,13 +113,93 @@ describe("AcpSession", () => {
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
   });
 
-  it("setMode requests a mode change and the agent's confirmation round-trips as a mode-changed event", async () => {
+  it("setMode emits its own mode-changed confirmation once the agent's request succeeds, even though the agent sends no notification for it", async () => {
+    // Real Claude Code's ACP agent accepts session/set_mode and returns
+    // success with no current_mode_update notification — that notification
+    // is for the agent changing modes autonomously, not confirming a
+    // client-requested change (confirmed against the real agent, not
+    // assumed). The fake agent here mirrors that: its session.setMode
+    // handler doesn't notify, so this test only passes if AcpSession itself
+    // synthesizes the confirmation.
     const session = sessionWithSteps([]);
     await session.start();
 
     const events = await collectEvents(session, () => session.setMode("plan"));
 
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
+  });
+
+  it("emits the mode catalog as a mode-changed event during start() when the agent advertises modes", async () => {
+    const fakeAgent = createFakeAgent({
+      steps: [],
+      modes: {
+        currentModeId: "default",
+        availableModes: [
+          { id: "default", name: "Default" },
+          { id: "plan", name: "Plan", description: "Plan before editing" },
+        ],
+      },
+    });
+    const session = new AcpSession({ name: "argusde-test", cwd: "/tmp/argusde-test", createTransport: () => fakeAgent });
+
+    const events = await collectEvents(session, () => session.start());
+
+    expect(events).toContainEqual({
+      kind: "mode-changed",
+      modeId: "default",
+      availableModes: [
+        { id: "default", name: "Default", description: undefined },
+        { id: "plan", name: "Plan", description: "Plan before editing" },
+      ],
+    });
+  });
+
+  it("does not emit a mode-changed event during start() when the agent doesn't advertise modes", async () => {
+    const session = sessionWithSteps([]);
+    const events = await collectEvents(session, () => session.start());
+    expect(events.filter((e) => e.kind === "mode-changed")).toHaveLength(0);
+  });
+
+  it("only confirms the most recently requested mode when two setMode responses resolve out of order", async () => {
+    // The underlying ACP connection has no guarantee that responses resolve
+    // in the same order requests were sent — a slow first response arriving
+    // after a fast second one must not let the switcher revert to the
+    // stale, superseded mode.
+    const resolvers: Array<() => void> = [];
+    const reorderingAgent = agent({ name: "reordering-agent" })
+      .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+      .onRequest(methods.agent.session.new, async () => ({ sessionId: "s1" }))
+      .onRequest(
+        methods.agent.session.setMode,
+        () =>
+          new Promise((resolve) => {
+            resolvers.push(() => resolve({}));
+          }),
+      );
+
+    const session = new AcpSession({ name: "argusde-test", cwd: "/tmp/argusde-test", createTransport: () => reorderingAgent });
+    await session.start();
+
+    const events: AcpSessionEvent[] = [];
+    session.on("event", (e) => events.push(e));
+
+    const first = session.setMode("plan");
+    const second = session.setMode("bypassPermissions");
+
+    await new Promise<void>((resolve) => {
+      const check = () => (resolvers.length === 2 ? resolve() : setTimeout(check, 5));
+      check();
+    });
+
+    // Resolve out of order: the second (most recent) request's response
+    // arrives first, then the stale first request's response arrives after.
+    resolvers[1]!();
+    await second;
+    resolvers[0]!();
+    await first;
+
+    const modeChangedEvents = events.filter((e) => e.kind === "mode-changed");
+    expect(modeChangedEvents).toEqual([{ kind: "mode-changed", modeId: "bypassPermissions" }]);
   });
 
   it("emits a permission-request event and resolves the agent's request once respondToPermission is called", async () => {

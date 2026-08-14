@@ -7,6 +7,7 @@ import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 
 const steps = process.env.ARGUSDE_FAKE_AGENT_STEPS ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_STEPS) : [];
+const modes = process.env.ARGUSDE_FAKE_AGENT_MODES ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_MODES) : undefined;
 const sessionId = "smoke-session-1";
 
 const app = agent({ name: "smoke-fake-agent" })
@@ -14,7 +15,13 @@ const app = agent({ name: "smoke-fake-agent" })
     protocolVersion: 1,
     agentCapabilities: {},
   }))
-  .onRequest(methods.agent.session.new, async () => ({ sessionId }))
+  .onRequest(methods.agent.session.new, async () => ({ sessionId, modes }))
+  // No current_mode_update notification here — matches the real
+  // claude-agent-acp, which confirms a client-requested session/set_mode
+  // via its response only. AcpSession.setMode() synthesizes the
+  // mode-changed confirmation itself; this fixture must not paper over
+  // that with a notification the real agent doesn't send.
+  .onRequest(methods.agent.session.setMode, async () => ({}))
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
     for (const step of steps) {
       if (step.type === "message") {

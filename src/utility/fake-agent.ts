@@ -29,6 +29,11 @@ export type FakeAgentStep =
 export interface FakeAgentOptions {
   sessionId?: string;
   steps?: FakeAgentStep[];
+  /** Mirrors the real SDK's NewSessionResponse.modes field — omit to simulate an agent that doesn't advertise modes at all. */
+  modes?: {
+    currentModeId: string;
+    availableModes: Array<{ id: string; name: string; description?: string }>;
+  };
 }
 
 /**
@@ -52,14 +57,14 @@ export function createFakeAgent(options: FakeAgentOptions = {}): AgentApp {
     }))
     .onRequest(methods.agent.session.new, async () => ({
       sessionId,
+      modes: options.modes,
     }))
-    .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
-      await client.notify(methods.client.session.update, {
-        sessionId: params.sessionId,
-        update: { sessionUpdate: "current_mode_update", currentModeId: params.modeId },
-      });
-      return {};
-    })
+    // Deliberately does NOT notify current_mode_update here — confirmed
+    // against the real claude-agent-acp that a client-requested
+    // session/set_mode gets no notification, only a success response. That
+    // notification is for the agent changing modes autonomously (see the
+    // "mode-change" step type below), not for confirming this call.
+    .onRequest(methods.agent.session.setMode, async () => ({}))
     .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
       for (const step of steps) {
         switch (step.type) {

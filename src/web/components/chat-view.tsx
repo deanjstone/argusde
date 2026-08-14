@@ -6,6 +6,7 @@ import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView } from "./diff-view.js";
+import { ModeSwitcher } from "./mode-switcher.js";
 
 export interface DiffState {
   text: string | null;
@@ -23,6 +24,7 @@ export interface ChatViewProps {
   activeTurn?: number;
   diff?: DiffState;
   onCloseDiff?: () => void;
+  onSetMode?: (modeId: string) => void;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -85,6 +87,7 @@ export function ChatView({
   activeTurn,
   diff = { text: null, loading: false, error: undefined },
   onCloseDiff = () => {},
+  onSetMode = () => {},
 }: ChatViewProps) {
   const [text, setText] = useState("");
 
@@ -103,6 +106,8 @@ export function ChatView({
           {state.connectionError ? <span className="text-red-400">{state.connectionError}</span> : <span>{state.connectionState}…</span>}
         </div>
       )}
+
+      <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
       <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />

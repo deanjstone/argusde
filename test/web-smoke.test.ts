@@ -52,6 +52,13 @@ describe("web smoke: server + browser round trip", () => {
     checkpointStore = new CheckpointStore();
 
     process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([{ type: "message", text: "Hello from the web smoke test agent" }]);
+    process.env.ARGUSDE_FAKE_AGENT_MODES = JSON.stringify({
+      currentModeId: "default",
+      availableModes: [
+        { id: "default", name: "Default" },
+        { id: "plan", name: "Plan" },
+      ],
+    });
 
     server = await startWsServer({
       host: "127.0.0.1",
@@ -73,6 +80,7 @@ describe("web smoke: server + browser round trip", () => {
 
   afterAll(async () => {
     delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
+    delete process.env.ARGUSDE_FAKE_AGENT_MODES;
     await browser?.close();
     await server?.close();
     eventStore?.close();
@@ -122,5 +130,26 @@ describe("web smoke: server + browser round trip", () => {
       expect(diffText).toContain("and a second line");
     },
     30_000,
+  );
+
+  it(
+    "shows the agent's mode catalog and switches modes via a real session/set_mode round trip",
+    async () => {
+      const modeSwitcher = page.getByRole("combobox", { name: /agent mode/i });
+      await modeSwitcher.waitFor({ timeout: 10_000 });
+      expect(await modeSwitcher.inputValue()).toBe("default");
+
+      await modeSwitcher.selectOption("plan");
+
+      // The fixture agent's session.setMode handler sends no notification
+      // (matching the real claude-agent-acp) — waiting for the select's own
+      // value to update proves AcpSession's synthesized mode-changed
+      // confirmation made the real WS round trip, not just an optimistic
+      // client-side change with nothing behind it.
+      await expect
+        .poll(async () => modeSwitcher.inputValue(), { timeout: 10_000 })
+        .toBe("plan");
+    },
+    20_000,
   );
 });

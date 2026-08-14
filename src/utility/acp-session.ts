@@ -98,6 +98,7 @@ export class AcpSession extends EventEmitter {
   private activeSession: ActiveSession | undefined;
   private pendingPermissions = new Map<string, PendingPermissionRequest>();
   private permissionCounter = 0;
+  private modeRequestCounter = 0;
 
   constructor(options: AcpSessionOptions) {
     super();
@@ -150,6 +151,28 @@ export class AcpSession extends EventEmitter {
 
     this.activeSession = await connection.agent.buildSession(this.options.cwd).start();
     this.setState("connected");
+
+    // Unlike `current_mode_update` (a change signal only), the mode catalog
+    // is only ever available here, on the session's own start response — an
+    // agent that doesn't advertise modes at all leaves this undefined, and
+    // no event is emitted (no switcher should render for it).
+    const modes = this.activeSession.modes;
+    // The SDK's own response validation already replaces a malformed
+    // `modes` field with `undefined` before it reaches here (confirmed via
+    // its zod schema's defaultOnError fallback) — this guard is extra
+    // insurance against a shape violating that contract, not a scenario
+    // known to be reachable through a spec-compliant agent.
+    if (modes && Array.isArray(modes.availableModes)) {
+      this.emitEvent({
+        kind: "mode-changed",
+        modeId: modes.currentModeId,
+        availableModes: modes.availableModes.map((mode) => ({
+          id: mode.id,
+          name: mode.name,
+          description: mode.description ?? undefined,
+        })),
+      });
+    }
   }
 
   private handleSessionNotification(notification: SessionNotification): void {
@@ -253,10 +276,23 @@ export class AcpSession extends EventEmitter {
     if (!this.connection || !this.activeSession) {
       throw new Error("AcpSession.setMode() called before start()");
     }
+    // Guards against out-of-order responses: nothing about the underlying
+    // connection guarantees requests resolve in the order they were sent,
+    // so a slow response to an earlier setMode() call must not overwrite
+    // the confirmation for a newer one that already resolved.
+    const requestId = ++this.modeRequestCounter;
     await this.connection.agent.request(methods.agent.session.setMode, {
       sessionId: this.activeSession.sessionId,
       modeId,
     });
+    if (requestId !== this.modeRequestCounter) return;
+    // A successful response IS the confirmation — confirmed against the
+    // real claude-agent-acp that it sends no current_mode_update
+    // notification for a client-requested change (that notification is
+    // reserved for the agent changing modes autonomously). Without this,
+    // the mode switcher UI would silently revert to the old mode after
+    // every switch, even though the agent actually changed it.
+    this.emitEvent({ kind: "mode-changed", modeId });
   }
 
   async restartSession(): Promise<void> {
