@@ -27,6 +27,7 @@ export interface ChatViewProps {
   onSetMode?: (modeId: string) => void;
   worktreePath?: string | null;
   onPromoteToWorktree?: () => void;
+  promoting?: boolean;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -92,14 +93,18 @@ export function ChatView({
   onSetMode = () => {},
   worktreePath = null,
   onPromoteToWorktree = () => {},
+  promoting = false,
 }: ChatViewProps) {
   const [text, setText] = useState("");
   // Promoting relocates the thread's agent session to a fresh worktree —
-  // only safe while nothing has happened yet (checkpoints.length <= 1 means
-  // just the turn-0 baseline exists, no message sent). See ws-server.ts's
-  // matching server-side guard for the authoritative check; this is purely
-  // a UI-visibility mirror of it, not itself an enforcement point.
-  const canPromote = worktreePath === null && checkpoints.length <= 1;
+  // only safe while nothing has happened yet. Mirrors state.timeline being
+  // empty, not checkpoints.length: a checkpoint only lands once a turn
+  // fully completes, so it would still read "nothing sent" while a message
+  // is in flight. See ws-server.ts's matching server-side guard (keyed off
+  // the persisted thread.message-recorded event) for the authoritative
+  // check — this is purely a UI-visibility mirror, not itself an
+  // enforcement point.
+  const canPromote = worktreePath === null && state.timeline.length === 0;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -131,8 +136,8 @@ export function ChatView({
       ) : (
         canPromote && (
           <div className="flex justify-end border-b border-neutral-800 px-3 py-2">
-            <Button variant="outline" size="sm" onClick={onPromoteToWorktree}>
-              Promote to worktree
+            <Button variant="outline" size="sm" aria-label="Promote to worktree" onClick={onPromoteToWorktree} disabled={promoting}>
+              {promoting ? "Promoting…" : "Promote to worktree"}
             </Button>
           </div>
         )

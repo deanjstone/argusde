@@ -36,6 +36,7 @@ export function App() {
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
   const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
   const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
+  const [promoting, setPromoting] = useState(false);
   // Guards against an in-flight fetchDiff call overwriting a *later* one's
   // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
   // request already rendered, which would silently show a stale diff.
@@ -170,7 +171,8 @@ export function App() {
 
   async function handlePromoteToWorktree() {
     const client = clientRef.current;
-    if (!client || !thread) return;
+    if (!client || !thread || promoting) return;
+    setPromoting(true);
     try {
       const result = await client.sendCommand<{ worktreePath: string }>({
         type: "thread.promote-to-worktree",
@@ -181,6 +183,8 @@ export function App() {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
       );
+    } finally {
+      setPromoting(false);
     }
   }
 
@@ -227,6 +231,7 @@ export function App() {
             onSetMode={handleSetMode}
             worktreePath={thread.worktreePath}
             onPromoteToWorktree={() => void handlePromoteToWorktree()}
+            promoting={promoting}
           />
         )}
         {tab === "threads" && (

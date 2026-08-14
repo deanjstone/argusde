@@ -224,6 +224,45 @@ describe("EventStore", () => {
     ]);
   });
 
+  it("still rejects a duplicate thread.checkpoint-captured for a non-zero turn — only turn 0 gets the re-baseline exception", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/workspace",
+      title: "Project One",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-13T00:00:30.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId: "thread-1",
+      turn: 1,
+      ref: "refs/argusde/checkpoints/thread-1/turn/1",
+      timestamp: "2026-08-13T00:01:00.000Z",
+    });
+
+    // A hypothetical bug causing completeTurn() to fire twice for the same
+    // turn must still surface as a real error, not silently overwrite the
+    // ref — the PK's protection is only relaxed for turn 0's one
+    // legitimate re-baseline path.
+    expect(() =>
+      store.appendEvent({
+        kind: "thread.checkpoint-captured",
+        threadId: "thread-1",
+        turn: 1,
+        ref: "refs/argusde/checkpoints/thread-1/turn/1-duplicate",
+        timestamp: "2026-08-13T00:02:00.000Z",
+      }),
+    ).toThrow();
+  });
+
   it("persists across reopening the same database file", () => {
     store.appendEvent({
       kind: "project.created",

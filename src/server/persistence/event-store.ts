@@ -88,13 +88,20 @@ export class EventStore {
           .run(event.threadId, event.projectId, event.title, event.worktreePath, event.timestamp);
         break;
       case "thread.checkpoint-captured":
-        // INSERT OR REPLACE, not a plain INSERT: turn 0's baseline is
+        // Turn 0 alone gets INSERT OR REPLACE — its baseline is
         // deliberately re-captured exactly once, at worktree-promotion
         // time, to reflect the clean worktree checkout the agent actually
         // starts from rather than the main workspace's state at Thread
-        // creation. Every other turn is still write-once in practice.
+        // creation. Every other turn keeps the plain INSERT's primary-key
+        // protection, so a hypothetical future double-fire of completeTurn()
+        // for the same turn still surfaces as a real error instead of
+        // silently overwriting the ref.
         this.db
-          .prepare("INSERT OR REPLACE INTO checkpoints (thread_id, turn, ref, created_at) VALUES (?, ?, ?, ?)")
+          .prepare(
+            event.turn === 0
+              ? "INSERT OR REPLACE INTO checkpoints (thread_id, turn, ref, created_at) VALUES (?, ?, ?, ?)"
+              : "INSERT INTO checkpoints (thread_id, turn, ref, created_at) VALUES (?, ?, ?, ?)",
+          )
           .run(event.threadId, event.turn, event.ref, event.timestamp);
         break;
       case "thread.mode-changed":

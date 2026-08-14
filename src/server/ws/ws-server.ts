@@ -143,7 +143,15 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       case "thread.promote-to-worktree": {
         const thread = requireThread(command.threadId);
         if (thread.worktreePath) throw new Error(`Thread already promoted to a worktree: ${thread.worktreePath}`);
-        if (eventStore.listCheckpoints(command.threadId).length > 1) {
+        // Checking checkpoint count instead of this would be racy — a
+        // checkpoint only lands once completeTurn() fires on turn-complete,
+        // so a message that's been sent but is still in flight (the agent
+        // hasn't replied yet) would read as "just the baseline", wrongly
+        // allowing promotion to dispose the live session out from under the
+        // pending sendMessage() call. thread.message-recorded is persisted
+        // synchronously the instant sendMessage() is called, before any
+        // await — so this check has no such race window.
+        if (eventStore.listEventsForThread(command.threadId).some((e) => e.kind === "thread.message-recorded")) {
           throw new Error("Cannot promote a thread after its conversation has started");
         }
         const project = eventStore.getProject(thread.projectId);

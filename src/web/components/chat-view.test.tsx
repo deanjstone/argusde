@@ -147,22 +147,42 @@ describe("ChatView", () => {
     expect(onPromoteToWorktree).toHaveBeenCalled();
   });
 
-  it("hides the promote control once a message has been sent (more than the turn-0 baseline checkpoint exists)", () => {
+  it("hides the promote control once a message has been sent — keyed off the timeline, not checkpoints (a checkpoint only lands once a turn fully completes, so a still-in-flight message must hide it too)", () => {
+    const state = stateWith({
+      timeline: [{ type: "message", id: "1", role: "user", content: [{ type: "text", text: "go" }] }],
+    });
     render(
       <ChatView
-        state={initialChatState}
+        state={state}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[
-          { threadId: "t1", turn: 0, ref: "r0", createdAt: "" },
-          { threadId: "t1", turn: 1, ref: "r1", createdAt: "" },
-        ]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
         worktreePath={null}
         onPromoteToWorktree={() => {}}
       />,
     );
 
     expect(screen.queryByRole("button", { name: /promote to worktree/i })).not.toBeInTheDocument();
+  });
+
+  it("disables the promote control while a promotion is already in flight, so a rapid double-click can't send two commands", () => {
+    const onPromoteToWorktree = vi.fn();
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath={null}
+        onPromoteToWorktree={onPromoteToWorktree}
+        promoting={true}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: /promote to worktree/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onPromoteToWorktree).not.toHaveBeenCalled();
   });
 
   it("shows a worktree indicator instead of the promote control once a thread is promoted, and applies a colored border", () => {

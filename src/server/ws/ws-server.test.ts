@@ -228,6 +228,88 @@ describe("ws-server", () => {
   }, 20_000);
 
   it(
+    "refuses to promote a thread while a turn is still in flight (message sent, not yet complete) — not just after it finishes",
+    async () => {
+      // A checkpoint only lands once completeTurn() fires on turn-complete —
+      // checking checkpoint count alone would still read "just the
+      // baseline" while a turn is mid-flight, wrongly allowing promotion to
+      // dispose the live session out from under the pending sendMessage()
+      // call. This dedicated server's agent never resolves session/prompt
+      // until the test manually releases it, so the race window is real and
+      // controllable rather than assumed.
+      let releasePrompt: (() => void) | undefined;
+      const slowAgent = agent({ name: "slow-agent" })
+        .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+        .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+        .onRequest(
+          methods.agent.session.prompt,
+          () =>
+            new Promise((resolve) => {
+              releasePrompt = () => resolve({ stopReason: "end_turn" });
+            }),
+        );
+
+      const slowServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) => new AcpSession({ name: "argusde-slow-test", cwd, createTransport: () => slowAgent }),
+      });
+      const slowClient = new WebSocket(`ws://127.0.0.1:${slowServer.port}/ws`);
+      const slowReceived: ServerPush[] = [];
+      slowClient.on("message", (data) => slowReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        slowClient.once("open", () => resolve());
+        slowClient.once("error", reject);
+      });
+      const slowWaitFor = (predicate: (m: ServerPush[]) => boolean, timeoutMs = 10_000) =>
+        new Promise<void>((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            if (predicate(slowReceived)) return resolve();
+            if (Date.now() - start > timeoutMs) return reject(new Error(`slowWaitFor timed out; received: ${JSON.stringify(slowReceived)}`));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+      const slowSend = async (command: Record<string, unknown>) => {
+        slowClient.send(JSON.stringify(command));
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === command.commandId));
+        return slowReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as Extract<
+          ServerPush,
+          { type: "command.result" }
+        >;
+      };
+
+      try {
+        const projectResult = await slowSend({ type: "project.create", commandId: "s1", workspaceRoot: repoDir, title: "P" });
+        const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+        const threadResult = await slowSend({ type: "thread.create", commandId: "s2", projectId, title: "T" });
+        const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+        // Fire-and-forget: don't await this one, since session/prompt won't
+        // resolve until we release it below — this is the whole point.
+        slowClient.send(JSON.stringify({ type: "thread.send-message", commandId: "s3", threadId, text: "go" }));
+        await new Promise<void>((resolve) => {
+          const check = () => (releasePrompt ? resolve() : setTimeout(check, 5));
+          check();
+        });
+
+        const promoteResult = await slowSend({ type: "thread.promote-to-worktree", commandId: "s4", threadId });
+        expect(promoteResult.ok).toBe(false);
+
+        releasePrompt!();
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === "s3"));
+      } finally {
+        slowClient.close();
+        await slowServer.close();
+      }
+    },
+    20_000,
+  );
+
+  it(
     "replies with ok: false and an error message for a command referencing an unknown thread",
     async () => {
       const result = await send({ type: "thread.send-message", commandId: "c1", threadId: "does-not-exist", text: "hi" });
