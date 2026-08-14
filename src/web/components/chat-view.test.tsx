@@ -115,6 +115,93 @@ describe("ChatView", () => {
     expect(onSetMode).toHaveBeenCalledWith("plan");
   });
 
+  it("shows a 'promote to worktree' control on a fresh thread with no worktree and no messages sent", () => {
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath={null}
+        onPromoteToWorktree={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /promote to worktree/i })).toBeInTheDocument();
+  });
+
+  it("calls onPromoteToWorktree when the promote control is clicked", () => {
+    const onPromoteToWorktree = vi.fn();
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath={null}
+        onPromoteToWorktree={onPromoteToWorktree}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /promote to worktree/i }));
+    expect(onPromoteToWorktree).toHaveBeenCalled();
+  });
+
+  it("hides the promote control once a message has been sent — keyed off the timeline, not checkpoints (a checkpoint only lands once a turn fully completes, so a still-in-flight message must hide it too)", () => {
+    const state = stateWith({
+      timeline: [{ type: "message", id: "1", role: "user", content: [{ type: "text", text: "go" }] }],
+    });
+    render(
+      <ChatView
+        state={state}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath={null}
+        onPromoteToWorktree={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /promote to worktree/i })).not.toBeInTheDocument();
+  });
+
+  it("disables the promote control while a promotion is already in flight, so a rapid double-click can't send two commands", () => {
+    const onPromoteToWorktree = vi.fn();
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath={null}
+        onPromoteToWorktree={onPromoteToWorktree}
+        promoting={true}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: /promote to worktree/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onPromoteToWorktree).not.toHaveBeenCalled();
+  });
+
+  it("shows a worktree indicator instead of the promote control once a thread is promoted, and applies a colored border", () => {
+    const { container } = render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        worktreePath="/workspace-worktrees/t1"
+        onPromoteToWorktree={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /promote to worktree/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/worktree/i)).toBeInTheDocument();
+    expect(container.firstElementChild?.className).toMatch(/border-(amber|emerald|violet)-\d+/);
+  });
+
   it("renders no checkpoint strip or diff view when no checkpoints are passed", () => {
     render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.queryByRole("button", { name: "Turn 1" })).not.toBeInTheDocument();

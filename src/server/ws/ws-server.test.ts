@@ -97,6 +97,9 @@ afterEach(async () => {
   eventStore.close();
   fs.rmSync(repoDir, { recursive: true, force: true });
   fs.rmSync(dbDir, { recursive: true, force: true });
+  // Sibling to repoDir, not inside it — deleted separately for tests that
+  // promoted a thread to a real worktree.
+  fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
 }, 20_000);
 
 describe("ws-server", () => {
@@ -173,6 +176,138 @@ describe("ws-server", () => {
     expect(diff).toContain("file.txt");
     expect(diff).toContain("+world");
   }, 20_000);
+
+  it("promotes a fresh thread to a real worktree, relocates its session, and shares checkpoint refs with the main repo", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "wt3", threadId });
+    expect(promoteResult.ok).toBe(true);
+    const { worktreePath } = promoteResult.ok ? (promoteResult.result as { worktreePath: string }) : { worktreePath: "" };
+    expect(worktreePath).toBe(`${repoDir}-worktrees/${threadId}`);
+    expect(fs.existsSync(worktreePath)).toBe(true);
+
+    // A subsequent turn's checkpoint is captured from inside the worktree
+    // (the relocated runtime's new cwd) — proving the session actually
+    // moved, not just the persisted record.
+    fs.writeFileSync(path.join(worktreePath, "file.txt"), "hello\nfrom the worktree\n");
+    await send({ type: "thread.send-message", commandId: "wt4", threadId, text: "go" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    // The checkpoint ref written from inside the worktree must resolve from
+    // the *main* repo too — the shared-object-database claim this whole
+    // feature depends on, proven for real rather than assumed.
+    const ref = "refs/argusde/checkpoints/" + threadId + "/turn/1";
+    expect(() => execFileSync("git", ["rev-parse", ref], { cwd: repoDir })).not.toThrow();
+  }, 20_000);
+
+  it("refuses to promote a thread a second time", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt5", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt6", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.promote-to-worktree", commandId: "wt7", threadId });
+    const secondAttempt = await send({ type: "thread.promote-to-worktree", commandId: "wt8", threadId });
+    expect(secondAttempt.ok).toBe(false);
+  }, 20_000);
+
+  it("refuses to promote a thread once a message has already been sent", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt9", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt10", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "wt11", threadId, text: "hi" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "wt12", threadId });
+    expect(promoteResult.ok).toBe(false);
+  }, 20_000);
+
+  it(
+    "refuses to promote a thread while a turn is still in flight (message sent, not yet complete) — not just after it finishes",
+    async () => {
+      // A checkpoint only lands once completeTurn() fires on turn-complete —
+      // checking checkpoint count alone would still read "just the
+      // baseline" while a turn is mid-flight, wrongly allowing promotion to
+      // dispose the live session out from under the pending sendMessage()
+      // call. This dedicated server's agent never resolves session/prompt
+      // until the test manually releases it, so the race window is real and
+      // controllable rather than assumed.
+      let releasePrompt: (() => void) | undefined;
+      const slowAgent = agent({ name: "slow-agent" })
+        .onRequest(methods.agent.initialize, async () => ({ protocolVersion: 1, agentCapabilities: {} }))
+        .onRequest(methods.agent.session.new, async () => ({ sessionId: "slow-session" }))
+        .onRequest(
+          methods.agent.session.prompt,
+          () =>
+            new Promise((resolve) => {
+              releasePrompt = () => resolve({ stopReason: "end_turn" });
+            }),
+        );
+
+      const slowServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) => new AcpSession({ name: "argusde-slow-test", cwd, createTransport: () => slowAgent }),
+      });
+      const slowClient = new WebSocket(`ws://127.0.0.1:${slowServer.port}/ws`);
+      const slowReceived: ServerPush[] = [];
+      slowClient.on("message", (data) => slowReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        slowClient.once("open", () => resolve());
+        slowClient.once("error", reject);
+      });
+      const slowWaitFor = (predicate: (m: ServerPush[]) => boolean, timeoutMs = 10_000) =>
+        new Promise<void>((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            if (predicate(slowReceived)) return resolve();
+            if (Date.now() - start > timeoutMs) return reject(new Error(`slowWaitFor timed out; received: ${JSON.stringify(slowReceived)}`));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+      const slowSend = async (command: Record<string, unknown>) => {
+        slowClient.send(JSON.stringify(command));
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === command.commandId));
+        return slowReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as Extract<
+          ServerPush,
+          { type: "command.result" }
+        >;
+      };
+
+      try {
+        const projectResult = await slowSend({ type: "project.create", commandId: "s1", workspaceRoot: repoDir, title: "P" });
+        const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+        const threadResult = await slowSend({ type: "thread.create", commandId: "s2", projectId, title: "T" });
+        const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+        // Fire-and-forget: don't await this one, since session/prompt won't
+        // resolve until we release it below — this is the whole point.
+        slowClient.send(JSON.stringify({ type: "thread.send-message", commandId: "s3", threadId, text: "go" }));
+        await new Promise<void>((resolve) => {
+          const check = () => (releasePrompt ? resolve() : setTimeout(check, 5));
+          check();
+        });
+
+        const promoteResult = await slowSend({ type: "thread.promote-to-worktree", commandId: "s4", threadId });
+        expect(promoteResult.ok).toBe(false);
+
+        releasePrompt!();
+        await slowWaitFor((messages) => messages.some((m) => m.type === "command.result" && m.commandId === "s3"));
+      } finally {
+        slowClient.close();
+        await slowServer.close();
+      }
+    },
+    20_000,
+  );
 
   it(
     "replies with ok: false and an error message for a command referencing an unknown thread",

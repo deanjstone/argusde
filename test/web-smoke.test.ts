@@ -152,4 +152,60 @@ describe("web smoke: server + browser round trip", () => {
     },
     20_000,
   );
+
+  it(
+    "promotes a fresh thread to a worktree and a real file edit lands there, not in the main repo",
+    async () => {
+      // A separate page + a separate repo — the shared page/repoDir above
+      // already has two turns' worth of history by this point in the file,
+      // and promotion is only available before the first message is sent.
+      const worktreeTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-worktree-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: worktreeTestRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: worktreeTestRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: worktreeTestRepoDir });
+      fs.writeFileSync(path.join(worktreeTestRepoDir, "notes.txt"), "original\n");
+      execFileSync("git", ["add", "-A"], { cwd: worktreeTestRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: worktreeTestRepoDir });
+
+      const worktreePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await worktreePage.goto(`http://127.0.0.1:${server.port}/`);
+        await worktreePage.getByLabel(/workspace path/i).fill(worktreeTestRepoDir);
+        await worktreePage.getByRole("button", { name: /start/i }).click();
+        await worktreePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await worktreePage.getByRole("button", { name: /promote to worktree/i }).click();
+        await worktreePage.waitForSelector("text=/running in an isolated worktree/i", { timeout: 15_000 });
+
+        const expectedWorktreeDir = fs.readdirSync(`${worktreeTestRepoDir}-worktrees`)[0];
+        const worktreePath = path.join(`${worktreeTestRepoDir}-worktrees`, expectedWorktreeDir!);
+        expect(fs.existsSync(worktreePath)).toBe(true);
+
+        fs.writeFileSync(path.join(worktreePath, "notes.txt"), "edited by the agent in the worktree\n");
+        await worktreePage.getByPlaceholder(/message/i).fill("go");
+        await worktreePage.getByPlaceholder(/message/i).press("Enter");
+        await worktreePage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
+
+        // The main repo checkout must stay untouched — only the worktree
+        // reflects the edit.
+        expect(fs.readFileSync(path.join(worktreeTestRepoDir, "notes.txt"), "utf8")).toBe("original\n");
+        expect(fs.readFileSync(path.join(worktreePath, "notes.txt"), "utf8")).toBe("edited by the agent in the worktree\n");
+      } finally {
+        await worktreePage.close();
+        // `git worktree remove` first (unregisters it from the main repo's
+        // administrative area); if promotion never happened, there's
+        // nothing to unregister and this is a harmless no-op failure.
+        try {
+          const worktreesDir = `${worktreeTestRepoDir}-worktrees`;
+          const entry = fs.existsSync(worktreesDir) ? fs.readdirSync(worktreesDir)[0] : undefined;
+          if (entry) execFileSync("git", ["worktree", "remove", "--force", path.join(worktreesDir, entry)], { cwd: worktreeTestRepoDir });
+        } catch {
+          // best-effort cleanup only
+        }
+        fs.rmSync(worktreeTestRepoDir, { recursive: true, force: true });
+        fs.rmSync(`${worktreeTestRepoDir}-worktrees`, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });

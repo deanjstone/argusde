@@ -25,6 +25,9 @@ export interface ChatViewProps {
   diff?: DiffState;
   onCloseDiff?: () => void;
   onSetMode?: (modeId: string) => void;
+  worktreePath?: string | null;
+  onPromoteToWorktree?: () => void;
+  promoting?: boolean;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -88,8 +91,20 @@ export function ChatView({
   diff = { text: null, loading: false, error: undefined },
   onCloseDiff = () => {},
   onSetMode = () => {},
+  worktreePath = null,
+  onPromoteToWorktree = () => {},
+  promoting = false,
 }: ChatViewProps) {
   const [text, setText] = useState("");
+  // Promoting relocates the thread's agent session to a fresh worktree —
+  // only safe while nothing has happened yet. Mirrors state.timeline being
+  // empty, not checkpoints.length: a checkpoint only lands once a turn
+  // fully completes, so it would still read "nothing sent" while a message
+  // is in flight. See ws-server.ts's matching server-side guard (keyed off
+  // the persisted thread.message-recorded event) for the authoritative
+  // check — this is purely a UI-visibility mirror, not itself an
+  // enforcement point.
+  const canPromote = worktreePath === null && state.timeline.length === 0;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -100,7 +115,11 @@ export function ChatView({
   }
 
   return (
-    <div className="flex h-full flex-col bg-neutral-950 text-neutral-100">
+    <div
+      className={`flex h-full flex-col border-2 bg-neutral-950 text-neutral-100 ${
+        worktreePath !== null ? "border-amber-500" : "border-transparent"
+      }`}
+    >
       {state.connectionState !== "connected" && (
         <div className="border-b border-neutral-800 px-4 py-2 text-xs text-neutral-400">
           {state.connectionError ? <span className="text-red-400">{state.connectionError}</span> : <span>{state.connectionState}…</span>}
@@ -108,6 +127,21 @@ export function ChatView({
       )}
 
       <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
+
+      {worktreePath !== null ? (
+        <div className="flex items-center justify-end gap-1.5 border-b border-neutral-800 px-3 py-2 text-xs text-amber-400">
+          <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
+          Running in an isolated worktree
+        </div>
+      ) : (
+        canPromote && (
+          <div className="flex justify-end border-b border-neutral-800 px-3 py-2">
+            <Button variant="outline" size="sm" aria-label="Promote to worktree" onClick={onPromoteToWorktree} disabled={promoting}>
+              {promoting ? "Promoting…" : "Promote to worktree"}
+            </Button>
+          </div>
+        )
+      )}
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
       <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />
