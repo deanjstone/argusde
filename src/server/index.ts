@@ -1,5 +1,6 @@
 import { EventStore } from "./persistence/event-store.js";
 import { CheckpointStore } from "./checkpoint/checkpoint-store.js";
+import { WorktreeStore } from "./worktree/worktree-store.js";
 import { startWsServer } from "./ws/ws-server.js";
 import { AcpSession } from "../utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../utility/spawn-agent-process.js";
@@ -33,12 +34,14 @@ const agentArgs = process.env.ARGUSDE_AGENT_ARGS ? (JSON.parse(process.env.ARGUS
 export async function startServer(options: StartServerOptions): Promise<ServerHandle> {
   const eventStore = new EventStore(options.dbPath);
   const checkpointStore = new CheckpointStore();
+  const worktreeStore = new WorktreeStore();
 
   const wsHandle = await startWsServer({
     host: options.host,
     port: options.port,
     eventStore,
     checkpointStore,
+    worktreeStore,
     webDistDir: options.webDistDir,
     createSession: (_threadId, cwd) =>
       new AcpSession({

@@ -97,6 +97,9 @@ afterEach(async () => {
   eventStore.close();
   fs.rmSync(repoDir, { recursive: true, force: true });
   fs.rmSync(dbDir, { recursive: true, force: true });
+  // Sibling to repoDir, not inside it — deleted separately for tests that
+  // promoted a thread to a real worktree.
+  fs.rmSync(`${repoDir}-worktrees`, { recursive: true, force: true });
 }, 20_000);
 
 describe("ws-server", () => {
@@ -172,6 +175,56 @@ describe("ws-server", () => {
     const { diff } = diffResult.ok ? (diffResult.result as { diff: string }) : { diff: "" };
     expect(diff).toContain("file.txt");
     expect(diff).toContain("+world");
+  }, 20_000);
+
+  it("promotes a fresh thread to a real worktree, relocates its session, and shares checkpoint refs with the main repo", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "wt3", threadId });
+    expect(promoteResult.ok).toBe(true);
+    const { worktreePath } = promoteResult.ok ? (promoteResult.result as { worktreePath: string }) : { worktreePath: "" };
+    expect(worktreePath).toBe(`${repoDir}-worktrees/${threadId}`);
+    expect(fs.existsSync(worktreePath)).toBe(true);
+
+    // A subsequent turn's checkpoint is captured from inside the worktree
+    // (the relocated runtime's new cwd) — proving the session actually
+    // moved, not just the persisted record.
+    fs.writeFileSync(path.join(worktreePath, "file.txt"), "hello\nfrom the worktree\n");
+    await send({ type: "thread.send-message", commandId: "wt4", threadId, text: "go" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    // The checkpoint ref written from inside the worktree must resolve from
+    // the *main* repo too — the shared-object-database claim this whole
+    // feature depends on, proven for real rather than assumed.
+    const ref = "refs/argusde/checkpoints/" + threadId + "/turn/1";
+    expect(() => execFileSync("git", ["rev-parse", ref], { cwd: repoDir })).not.toThrow();
+  }, 20_000);
+
+  it("refuses to promote a thread a second time", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt5", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt6", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.promote-to-worktree", commandId: "wt7", threadId });
+    const secondAttempt = await send({ type: "thread.promote-to-worktree", commandId: "wt8", threadId });
+    expect(secondAttempt.ok).toBe(false);
+  }, 20_000);
+
+  it("refuses to promote a thread once a message has already been sent", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "wt9", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "wt10", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "wt11", threadId, text: "hi" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "wt12", threadId });
+    expect(promoteResult.ok).toBe(false);
   }, 20_000);
 
   it(

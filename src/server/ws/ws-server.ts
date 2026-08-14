@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { AcpSession } from "../../utility/acp-session.js";
 import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
+import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
 import { API_VERSION, ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
@@ -13,6 +14,8 @@ export interface WsServerOptions {
   port: number;
   eventStore: EventStore;
   checkpointStore: CheckpointStore;
+  /** Stateless git worktree creation for Thread promotion — no test-injectable seams needed (always shells out to real git, same in tests and production), so this defaults to a plain instance if omitted. */
+  worktreeStore?: WorktreeStore;
   /** Builds the AcpSession for a newly-created Thread. Production points this at a spawned claude-agent-acp; tests point it at a fixture. */
   createSession: (threadId: string, cwd: string) => AcpSession;
   /** Static assets served at "/" — the built web UI (dist/web). Omit to serve nothing but the WS API (e.g. tests that don't care about HTTP). */
@@ -26,6 +29,7 @@ export interface WsServerHandle {
 
 export async function startWsServer(options: WsServerOptions): Promise<WsServerHandle> {
   const { eventStore, checkpointStore, createSession } = options;
+  const worktreeStore = options.worktreeStore ?? new WorktreeStore();
   const clients = new Set<WebSocket>();
   const runtimes = new Map<string, ThreadRuntime>();
 
@@ -79,10 +83,15 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           timestamp: new Date().toISOString(),
         });
 
-        const session = createSession(threadId, project.workspaceRoot);
+        // A brand-new thread never has a worktreePath yet (just persisted as
+        // null above), so this is trivially project.workspaceRoot today —
+        // routed through the same resolution resolveThreadCwd already
+        // encodes so there's exactly one cwd-resolution code path, not two.
+        const cwd = resolveThreadCwd(threadId);
+        const session = createSession(threadId, cwd);
         const runtime = new ThreadRuntime({
           threadId,
-          cwd: project.workspaceRoot,
+          cwd,
           session,
           eventStore,
           checkpointStore,
@@ -130,6 +139,58 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         const cwd = resolveThreadCwd(command.threadId);
         const diff = checkpointStore.diffCheckpoints(command.threadId, command.turnA, command.turnB, cwd);
         return { diff };
+      }
+      case "thread.promote-to-worktree": {
+        const thread = requireThread(command.threadId);
+        if (thread.worktreePath) throw new Error(`Thread already promoted to a worktree: ${thread.worktreePath}`);
+        if (eventStore.listCheckpoints(command.threadId).length > 1) {
+          throw new Error("Cannot promote a thread after its conversation has started");
+        }
+        const project = eventStore.getProject(thread.projectId);
+        if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
+
+        const worktreePath = worktreeStore.createWorktree(project.workspaceRoot, command.threadId);
+
+        // Nothing has happened in this thread yet (guarded above), so
+        // disposing the existing runtime and starting a fresh one against
+        // the new cwd is safe — no in-flight work is lost. This also
+        // re-captures the turn-0 baseline in the worktree's clean checkout
+        // (ThreadRuntime.start()'s own existing behavior, unmodified) —
+        // the INSERT OR REPLACE projection added for this phase is what
+        // lets that second turn-0 write land instead of throwing.
+        const oldRuntime = runtimes.get(command.threadId);
+        if (oldRuntime) await oldRuntime.dispose();
+
+        const session = createSession(command.threadId, worktreePath);
+        const runtime = new ThreadRuntime({
+          threadId: command.threadId,
+          cwd: worktreePath,
+          session,
+          eventStore,
+          checkpointStore,
+          onEvent: (event) => broadcast({ type: "session.event", threadId: command.threadId, event }),
+        });
+        try {
+          await runtime.start();
+        } catch (error) {
+          // Mirrors thread.create's own accepted failure-recovery gap
+          // (argusde#35): a failed promotion leaves this Thread with no
+          // active runtime, and the worktree directory itself is left
+          // behind on disk — not retried automatically. Same class of
+          // rare-failure resource leak, not solved here either.
+          await runtime.dispose().catch(() => undefined);
+          throw error;
+        }
+        runtimes.set(command.threadId, runtime);
+
+        eventStore.appendEvent({
+          kind: "thread.worktree-promoted",
+          threadId: command.threadId,
+          worktreePath,
+          timestamp: new Date().toISOString(),
+        });
+
+        return { worktreePath };
       }
     }
   }
