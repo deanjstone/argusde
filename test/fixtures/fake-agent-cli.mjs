@@ -7,6 +7,7 @@ import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 
 const steps = process.env.ARGUSDE_FAKE_AGENT_STEPS ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_STEPS) : [];
+const modes = process.env.ARGUSDE_FAKE_AGENT_MODES ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_MODES) : undefined;
 const sessionId = "smoke-session-1";
 
 const app = agent({ name: "smoke-fake-agent" })
@@ -14,7 +15,14 @@ const app = agent({ name: "smoke-fake-agent" })
     protocolVersion: 1,
     agentCapabilities: {},
   }))
-  .onRequest(methods.agent.session.new, async () => ({ sessionId }))
+  .onRequest(methods.agent.session.new, async () => ({ sessionId, modes }))
+  .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
+    await client.notify(methods.client.session.update, {
+      sessionId: params.sessionId,
+      update: { sessionUpdate: "current_mode_update", currentModeId: params.modeId },
+    });
+    return {};
+  })
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
     for (const step of steps) {
       if (step.type === "message") {
