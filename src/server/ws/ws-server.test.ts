@@ -361,6 +361,19 @@ describe("ws-server", () => {
     expect(history?.messages[1]?.content).toEqual([{ type: "text", text: "the fix is ready" }]);
   }, 20_000);
 
+  it("thread.get-history includes the connected runtime's last-known connection state, not just its mode/message history", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "cs1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "cs2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "cs3", threadId });
+    expect(historyResult.ok).toBe(true);
+    const history = historyResult.ok ? (historyResult.result as { connectionState: string; connectionError: string | undefined }) : null;
+    expect(history?.connectionState).toBe("connected");
+    expect(history?.connectionError).toBeUndefined();
+  }, 20_000);
+
   it("thread.get-history includes the mode catalog cached from a still-live runtime, even though it's never persisted", async () => {
     process.env.ARGUSDE_FAKE_AGENT_MODES = JSON.stringify({
       currentModeId: "default",

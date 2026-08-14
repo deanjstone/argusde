@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatContentBlock, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
+import type { ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
 import { WS_PATH, type CheckpointRecord, type ProjectRecord, type ThreadRecord } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
@@ -126,9 +126,13 @@ export function App() {
     messages: ThreadHistoryMessage[],
     currentModeId: string | null,
     availableModes: SessionModeSummary[],
+    connectionState: ConnectionState,
+    connectionError: string | undefined,
   ) {
     setThread(info);
-    setChatState((s) => chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes }));
+    setChatState((s) =>
+      chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
+    );
     setDiff(EMPTY_DIFF);
     setActiveTurn(undefined);
     setSelectedProjectId(null);
@@ -212,6 +216,8 @@ export function App() {
       worktreePath: string | null;
       currentModeId: string | null;
       availableModes: SessionModeSummary[];
+      connectionState: ConnectionState;
+      connectionError: string | undefined;
       messages: ThreadHistoryMessage[];
     }>({ type: "thread.get-history", threadId });
 
@@ -220,6 +226,8 @@ export function App() {
       history.messages,
       history.currentModeId,
       history.availableModes,
+      history.connectionState,
+      history.connectionError,
     );
   }
 

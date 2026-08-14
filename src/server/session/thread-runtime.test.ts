@@ -224,6 +224,15 @@ describe("ThreadRuntime", () => {
     ]);
   });
 
+  it("getConnectionState() reflects the last-known connection status, defaulting to disconnected before start()", async () => {
+    const runtime = runtimeWithSteps([{ type: "message", text: "hi there" }], () => {});
+
+    expect(runtime.getConnectionState()).toEqual({ state: "disconnected", error: undefined });
+
+    await runtime.start();
+    expect(runtime.getConnectionState()).toEqual({ state: "connected", error: undefined });
+  });
+
   it("respondToPermission forwards to the underlying session, unblocking the turn", async () => {
     const events: AcpSessionEvent[] = [];
     const runtime = runtimeWithSteps(

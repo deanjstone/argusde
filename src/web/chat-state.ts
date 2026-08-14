@@ -55,6 +55,8 @@ export type ChatEvent =
       messages: Array<{ messageId: string; role: "user" | "agent"; content: ChatContentBlock[] }>;
       currentModeId: string | null;
       availableModes: SessionModeSummary[];
+      connectionState: ConnectionState;
+      connectionError: string | undefined;
     };
 
 const generateMessageId = createMessageIdGenerator();
@@ -145,6 +147,8 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
         timeline: event.messages.map((m) => ({ type: "message", id: m.messageId, role: m.role, content: m.content })),
         currentModeId: event.currentModeId ?? undefined,
         availableModes: event.availableModes,
+        connectionState: event.connectionState,
+        connectionError: event.connectionError,
         pendingPermissionRequest: undefined,
         agentStatus: "idle",
       };

@@ -199,6 +199,8 @@ describe("chatStateReducer", () => {
         ],
         currentModeId: "plan",
         availableModes: [{ id: "plan", name: "Plan" }],
+        connectionState: "connected",
+        connectionError: undefined,
       },
     ]);
 
@@ -212,6 +214,15 @@ describe("chatStateReducer", () => {
     expect(state.pendingPermissionRequest).toBeUndefined();
   });
 
+  it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
+    const state = reduceAll([
+      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
+    ]);
+
+    expect(state.connectionState).toBe("connected");
+    expect(state.connectionError).toBeUndefined();
+  });
+
   it("history-loaded with a null currentModeId (agent doesn't support modes) clears any prior mode state", () => {
     const state = reduceAll([
       {
@@ -219,7 +230,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [] },
+      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
     ]);
 
     expect(state.currentModeId).toBeUndefined();

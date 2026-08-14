@@ -216,6 +216,14 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // removed except at server shutdown) degrades to an empty catalog
         // rather than erroring.
         const availableModes = runtimes.get(command.threadId)?.getAvailableModes() ?? [];
+        // Same rationale as availableModes above: connection-state is only
+        // ever broadcast live, and start()'s own broadcast races ahead of
+        // the thread.create response that first tells the client this
+        // Thread exists — so a freshly-created Thread's initial "connected"
+        // event is otherwise unrecoverable once missed. A Thread with no
+        // live runtime degrades to "disconnected" rather than erroring,
+        // matching the empty-catalog fallback above.
+        const connectionState = runtimes.get(command.threadId)?.getConnectionState() ?? { state: "disconnected", error: undefined };
         return {
           threadId: thread.id,
           projectId: thread.projectId,
@@ -223,6 +231,8 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           worktreePath: thread.worktreePath,
           currentModeId: thread.currentModeId,
           availableModes,
+          connectionState: connectionState.state,
+          connectionError: connectionState.error,
           messages,
         };
       }

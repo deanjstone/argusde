@@ -1,5 +1,5 @@
 import type { AcpSession } from "../../utility/acp-session.js";
-import type { AcpSessionEvent, ChatContentBlock, PermissionOutcome, SessionModeSummary } from "../../shared/acp-events.js";
+import type { AcpSessionEvent, ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../../shared/acp-events.js";
 import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 
@@ -44,6 +44,15 @@ export class ThreadRuntime {
   // missing that original broadcast, can still learn what modes it
   // supports — see thread.get-history in ws-server.ts.
   private lastKnownModes: SessionModeSummary[] = [];
+  // Same rationale as lastKnownModes, but this one genuinely changes across
+  // a session's lifetime (not just a one-shot catalog) — every
+  // "connection-state" event updates it, so a client that missed the live
+  // broadcast (the exact race that also motivated lastKnownModes: start()
+  // broadcasts synchronously before the triggering command's own response
+  // reaches the client) can still learn the current status via
+  // thread.get-history.
+  private lastKnownConnectionState: ConnectionState = "disconnected";
+  private lastKnownConnectionError: string | undefined;
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
@@ -92,10 +101,18 @@ export class ThreadRuntime {
     return this.lastKnownModes;
   }
 
+  getConnectionState(): { state: ConnectionState; error: string | undefined } {
+    return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
+  }
+
   private handleEvent(event: AcpSessionEvent): void {
     this.options.onEvent(event);
 
     switch (event.kind) {
+      case "connection-state":
+        this.lastKnownConnectionState = event.state;
+        this.lastKnownConnectionError = event.error;
+        break;
       case "message-chunk":
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
         break;
