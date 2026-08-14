@@ -1,6 +1,6 @@
 # Phase 11: Thread close + worktree auto-cleanup
 
-> Implemented via `feature/thread-close`, in progress.
+> Implemented via `feature/thread-close`.
 
 ## Context
 
@@ -62,3 +62,17 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33) Story 8: "As a user,
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean.
 2. `pnpm run build` (full build, not just `build:web`) then a manual check against the real `claude-agent-acp`: create a Project with two Threads (one promoted to a worktree), close each, confirm the worktree directory is actually gone from disk, confirm both closed Threads' history is still browsable, confirm closing the currently-active Thread lands on the Threads tab (not the first-run screen) even though other Projects/Threads still exist.
 3. Work happens on a branch (`feature/thread-close`), committed incrementally (schema/event-store/worktree-store plumbing + tests → ThreadRuntime orchestration + tests → ws-server command + tests → UI wiring + tests → web-smoke extension), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1–10), PR opened once complete and green. Plan copied to `docs/plans/phase-11-thread-close.md` per the standing repo convention.
+
+## Outcome
+
+Shipped as designed. The `requireOpenThread` helper closed a real pre-existing gap surfaced while researching this phase (not introduced by it): `promote-to-worktree` and `revert-checkpoint` checked `requireThread` directly rather than the runtime, so closing a Thread and then re-promoting or reverting it would previously have silently proceeded — now every mutating command uniformly rejects a closed Thread with a clear message, while every read-only command (history, checkpoints) keeps working unchanged.
+
+`hasEverHadThread` turned out to be exactly the right minimal fix for the render-gate regression identified during planning — a single boolean, set once at the existing `becomeActiveThread` chokepoint, with no attempt to solve full reload persistence (still a separate, deferred gap). Verified for real against the actual `claude-agent-acp`: closing the currently-active Thread correctly lands on the Threads tab with both Projects still listed, not stranded on the first-run screen.
+
+One real timing bug was caught and fixed while writing `captureFinalCheckpoint`'s own in-flight test (see `thread-runtime.ts`'s commit): `revertToCheckpoint`'s existing in-flight test happened to work by accident because it's `async` and the test `await`s its rejection, which yields the event loop long enough for the slow-agent's prompt handler to actually run; `captureFinalCheckpoint` is fully synchronous, so the equivalent test with no yield in between reached `releasePrompt` while it was still unset and hung. Fixed by polling for `releasePrompt` instead of assuming a fixed number of event-loop hops — worth remembering for any future synchronous-method test built on this same slow-agent pattern.
+
+The manual E2E check against the real agent caught a second, genuine (if narrow) timing distinction, not a bug: a real agent's final reply text can render in the UI a moment *before* the underlying `session/prompt` RPC actually resolves and clears `turnInFlight` server-side — clicking "Close thread" in that exact window is correctly rejected by the in-flight guard, exactly as designed. The first manual-check script attempt hit this because it waited for the reply *text* rather than the `Turn N` checkpoint button (the real signal `completeTurn()` has run); fixed the script, not the app. A related visual-only observation — a screenshot taken immediately after the close click showed the tab bar still highlighting "Chat" — was confirmed via `aria-current`/class inspection to be a transient CSS-transition artifact in the screenshot's exact timing, not a real state bug; the underlying `tab` state and DOM were already correct.
+
+Verification: full suite green (`pnpm run typecheck` + `xvfb-run -a pnpm test`, 228 tests across 24 files, including a new real E2E case), plus a full `pnpm run build` and a real manual check against a live server and the real `claude-agent-acp` — two Projects, one Thread promoted to a worktree with a real agent-driven file edit, closing the active Thread (lands on Threads tab, both Projects still listed), closing the promoted Thread (worktree directory actually gone from disk), and both closed Threads' history still browsable with input disabled. `/code-review high` self-review completed before merge (see PR for findings/fixes, if any).
+
+Deferred items (reopening a closed Thread, Project-level deletion/archiving, any confirmation dialog before closing, full reload persistence) remain out of scope, unchanged from the plan above.
