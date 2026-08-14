@@ -1,6 +1,6 @@
 # Phase 9: Checkpoint revert
 
-> Implemented via `feature/checkpoint-revert`, in progress.
+> Implemented via `feature/checkpoint-revert`.
 
 ## Context
 
@@ -57,3 +57,17 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33)'s Problem Statement 
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean, including all new/extended test files above. Note: this session's environment has shown load-dependent Playwright/Electron test flakiness when many agents run concurrently — if the full suite flakes, re-run the specific failing file(s) in isolation (and/or `--pool=forks --poolOptions.forks.maxForks=2`) before concluding it's a real regression, matching how Phase 8's regressions were distinguished from environment noise.
 2. Manual check: run a real server against the real `claude-agent-acp`, have a multi-turn conversation that changes files each turn, revert to an earlier turn via the UI, confirm the actual files on disk match that turn's state and a new "reverted" checkpoint appears; send a new message afterward and confirm it captures as the next sequential turn number (not colliding with anything).
 3. Work happens on a branch (`feature/checkpoint-revert`), committed incrementally (checkpoint-store git plumbing + tests → schema/event-store/protocol plumbing → ThreadRuntime orchestration + tests → ws-server command + tests → UI wiring + tests → web-smoke extension), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1–8), PR opened once complete and green. Plan copied to `docs/plans/phase-9-checkpoint-revert.md` per the standing repo convention.
+
+## Outcome
+
+Shipped as designed: `git read-tree -u --reset <ref>^{commit}` did the bulk of the working-tree restore, but empirically needed a follow-up `git clean -fd` — `read-tree` only reconciles paths that were already in the *real* index, and every checkpoint capture stages into an isolated `GIT_INDEX_FILE` (never the real one), so a file created after the target checkpoint is untracked from the real index's perspective the whole time and `read-tree` alone left it behind. Caught by the first real-git test run, fixed before it ever reached a higher layer.
+
+Revert never truncates or resets anything, exactly as planned: `nextTurn` is never touched, the target checkpoint's content is captured forward as a brand-new turn marked `revertedToTurn`, and every prior checkpoint (including turns "after" the revert point) stays fully intact and diffable. The `turnInFlight` guard (set in `sendMessage`, cleared in `completeTurn`) blocks reverting mid-turn; tested by reusing `ws-server.test.ts`'s existing slow-agent/`releasePrompt` pattern verbatim, both at the `ThreadRuntime` unit level and the full protocol level.
+
+The checkpoint strip's "↩ reverted to turn N" indicator is rendered as visible inline text, not a hover-only tooltip — deliberately, since the strip is mobile-first per spec #33's UI direction and hover tooltips don't work on touch. This surfaced a real test-selector trap during the web-smoke extension: a plain `text=/revert/i` wait, and even a role-scoped `getByRole("button", { name: /revert/i })` wait, both matched the *wrong* element (the badge text is nested inside its turn button's own accessible name) — settled on the diff panel's `aria-label` (`"Close diff"`), which is unambiguous. Worth remembering for any future UI text that reuses a word already used elsewhere in the page.
+
+A second real bug was caught only by the manual E2E check against the real `claude-agent-acp`, not by any automated test: the manual server was importing a stale `dist/server` build (`pnpm run build:web` had been run repeatedly for other verification steps, but not the full `pnpm run build`, which also compiles the server's TypeScript) — the running server was several commits behind the source, and the checkpoint strip showed every turn as "reverted" nonsensically as a result. Not a real code defect, but a reminder that this repo's manual-check workflow needs a full `pnpm run build`, not just `build:web`, whenever server-side (not just UI) code changed since the last build.
+
+Verification: full suite green (`pnpm run typecheck` + `xvfb-run -a pnpm test`, 206 tests across 24 files, including a new real E2E case), plus a real manual check against a live server and the real `claude-agent-acp` — two real agent-driven file edits, revert to the first, confirmed the second edit's content was actually gone from disk and the first's was intact, confirmed the new forward checkpoint's "reverted to turn 1" marker, then sent a further message afterward and confirmed it landed as Turn 4 with no numbering collision. `/code-review high` self-review completed before merge (see PR for findings/fixes, if any).
+
+Deferred items (PWA installability, Thread close + worktree auto-cleanup, resume-last-active-thread, any confirmation dialog before reverting, pruning/hiding future checkpoints) remain out of scope, unchanged from the plan above.
