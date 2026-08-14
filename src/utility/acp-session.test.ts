@@ -112,7 +112,14 @@ describe("AcpSession", () => {
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
   });
 
-  it("setMode requests a mode change and the agent's confirmation round-trips as a mode-changed event", async () => {
+  it("setMode emits its own mode-changed confirmation once the agent's request succeeds, even though the agent sends no notification for it", async () => {
+    // Real Claude Code's ACP agent accepts session/set_mode and returns
+    // success with no current_mode_update notification — that notification
+    // is for the agent changing modes autonomously, not confirming a
+    // client-requested change (confirmed against the real agent, not
+    // assumed). The fake agent here mirrors that: its session.setMode
+    // handler doesn't notify, so this test only passes if AcpSession itself
+    // synthesizes the confirmation.
     const session = sessionWithSteps([]);
     await session.start();
 

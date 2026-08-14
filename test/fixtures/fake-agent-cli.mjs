@@ -16,13 +16,12 @@ const app = agent({ name: "smoke-fake-agent" })
     agentCapabilities: {},
   }))
   .onRequest(methods.agent.session.new, async () => ({ sessionId, modes }))
-  .onRequest(methods.agent.session.setMode, async ({ params, client }) => {
-    await client.notify(methods.client.session.update, {
-      sessionId: params.sessionId,
-      update: { sessionUpdate: "current_mode_update", currentModeId: params.modeId },
-    });
-    return {};
-  })
+  // No current_mode_update notification here — matches the real
+  // claude-agent-acp, which confirms a client-requested session/set_mode
+  // via its response only. AcpSession.setMode() synthesizes the
+  // mode-changed confirmation itself; this fixture must not paper over
+  // that with a notification the real agent doesn't send.
+  .onRequest(methods.agent.session.setMode, async () => ({}))
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
     for (const step of steps) {
       if (step.type === "message") {

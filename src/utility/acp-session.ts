@@ -274,6 +274,13 @@ export class AcpSession extends EventEmitter {
       sessionId: this.activeSession.sessionId,
       modeId,
     });
+    // A successful response IS the confirmation — confirmed against the
+    // real claude-agent-acp that it sends no current_mode_update
+    // notification for a client-requested change (that notification is
+    // reserved for the agent changing modes autonomously). Without this,
+    // the mode switcher UI would silently revert to the old mode after
+    // every switch, even though the agent actually changed it.
+    this.emitEvent({ kind: "mode-changed", modeId });
   }
 
   async restartSession(): Promise<void> {
