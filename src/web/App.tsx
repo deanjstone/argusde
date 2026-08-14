@@ -46,6 +46,7 @@ export function App() {
   const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
   const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
   const [promoting, setPromoting] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
@@ -385,6 +386,23 @@ export function App() {
     }
   }
 
+  async function handleRevertCheckpoint() {
+    const client = clientRef.current;
+    if (!client || !thread || activeTurn === undefined || reverting) return;
+    setReverting(true);
+    try {
+      await client.sendCommand({ type: "thread.revert-checkpoint", threadId: thread.threadId, turn: activeTurn });
+      handleCloseDiff(); // the diff just shown is now stale — the workspace has moved on
+      await refreshCheckpoints(thread.threadId);
+    } catch (error) {
+      setChatState((s) =>
+        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      setReverting(false);
+    }
+  }
+
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
@@ -425,6 +443,8 @@ export function App() {
             activeTurn={activeTurn}
             diff={diff}
             onCloseDiff={handleCloseDiff}
+            onRevert={() => void handleRevertCheckpoint()}
+            reverting={reverting}
             onSetMode={handleSetMode}
             worktreePath={thread.worktreePath}
             onPromoteToWorktree={() => void handlePromoteToWorktree()}

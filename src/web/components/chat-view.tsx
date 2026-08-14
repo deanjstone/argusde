@@ -24,6 +24,8 @@ export interface ChatViewProps {
   activeTurn?: number;
   diff?: DiffState;
   onCloseDiff?: () => void;
+  onRevert?: () => void;
+  reverting?: boolean;
   onSetMode?: (modeId: string) => void;
   worktreePath?: string | null;
   onPromoteToWorktree?: () => void;
@@ -90,6 +92,8 @@ export function ChatView({
   activeTurn,
   diff = { text: null, loading: false, error: undefined },
   onCloseDiff = () => {},
+  onRevert,
+  reverting = false,
   onSetMode = () => {},
   worktreePath = null,
   onPromoteToWorktree = () => {},
@@ -144,7 +148,7 @@ export function ChatView({
       )}
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
-      <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} />
+      <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} onRevert={onRevert} reverting={reverting} />
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {state.timeline.map((item) => (

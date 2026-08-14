@@ -266,4 +266,20 @@ describe("ChatView", () => {
     fireEvent.click(screen.getByRole("button", { name: /close/i }));
     expect(onCloseDiff).toHaveBeenCalled();
   });
+
+  it("forwards revert from the diff panel", () => {
+    const onRevert = vi.fn();
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        diff={{ text: "+added line", loading: false, error: undefined }}
+        onRevert={onRevert}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /revert/i }));
+    expect(onRevert).toHaveBeenCalled();
+  });
 });

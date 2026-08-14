@@ -48,4 +48,24 @@ describe("DiffView", () => {
     render(<DiffView diff="" loading={false} error={undefined} onClose={() => {}} />);
     expect(screen.getByText(/no changes/i)).toBeInTheDocument();
   });
+
+  it("does not render a revert control when onRevert is not provided", () => {
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: /revert/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a revert control that calls onRevert when clicked", () => {
+    const onRevert = vi.fn();
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={onRevert} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /revert/i }));
+    expect(onRevert).toHaveBeenCalled();
+  });
+
+  it("disables and relabels the revert control while reverting is in progress", () => {
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={() => {}} reverting />);
+
+    const button = screen.getByRole("button", { name: /reverting/i });
+    expect(button).toBeDisabled();
+  });
 });

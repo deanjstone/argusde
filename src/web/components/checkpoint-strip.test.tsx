@@ -31,6 +31,17 @@ describe("CheckpointStrip", () => {
     expect(screen.queryByRole("button", { name: /since start/i })).not.toBeInTheDocument();
   });
 
+  it("marks a revert-originated checkpoint with an indicator naming which turn it reverted to", () => {
+    const withRevert = [
+      ...CHECKPOINTS,
+      { threadId: "t1", turn: 3, ref: "refs/argusde/checkpoints/t1/turn/3", createdAt: "2026-08-14T00:03:00.000Z", revertedToTurn: 1 },
+    ];
+    render(<CheckpointStrip checkpoints={withRevert} onSelectTurn={() => {}} onSinceStart={() => {}} />);
+
+    const turn3 = screen.getByRole("button", { name: /turn 3/i });
+    expect(turn3.textContent).toMatch(/reverted to turn 1/i);
+  });
+
   it("renders a 'since start' control that calls onSinceStart when there's more than one checkpoint", () => {
     const onSinceStart = vi.fn();
     render(<CheckpointStrip checkpoints={CHECKPOINTS} onSelectTurn={() => {}} onSinceStart={onSinceStart} />);
