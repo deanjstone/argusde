@@ -469,7 +469,7 @@ describe("ws-server", () => {
     const listResult = await send({ type: "thread.list-checkpoints", commandId: "cl5", threadId });
     const checkpoints = listResult.ok ? (listResult.result as { turn: number }[]) : [];
     expect(checkpoints.map((c) => c.turn)).toEqual([0, 1, 2]);
-    const diff = checkpointStore.diffCheckpoints(threadId, 1, 2, repoDir);
+    const diff = await checkpointStore.diffCheckpoints(threadId, 1, 2, repoDir);
     expect(diff).toContain("+uncaptured edit before close");
 
     const sendAfterClose = await send({ type: "thread.send-message", commandId: "cl6", threadId, text: "still there?" });
@@ -557,7 +557,7 @@ describe("ws-server", () => {
         const listResult = await restartedSend({ type: "thread.list-checkpoints", commandId: "cl25", threadId });
         const checkpoints = listResult.ok ? (listResult.result as { turn: number }[]) : [];
         expect(checkpoints.map((c) => c.turn)).toEqual([0, 1]);
-        const diff = checkpointStore.diffCheckpoints(threadId, 0, 1, repoDir);
+        const diff = await checkpointStore.diffCheckpoints(threadId, 0, 1, repoDir);
         expect(diff).toContain("+never checkpointed by a real turn");
       } finally {
         restartedClient.close();

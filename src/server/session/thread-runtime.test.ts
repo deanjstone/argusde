@@ -285,7 +285,7 @@ describe("ThreadRuntime", () => {
 
     await runtime.revertToCheckpoint(0); // turn 2 (safety snapshot of the manual edit) + turn 3 (reverted-to-0)
 
-    const safetySnapshotDiff = checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
+    const safetySnapshotDiff = await checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
     expect(safetySnapshotDiff).toContain("+manual edit outside the app");
   });
 
@@ -326,7 +326,7 @@ describe("ThreadRuntime", () => {
 
     fs.writeFileSync(path.join(repoDir, "file.txt"), "hello\nuncaptured edit\n");
 
-    const turn = runtime.captureFinalCheckpoint();
+    const turn = await runtime.captureFinalCheckpoint();
 
     expect(turn).toBe(2);
     expect(eventStore.listCheckpoints("thread-1").map((c) => ({ turn: c.turn, revertedToTurn: c.revertedToTurn }))).toEqual([
@@ -334,7 +334,7 @@ describe("ThreadRuntime", () => {
       { turn: 1, revertedToTurn: null },
       { turn: 2, revertedToTurn: null },
     ]);
-    const diff = checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
+    const diff = await checkpointStore.diffCheckpoints("thread-1", 1, 2, repoDir);
     expect(diff).toContain("+uncaptured edit");
   });
 
@@ -364,7 +364,7 @@ describe("ThreadRuntime", () => {
     // in-process transport. Poll rather than guess a fixed number of hops.
     await expect.poll(() => releasePrompt !== undefined, { timeout: 2000 }).toBe(true);
 
-    expect(() => runtime.captureFinalCheckpoint()).toThrow(/in flight/);
+    await expect(runtime.captureFinalCheckpoint()).rejects.toThrow(/in flight/);
 
     releasePrompt?.();
     await sendPromise;

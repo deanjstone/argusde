@@ -58,6 +58,14 @@ export class ThreadRuntime {
   // completeTurn() fires — a revert mid-turn would force-overwrite the
   // workspace out from under whatever the agent is actively doing to it.
   private turnInFlight = false;
+  // Set by handleEvent's turn-complete branch to the completeTurn() call it
+  // just kicked off (fire-and-forget from the EventEmitter's own
+  // perspective, since it never awaits its listeners) — sendMessage awaits
+  // this after session.sendMessage() resolves so its own promise doesn't
+  // settle until the turn's checkpoint capture (now async, per argusde#41)
+  // has actually landed, and so a capture failure surfaces as a
+  // sendMessage() rejection rather than an unhandled rejection.
+  private pendingTurnCompletion: Promise<void> = Promise.resolve();
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
@@ -66,7 +74,7 @@ export class ThreadRuntime {
 
   async start(): Promise<void> {
     const { threadId, cwd, checkpointStore, eventStore } = this.options;
-    const ref = checkpointStore.captureBaseline(threadId, cwd);
+    const ref = await checkpointStore.captureBaseline(threadId, cwd);
     eventStore.appendEvent({
       kind: "thread.checkpoint-captured",
       threadId,
@@ -89,6 +97,7 @@ export class ThreadRuntime {
     });
     this.turnInFlight = true;
     await this.options.session.sendMessage(text);
+    await this.pendingTurnCompletion;
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -124,10 +133,10 @@ export class ThreadRuntime {
    * revertToCheckpoint; every other caller leaves it undefined, which the
    * event-store projection already treats as "not a revert."
    */
-  private captureCheckpointEvent(revertedToTurn?: number): number {
+  private async captureCheckpointEvent(revertedToTurn?: number): Promise<number> {
     const { threadId, cwd, checkpointStore, eventStore } = this.options;
     const turn = this.nextTurn++;
-    const ref = checkpointStore.captureCheckpoint(threadId, turn, cwd);
+    const ref = await checkpointStore.captureCheckpoint(threadId, turn, cwd);
     eventStore.appendEvent({
       kind: "thread.checkpoint-captured",
       threadId,
@@ -148,7 +157,7 @@ export class ThreadRuntime {
    * here so a worktree removal never silently discards state that was
    * never protected by a completed turn.
    */
-  captureFinalCheckpoint(): number {
+  async captureFinalCheckpoint(): Promise<number> {
     if (this.isTurnInFlight()) throw new Error("Cannot capture a final checkpoint while a turn is still in flight");
     return this.captureCheckpointEvent();
   }
@@ -172,15 +181,31 @@ export class ThreadRuntime {
     // this, that state would be silently and permanently lost with no
     // checkpoint ref to recover it from. Left unmarked (not a revert
     // itself) — its only job is to make sure nothing is ever discarded.
-    this.captureCheckpointEvent();
+    await this.captureCheckpointEvent();
 
     this.options.checkpointStore.restoreCheckpoint(this.options.threadId, turn, this.options.cwd);
 
-    const newTurn = this.captureCheckpointEvent(turn);
+    const newTurn = await this.captureCheckpointEvent(turn);
     return { newTurn };
   }
 
   private handleEvent(event: AcpSessionEvent): void {
+    // turn-complete is forwarded to onEvent by completeTurn() itself, only
+    // once its checkpoint capture has actually landed — not here,
+    // unconditionally like every other event kind. Before captureCheckpoint
+    // became async (argusde#41), broadcasting first and capturing second
+    // was still safe: nothing yielded to the event loop in between, so the
+    // checkpoint was always durable by the time this synchronous call
+    // returned and the socket write actually flushed. Now that the capture
+    // genuinely awaits a subprocess, broadcasting turn-complete up front
+    // would let a client's checkpoint-strip refresh (triggered by that
+    // exact push, see App.tsx) race ahead of the write and miss the new
+    // turn.
+    if (event.kind === "turn-complete") {
+      this.pendingTurnCompletion = this.completeTurn(event);
+      return;
+    }
+
     this.options.onEvent(event);
 
     switch (event.kind) {
@@ -203,9 +228,6 @@ export class ThreadRuntime {
           timestamp: new Date().toISOString(),
         });
         break;
-      case "turn-complete":
-        this.completeTurn();
-        break;
       default:
         break;
     }
@@ -226,9 +248,8 @@ export class ThreadRuntime {
     }
   }
 
-  private completeTurn(): void {
+  private async completeTurn(event: AcpSessionEvent): Promise<void> {
     const { threadId, eventStore } = this.options;
-    this.turnInFlight = false;
 
     for (const key of this.pendingAgentMessageOrder) {
       const content = this.pendingAgentMessages.get(key);
@@ -245,6 +266,15 @@ export class ThreadRuntime {
     this.pendingAgentMessages.clear();
     this.pendingAgentMessageOrder = [];
 
-    this.captureCheckpointEvent();
+    // Cleared only once the turn's checkpoint has actually landed (not
+    // synchronously at the top, now that the capture is async) — otherwise
+    // a revert or captureFinalCheckpoint could race a still-in-flight
+    // capture of this same turn's snapshot.
+    await this.captureCheckpointEvent();
+    this.turnInFlight = false;
+
+    // Broadcast turn-complete only now — see handleEvent's comment on why
+    // this can no longer happen up front.
+    this.options.onEvent(event);
   }
 }
