@@ -1,6 +1,6 @@
 # Phase 8: Multi-project UI
 
-> Implemented via `feature/multi-project-ui`, in progress.
+> Implemented via `feature/multi-project-ui`.
 
 ## Context
 
@@ -71,3 +71,18 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33) decision #10 and the
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean, including all new/extended test files above.
 2. Manual check: run `argusde serve`, open the web UI against the real `claude-agent-acp`, create two Projects each with a Thread, send messages in both, switch between them via the Threads tab, confirm each Thread's own history (and only its own) renders correctly, confirm creating a new Project/Thread from the drill-down works and becomes the active chat.
 3. Work happens on a branch (`feature/multi-project-ui`), committed incrementally (ws-protocol + ThreadRuntime mode cache + ws-server commands + tests → chat-state reducer + tests → App.tsx orchestration + cross-thread fix → ProjectPicker/ThreadList components + tests → web-smoke extension), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1-7), PR opened once complete and green. Plan copied to `docs/plans/phase-8-multi-project-ui.md` per the standing repo convention.
+
+## Outcome
+
+Shipped as designed: the Threads tab is a real Projects→Threads drill-down (`ProjectPicker` → `ThreadList` → Chat), backed by three new WS commands (`project.list`, `thread.list`, `thread.get-history`), with creation available at every level. All server-side facts assumed during planning held up unmodified — `EventStore.listProjects()`/`listThreads()` needed no changes, and no new runtime-management logic was needed since `ThreadRuntime` instances already stay live for the server process's lifetime.
+
+**Two real regressions were caught by testing beyond the unit/component level, not by code inspection**, both the same root cause: `ThreadRuntime.start()` broadcasts its session-start events (`connection-state: "connected"` and the mode catalog) *synchronously*, before the triggering `thread.create`/`project.create` command's own response reaches the client — so the client's `thread` state (and the `activeThreadIdRef` the cross-thread event-bleed fix filters on) isn't set yet when those events arrive, and the filter correctly-but-wrongly drops them as "not yet the active thread":
+
+1. **Mode catalog** — caught by the new `web-smoke.test.ts` multi-thread test failing on first run (a stuck `ModeSwitcher` combobox). Fixed by having every "become the active Thread" path (`handleWorkspaceSubmit`, `handleCreateProject`, `handleCreateThread`, `handleSelectThread`) re-fetch state via `thread.get-history` — which reads `ThreadRuntime`'s in-memory `lastKnownModes` cache — instead of trusting the racy live broadcast or (for the three creation paths) a hardcoded empty catalog.
+2. **Connection state** — caught only by manual end-to-end verification against the real `claude-agent-acp` (the automated suite had no assertion on the connection-status text): every newly created Thread showed a permanent "disconnected…" banner despite a fully working session. Confirmed as a genuine regression (not pre-existing) by diffing behavior against a fresh `main` checkout in an isolated worktree. Fixed the same way as the mode catalog: `ThreadRuntime.getConnectionState()` (updated on every event, not just once, since connection status can genuinely change mid-session) threaded through `thread.get-history`.
+
+Both fixes converge on the same lesson: any event `ThreadRuntime.start()` broadcasts synchronously is inherently racy for a not-yet-known-to-the-client Thread, and the durable fix is "cache it, re-fetch it" rather than "trust the live broadcast" — a pattern now applied twice and worth remembering if a third such event is ever added.
+
+Verification: full suite green (`pnpm run typecheck` + `xvfb-run -a pnpm test`, 190 tests across 24 files), plus a real manual check scripted against a live server and the real `claude-agent-acp` — two Projects, real replies, cross-project isolation, and history rehydration after switching back — with before/after screenshots confirming the connection-state fix. `/code-review high` self-review completed before merge (see PR for findings/fixes, if any).
+
+Deferred items (historical tool-call replay, cold-start reattachment, cross-reload persistence, rename/archive/delete) remain out of scope, unchanged from the plan above.
