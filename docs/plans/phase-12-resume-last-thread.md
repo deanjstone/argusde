@@ -1,6 +1,6 @@
 # Phase 12: Resume most-recently-active Thread across reload
 
-> Implemented via `feature/resume-last-thread`, in progress.
+> Implemented via `feature/resume-last-thread`.
 
 ## Context
 
@@ -41,3 +41,13 @@ Spec [#33](https://github.com/deanjstone/argusde/issues/33) Story 28: "As a user
 1. `pnpm run typecheck` and `xvfb-run -a pnpm test` (full suite) — clean.
 2. `pnpm run build` (full build) then a manual check against the real `claude-agent-acp`: create a Project/Thread, send a message, reload the page — confirm it lands back in Chat with history intact, not the first-run screen; also manually clear `localStorage` and confirm a reload correctly falls back to first-run setup.
 3. Work happens on a branch (`feature/resume-last-thread`), committed incrementally (App.tsx read/write/restore logic → web-smoke tests), pushed after each commit, self-reviewed with `/code-review high` before merging (established practice from Phases 1–11), PR opened once complete and green. Plan copied to `docs/plans/phase-12-resume-last-thread.md` per the standing repo convention.
+
+## Outcome
+
+Shipped as designed, with zero deviation from the plan and zero server/reducer changes — confirmed correct during planning that `thread.get-history` already returned everything needed. The whole feature is ~70 lines in one file: three small pure `localStorage` helpers matching `server-config.ts`'s existing fail-soft shape, one write call in `becomeActiveThread`, one new `restoring` state, and `attemptSessionRestore()` wired into the existing `server.welcome` push-handler case — no new `useEffect`.
+
+The manual E2E check against the real `claude-agent-acp` caught a real bug in the *verification script itself*, not the app — the same class of mistake made (and caught) during Phase 8's and Phase 11's manual checks: `waitForSelector("text=SURVIVED THE RELOAD")` resolved against the user's own message bubble (the test instruction text itself contained that exact string) rather than the agent's actual completed reply, so the first "before reload" screenshot silently caught the turn still mid-flight ("Claude is working…"). Fixed by waiting for the real `Turn 1` checkpoint button and asserting the string appears *twice* (user message + agent reply) before trusting either the pre- or post-reload state — a pattern worth reusing for any future manual-check script whose test instruction text happens to echo the string being asserted on.
+
+Verification: full suite green (`pnpm run typecheck` + `xvfb-run -a pnpm test`, 233 tests across 24 files, including two new real E2E cases — an actual `page.reload()` restoring a real agent-driven conversation, and a stale-`localStorage`-entry fallback), plus a full `pnpm run build` and a real manual check against a live server and the real `claude-agent-acp` confirming both the restore path and the clear-storage fallback, with before/after screenshots proving the agent's real reply (not just the user's echoed instruction) survived the reload. `/code-review high` self-review completed before merge (see PR for findings/fixes, if any).
+
+Deferred items (cross-tab sync, restoring which tab/drill-down position was active, any special-casing for a closed Thread) remain out of scope, unchanged from the plan above. This closes the last of the three previously-identified spec #33 gaps — PWA installability, Thread close, and reload persistence — leaving only the two smaller Phase 8 follow-up issues ([#46](https://github.com/deanjstone/argusde/issues/46), [#47](https://github.com/deanjstone/argusde/issues/47)) as open, unrelated work.
