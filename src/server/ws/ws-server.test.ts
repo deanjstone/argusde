@@ -466,6 +466,81 @@ describe("ws-server", () => {
     expect(fs.existsSync(worktreePath)).toBe(false);
   }, 20_000);
 
+  it(
+    "closing a promoted thread with no live runtime (e.g. after a server restart) still captures a final checkpoint before removing the worktree",
+    async () => {
+      const projectResult = await send({ type: "project.create", commandId: "cl21", workspaceRoot: repoDir, title: "P" });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: "cl22", projectId, title: "T" });
+      const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+      const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "cl23", threadId });
+      const { worktreePath } = promoteResult.ok ? (promoteResult.result as { worktreePath: string }) : { worktreePath: "" };
+      expect(fs.existsSync(worktreePath)).toBe(true);
+
+      fs.writeFileSync(path.join(worktreePath, "file.txt"), "hello\nnever checkpointed by a real turn\n");
+
+      // A second server, sharing the same eventStore/checkpointStore, whose
+      // own `runtimes` map starts empty — the same "no live runtime for a
+      // persisted, promoted Thread" state a real server restart produces
+      // (confirmed: nothing restores `runtimes` on startup).
+      const restartedServer = await startWsServer({
+        host: "127.0.0.1",
+        port: 0,
+        eventStore,
+        checkpointStore,
+        createSession: (_threadId, cwd) =>
+          new AcpSession({
+            name: "argusde-server-test",
+            cwd,
+            createTransport: () => spawnAgentProcessTransport({ command: process.execPath, args: [fixtureCliPath], cwd }),
+          }),
+      });
+      const restartedClient = new WebSocket(`ws://127.0.0.1:${restartedServer.port}/ws`);
+      const restartedReceived: ServerPush[] = [];
+      restartedClient.on("message", (data) => restartedReceived.push(JSON.parse(data.toString()) as ServerPush));
+      await new Promise<void>((resolve, reject) => {
+        restartedClient.once("open", () => resolve());
+        restartedClient.once("error", reject);
+      });
+      const restartedSend = async (command: Record<string, unknown>) => {
+        restartedClient.send(JSON.stringify(command));
+        await new Promise<void>((resolve, reject) => {
+          const start = Date.now();
+          const check = () => {
+            if (restartedReceived.some((m) => m.type === "command.result" && m.commandId === command.commandId)) return resolve();
+            if (Date.now() - start > 10_000) return reject(new Error("timed out waiting for command.result"));
+            setTimeout(check, 20);
+          };
+          check();
+        });
+        return restartedReceived.find((m) => m.type === "command.result" && m.commandId === command.commandId) as Extract<
+          ServerPush,
+          { type: "command.result" }
+        >;
+      };
+
+      try {
+        const closeResult = await restartedSend({ type: "thread.close", commandId: "cl24", threadId });
+        expect(closeResult.ok).toBe(true);
+
+        expect(fs.existsSync(worktreePath)).toBe(false);
+
+        // The marker edit must have been captured as a checkpoint BEFORE
+        // the worktree (its only copy) was destroyed — not silently lost.
+        const listResult = await restartedSend({ type: "thread.list-checkpoints", commandId: "cl25", threadId });
+        const checkpoints = listResult.ok ? (listResult.result as { turn: number }[]) : [];
+        expect(checkpoints.map((c) => c.turn)).toEqual([0, 1]);
+        const diff = checkpointStore.diffCheckpoints(threadId, 0, 1, repoDir);
+        expect(diff).toContain("+never checkpointed by a real turn");
+      } finally {
+        restartedClient.close();
+        await restartedServer.close();
+      }
+    },
+    20_000,
+  );
+
   it("refuses to close an already-closed thread", async () => {
     const projectResult = await send({ type: "project.create", commandId: "cl11", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };

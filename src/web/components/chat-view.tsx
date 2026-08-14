@@ -115,6 +115,12 @@ export function ChatView({
   // check — this is purely a UI-visibility mirror, not itself an
   // enforcement point.
   const canPromote = worktreePath === null && state.timeline.length === 0;
+  // "Running" is present tense — wrong once the thread (and the worktree
+  // itself) is closed. worktreePath deliberately stays set after close as
+  // a historical record (see thread-list.tsx's own "closed" badge), so
+  // this can't just be `worktreePath !== null`.
+  const showLiveWorktreeBadge = worktreePath !== null && !threadClosed;
+  const showCloseButton = onCloseThread !== undefined && !threadClosed;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -130,7 +136,7 @@ export function ChatView({
         worktreePath !== null ? "border-amber-500" : "border-transparent"
       }`}
     >
-      {state.connectionState !== "connected" && (
+      {state.connectionState !== "connected" && !threadClosed && (
         <div className="border-b border-neutral-800 px-4 py-2 text-xs text-neutral-400">
           {state.connectionError ? <span className="text-red-400">{state.connectionError}</span> : <span>{state.connectionState}…</span>}
         </div>
@@ -138,9 +144,9 @@ export function ChatView({
 
       <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
-      {(worktreePath !== null || canPromote || (onCloseThread && !threadClosed)) && (
+      {(showLiveWorktreeBadge || canPromote || showCloseButton) && (
         <div className="flex items-center justify-end gap-2 border-b border-neutral-800 px-3 py-2">
-          {worktreePath !== null && (
+          {showLiveWorktreeBadge && (
             <span className="flex items-center gap-1.5 text-xs text-amber-400">
               <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
               Running in an isolated worktree
@@ -151,7 +157,7 @@ export function ChatView({
               {promoting ? "Promoting…" : "Promote to worktree"}
             </Button>
           )}
-          {onCloseThread && !threadClosed && (
+          {showCloseButton && (
             <Button variant="outline" size="sm" onClick={onCloseThread} disabled={closing}>
               {closing ? "Closing…" : "Close thread"}
             </Button>

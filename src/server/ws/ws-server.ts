@@ -221,8 +221,33 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           // in flight — nothing below runs, so a rejected close leaves
           // nothing half-done.
           runtime.captureFinalCheckpoint();
+          // If dispose() itself throws (e.g. a broken pipe closing an
+          // already-exited child process), this handler throws before
+          // reaching runtimes.delete()/appending thread.closed — the same
+          // class of accepted failure-recovery gap as thread.create's and
+          // thread.promote-to-worktree's own dispose-failure paths above
+          // (argusde#35), not solved here either.
           await runtime.dispose();
           runtimes.delete(command.threadId);
+        } else if (thread.worktreePath) {
+          // No live runtime for this Thread — e.g. the server restarted
+          // since it was promoted; `runtimes` is never restored on
+          // startup. The worktree is about to be permanently destroyed
+          // below regardless, so its current on-disk state still needs
+          // protecting even without a ThreadRuntime to call
+          // captureFinalCheckpoint() on. Computed directly against
+          // persistence rather than reusing an in-memory nextTurn counter
+          // that doesn't exist here.
+          const existing = eventStore.listCheckpoints(command.threadId);
+          const nextTurn = existing.length > 0 ? Math.max(...existing.map((c) => c.turn)) + 1 : 0;
+          const ref = checkpointStore.captureCheckpoint(command.threadId, nextTurn, thread.worktreePath);
+          eventStore.appendEvent({
+            kind: "thread.checkpoint-captured",
+            threadId: command.threadId,
+            turn: nextTurn,
+            ref,
+            timestamp: new Date().toISOString(),
+          });
         }
 
         if (thread.worktreePath) {

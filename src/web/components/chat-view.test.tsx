@@ -202,6 +202,28 @@ describe("ChatView", () => {
     expect(container.firstElementChild?.className).toMatch(/border-(amber|emerald|violet)-\d+/);
   });
 
+  it("does not claim the worktree is still running once the thread is closed — the worktree was already destroyed by close", () => {
+    render(
+      <ChatView
+        state={initialChatState}
+        onSend={() => {}}
+        onRespondPermission={() => {}}
+        worktreePath="/workspace-worktrees/t1"
+        threadClosed={true}
+      />,
+    );
+
+    expect(screen.queryByText(/running in an isolated worktree/i)).not.toBeInTheDocument();
+  });
+
+  it("does not show a disconnected banner for a closed thread — disconnected is expected, not a connection problem", () => {
+    const state = stateWith({ connectionState: "disconnected" });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} threadClosed={true} />);
+
+    expect(screen.queryByText(/^disconnected/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/this thread is closed/i)).toBeInTheDocument();
+  });
+
   it("renders no checkpoint strip or diff view when no checkpoints are passed", () => {
     render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.queryByRole("button", { name: "Turn 1" })).not.toBeInTheDocument();

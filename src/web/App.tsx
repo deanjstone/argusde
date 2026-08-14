@@ -60,6 +60,13 @@ export function App() {
   // exist. Deliberately doesn't attempt to solve full reload persistence
   // (this flag itself resets on a real page reload) — a separate, already
   // repeatedly deferred gap.
+  //
+  // Invariant a future code path must preserve: `thread` must never be
+  // set to null before `hasEverHadThread` is already true (today the only
+  // such path, handleCloseThread, satisfies this — it can only run once a
+  // Thread was already active). A future "delete Project" or similar flow
+  // that nulls `thread` without that ordering would silently reintroduce
+  // this exact regression.
   const [hasEverHadThread, setHasEverHadThread] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
