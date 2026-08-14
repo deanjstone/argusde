@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright";
+import { WebSocketServer } from "ws";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { CheckpointStore } from "../src/server/checkpoint/checkpoint-store.js";
 import { AcpSession } from "../src/utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../src/utility/spawn-agent-process.js";
 import { startWsServer, type WsServerHandle } from "../src/server/ws/ws-server.js";
+import { API_VERSION, WS_PATH } from "../src/shared/ws-protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -124,6 +126,47 @@ describe("electron: shows the connect screen when no server is reachable", () =>
         eventStore.close();
         fs.rmSync(repoDir, { recursive: true, force: true });
         fs.rmSync(dbDir, { recursive: true, force: true });
+      }
+    },
+    25_000,
+  );
+
+  it(
+    "shows a version-incompatibility message, naming both versions, instead of loading a server whose API version doesn't match",
+    async () => {
+      // A dedicated app instance, pointed at the mismatched-version server
+      // from Electron's own startup (ARGUSDE_SERVER_URL) — the shared
+      // app/window from beforeAll has already moved past the connect
+      // screen in an earlier test, so it can't be reused to re-drive the
+      // connect form here.
+      const mismatchedVersion = `${API_VERSION}-incompatible-test`;
+      const wss = new WebSocketServer({ host: "127.0.0.1", port: 0, path: WS_PATH });
+      await new Promise<void>((resolve) => wss.once("listening", resolve));
+      wss.on("connection", (client) => {
+        client.send(JSON.stringify({ type: "server.welcome", apiVersion: mismatchedVersion }));
+      });
+
+      const mismatchUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-version-mismatch-userdata-"));
+      let mismatchApp: ElectronApplication | undefined;
+      try {
+        const address = wss.address();
+        const port = typeof address === "string" ? 0 : address!.port;
+
+        mismatchApp = await electron.launch({
+          args: [projectRoot, "--no-sandbox", "--disable-gpu", `--user-data-dir=${mismatchUserDataDir}`],
+          env: { ...process.env, ARGUSDE_SERVER_URL: `http://127.0.0.1:${port}/` },
+        });
+        const mismatchWindow = await mismatchApp.firstWindow();
+
+        await mismatchWindow.waitForSelector(`text=${mismatchedVersion}`, { timeout: 15_000 });
+        const bodyText = await mismatchWindow.textContent("body");
+        expect(bodyText).toContain(API_VERSION);
+        expect(bodyText).toContain(mismatchedVersion);
+        expect(bodyText).toMatch(/update ArgusDE/i);
+      } finally {
+        await mismatchApp?.close();
+        wss.close();
+        fs.rmSync(mismatchUserDataDir, { recursive: true, force: true });
       }
     },
     25_000,

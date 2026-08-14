@@ -6,16 +6,7 @@ import type { EventStore } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
-import { ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
-
-/**
- * Bumped whenever the WS protocol (protocol.ts) changes shape. Electron's
- * native shell (Phase 2) compares this against its own compiled-in expected
- * version and refuses to connect on mismatch — see spec #33's version-skew
- * decision. The server itself doesn't enforce anything here; it just
- * announces its version.
- */
-export const SERVER_API_VERSION = "1.0.0";
+import { API_VERSION, ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
 
 export interface WsServerOptions {
   host?: string;
@@ -165,7 +156,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
 
   wss.on("connection", (client) => {
     clients.add(client);
-    send(client, { type: "server.welcome", apiVersion: SERVER_API_VERSION });
+    send(client, { type: "server.welcome", apiVersion: API_VERSION });
 
     client.on("message", (data) => {
       void (async () => {

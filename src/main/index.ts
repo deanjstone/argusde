@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getServerUrl, setServerUrl } from "./server-config.js";
 import { IPC_CONNECT_FAILED, IPC_GET_SERVER_URL, IPC_RETRY_CONNECT, IPC_SET_SERVER_URL } from "./connect-screen-ipc.js";
+import { checkApiVersion } from "./version-check.js";
+import { API_VERSION } from "../shared/ws-protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -47,7 +49,27 @@ function isFromConnectScreen(event: IpcMainEvent | IpcMainInvokeEvent): boolean 
   return event.senderFrame?.url === CONNECT_SCREEN_URL;
 }
 
-function attemptConnect(window: BrowserWindow, url: string): void {
+async function attemptConnect(window: BrowserWindow, url: string): Promise<void> {
+  // A throwaway pre-check, separate from the real connection the loaded
+  // page will make itself — "unknown" (can't determine, e.g. server down)
+  // falls through to the normal loadURL attempt below, which explains that
+  // failure on its own via did-fail-load. Only a *confirmed* mismatch skips
+  // loadURL entirely, per spec #33's version-skew decision.
+  const versionCheck = await checkApiVersion(url, API_VERSION);
+  // The window can close (or the app quit) while checkApiVersion's network
+  // round trip is still pending — calling loadURL on an already-destroyed
+  // window/webContents throws synchronously, before the .catch() below ever
+  // attaches, surfacing as an unhandled rejection. showConnectScreen already
+  // guards this same race internally; this covers the other branch.
+  if (window.isDestroyed()) return;
+  if (versionCheck.status === "incompatible") {
+    void showConnectScreen(
+      window,
+      `ArgusDE (v${versionCheck.expectedVersion}) can't connect to this server (v${versionCheck.serverVersion}) — please update ArgusDE.`,
+    );
+    return;
+  }
+
   // loadURL()'s own promise rejects on failure — a separate signal from the
   // did-fail-load event below, which is what actually drives showing the
   // connect screen. Without this catch, a bad URL produces an unhandled
@@ -106,7 +128,7 @@ function createWindow(): void {
     }
   });
 
-  attemptConnect(window, currentServerUrl);
+  void attemptConnect(window, currentServerUrl);
 
   window.on("closed", () => {
     mainWindow = null;
@@ -125,7 +147,7 @@ ipcMain.handle(IPC_SET_SERVER_URL, (event, url: string) => {
 
 ipcMain.on(IPC_RETRY_CONNECT, (event) => {
   if (!isFromConnectScreen(event)) return;
-  if (mainWindow) attemptConnect(mainWindow, currentServerUrl);
+  if (mainWindow) void attemptConnect(mainWindow, currentServerUrl);
 });
 
 void app.whenReady().then(() => {
