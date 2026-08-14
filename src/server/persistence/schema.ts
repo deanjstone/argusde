@@ -37,6 +37,7 @@ export function ensureSchema(db: Database.Database): void {
       turn INTEGER NOT NULL,
       ref TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      reverted_to_turn INTEGER,
       PRIMARY KEY (thread_id, turn)
     );
   `);

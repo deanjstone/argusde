@@ -121,7 +121,7 @@ describe("ChatView", () => {
         state={initialChatState}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null }]}
         worktreePath={null}
         onPromoteToWorktree={() => {}}
       />,
@@ -137,7 +137,7 @@ describe("ChatView", () => {
         state={initialChatState}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null }]}
         worktreePath={null}
         onPromoteToWorktree={onPromoteToWorktree}
       />,
@@ -156,7 +156,7 @@ describe("ChatView", () => {
         state={state}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null }]}
         worktreePath={null}
         onPromoteToWorktree={() => {}}
       />,
@@ -172,7 +172,7 @@ describe("ChatView", () => {
         state={initialChatState}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null }]}
         worktreePath={null}
         onPromoteToWorktree={onPromoteToWorktree}
         promoting={true}
@@ -191,7 +191,7 @@ describe("ChatView", () => {
         state={initialChatState}
         onSend={() => {}}
         onRespondPermission={() => {}}
-        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "" }]}
+        checkpoints={[{ threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null }]}
         worktreePath="/workspace-worktrees/t1"
         onPromoteToWorktree={() => {}}
       />,
@@ -210,8 +210,8 @@ describe("ChatView", () => {
   it("renders the checkpoint strip and forwards turn selection", () => {
     const onSelectTurn = vi.fn();
     const checkpoints = [
-      { threadId: "t1", turn: 0, ref: "r0", createdAt: "" },
-      { threadId: "t1", turn: 1, ref: "r1", createdAt: "" },
+      { threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null },
+      { threadId: "t1", turn: 1, ref: "r1", createdAt: "", revertedToTurn: null },
     ];
 
     render(
@@ -231,8 +231,8 @@ describe("ChatView", () => {
 
   it("forwards activeTurn to the checkpoint strip so the selected turn is highlighted", () => {
     const checkpoints = [
-      { threadId: "t1", turn: 0, ref: "r0", createdAt: "" },
-      { threadId: "t1", turn: 1, ref: "r1", createdAt: "" },
+      { threadId: "t1", turn: 0, ref: "r0", createdAt: "", revertedToTurn: null },
+      { threadId: "t1", turn: 1, ref: "r1", createdAt: "", revertedToTurn: null },
     ];
 
     render(

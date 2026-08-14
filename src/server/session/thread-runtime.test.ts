@@ -80,7 +80,7 @@ describe("ThreadRuntime", () => {
     await runtime.start();
 
     expect(eventStore.listCheckpoints("thread-1")).toEqual([
-      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: expect.any(String) },
+      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: expect.any(String), revertedToTurn: null },
     ]);
   });
 

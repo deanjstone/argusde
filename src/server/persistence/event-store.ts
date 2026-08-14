@@ -15,7 +15,15 @@ export type DomainEvent =
       worktreePath: string | null;
       timestamp: string;
     }
-  | { kind: "thread.checkpoint-captured"; threadId: string; turn: number; ref: string; timestamp: string }
+  | {
+      kind: "thread.checkpoint-captured";
+      threadId: string;
+      turn: number;
+      ref: string;
+      /** Set when this capture was produced by reverting to an earlier turn — undefined for a normal turn-complete capture. */
+      revertedToTurn?: number;
+      timestamp: string;
+    }
   | {
       kind: "thread.message-recorded";
       threadId: string;
@@ -83,10 +91,10 @@ export class EventStore {
         this.db
           .prepare(
             event.turn === 0
-              ? "INSERT OR REPLACE INTO checkpoints (thread_id, turn, ref, created_at) VALUES (?, ?, ?, ?)"
-              : "INSERT INTO checkpoints (thread_id, turn, ref, created_at) VALUES (?, ?, ?, ?)",
+              ? "INSERT OR REPLACE INTO checkpoints (thread_id, turn, ref, created_at, reverted_to_turn) VALUES (?, ?, ?, ?, ?)"
+              : "INSERT INTO checkpoints (thread_id, turn, ref, created_at, reverted_to_turn) VALUES (?, ?, ?, ?, ?)",
           )
-          .run(event.threadId, event.turn, event.ref, event.timestamp);
+          .run(event.threadId, event.turn, event.ref, event.timestamp, event.revertedToTurn ?? null);
         break;
       case "thread.mode-changed":
         this.db
@@ -154,7 +162,8 @@ export class EventStore {
   listCheckpoints(threadId: string): CheckpointRecord[] {
     return this.db
       .prepare(
-        "SELECT thread_id AS threadId, turn, ref, created_at AS createdAt FROM checkpoints WHERE thread_id = ? ORDER BY turn",
+        `SELECT thread_id AS threadId, turn, ref, created_at AS createdAt, reverted_to_turn AS revertedToTurn
+         FROM checkpoints WHERE thread_id = ? ORDER BY turn`,
       )
       .all(threadId) as CheckpointRecord[];
   }

@@ -4,9 +4,9 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 
 const CHECKPOINTS = [
-  { threadId: "t1", turn: 0, ref: "refs/argusde/checkpoints/t1/turn/0", createdAt: "2026-08-14T00:00:00.000Z" },
-  { threadId: "t1", turn: 1, ref: "refs/argusde/checkpoints/t1/turn/1", createdAt: "2026-08-14T00:01:00.000Z" },
-  { threadId: "t1", turn: 2, ref: "refs/argusde/checkpoints/t1/turn/2", createdAt: "2026-08-14T00:02:00.000Z" },
+  { threadId: "t1", turn: 0, ref: "refs/argusde/checkpoints/t1/turn/0", createdAt: "2026-08-14T00:00:00.000Z", revertedToTurn: null },
+  { threadId: "t1", turn: 1, ref: "refs/argusde/checkpoints/t1/turn/1", createdAt: "2026-08-14T00:01:00.000Z", revertedToTurn: null },
+  { threadId: "t1", turn: 2, ref: "refs/argusde/checkpoints/t1/turn/2", createdAt: "2026-08-14T00:02:00.000Z", revertedToTurn: null },
 ];
 
 describe("CheckpointStrip", () => {

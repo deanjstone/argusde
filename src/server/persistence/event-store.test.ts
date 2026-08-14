@@ -120,8 +120,46 @@ describe("EventStore", () => {
     });
 
     expect(store.listCheckpoints("thread-1")).toEqual([
-      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:00:00.000Z" },
-      { threadId: "thread-1", turn: 1, ref: "refs/argusde/checkpoints/thread-1/turn/1", createdAt: "2026-08-13T00:05:00.000Z" },
+      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:00:00.000Z", revertedToTurn: null },
+      { threadId: "thread-1", turn: 1, ref: "refs/argusde/checkpoints/thread-1/turn/1", createdAt: "2026-08-13T00:05:00.000Z", revertedToTurn: null },
+    ]);
+  });
+
+  it("projects a revert-originated thread.checkpoint-captured event's revertedToTurn field", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/workspace",
+      title: "Project One",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Fix the bug",
+      worktreePath: null,
+      timestamp: "2026-08-13T00:00:30.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId: "thread-1",
+      turn: 0,
+      ref: "refs/argusde/checkpoints/thread-1/turn/0",
+      timestamp: "2026-08-13T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId: "thread-1",
+      turn: 1,
+      ref: "refs/argusde/checkpoints/thread-1/turn/1",
+      revertedToTurn: 0,
+      timestamp: "2026-08-13T00:05:00.000Z",
+    });
+
+    expect(store.listCheckpoints("thread-1")).toEqual([
+      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:00:00.000Z", revertedToTurn: null },
+      { threadId: "thread-1", turn: 1, ref: "refs/argusde/checkpoints/thread-1/turn/1", createdAt: "2026-08-13T00:05:00.000Z", revertedToTurn: 0 },
     ]);
   });
 
@@ -220,7 +258,7 @@ describe("EventStore", () => {
     ).not.toThrow();
 
     expect(store.listCheckpoints("thread-1")).toEqual([
-      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:03:00.000Z" },
+      { threadId: "thread-1", turn: 0, ref: "refs/argusde/checkpoints/thread-1/turn/0", createdAt: "2026-08-13T00:03:00.000Z", revertedToTurn: null },
     ]);
   });
 
