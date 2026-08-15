@@ -58,7 +58,11 @@ export function ProjectPicker({ projects, onSelectProject, onCreateProject, list
           {error && <p className="text-sm text-red-400">{error}</p>}
           {manualMode ? (
             <>
+              <label htmlFor="new-project-path" className="block text-xs text-neutral-500">
+                Workspace path
+              </label>
               <Input
+                id="new-project-path"
                 placeholder="/home/you/repos/project"
                 value={workspaceRoot}
                 onChange={(event) => setWorkspaceRoot(event.target.value)}
