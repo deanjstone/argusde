@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
-import { WS_PATH, type CheckpointRecord, type ProjectRecord, type ThreadRecord } from "../shared/ws-protocol.js";
+import { WS_PATH, type CheckpointRecord, type DirectoryListing, type ProjectRecord, type ThreadRecord } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
@@ -230,6 +230,12 @@ export function App() {
     } catch (error) {
       setSetup({ submitting: false, error: error instanceof Error ? error.message : String(error) });
     }
+  }
+
+  function listDirectory(path?: string): Promise<DirectoryListing> {
+    const client = clientRef.current;
+    if (!client) return Promise.reject(new Error("Not connected"));
+    return client.sendCommand<DirectoryListing>({ type: "fs.list-directory", path });
   }
 
   async function refreshProjects() {
@@ -567,7 +573,9 @@ export function App() {
   }
 
   if (!thread && !hasEverHadThread) {
-    return <WorkspaceSetup onSubmit={handleWorkspaceSubmit} submitting={setup.submitting} error={setup.error} />;
+    return (
+      <WorkspaceSetup onSubmit={handleWorkspaceSubmit} listDirectory={listDirectory} submitting={setup.submitting} error={setup.error} />
+    );
   }
 
   return (
@@ -608,6 +616,7 @@ export function App() {
               projects={projects}
               onSelectProject={setSelectedProjectId}
               onCreateProject={(workspaceRoot) => void handleCreateProject(workspaceRoot)}
+              listDirectory={listDirectory}
               creating={creatingProject}
             />
           ) : (

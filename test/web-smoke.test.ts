@@ -93,8 +93,9 @@ describe("web smoke: server + browser round trip", () => {
     async () => {
       await page.goto(`http://127.0.0.1:${server.port}/`);
 
+      await page.getByRole("button", { name: /type a path manually/i }).click();
       await page.getByLabel(/workspace path/i).fill(repoDir);
-      await page.getByRole("button", { name: /start/i }).click();
+      await page.getByRole("button", { name: /^start$/i }).click();
 
       await page.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
 
@@ -106,6 +107,51 @@ describe("web smoke: server + browser round trip", () => {
       const bodyText = await page.textContent("body");
       expect(bodyText).toContain("what's in notes.txt?");
       expect(bodyText).toContain("Hello from the web smoke test agent");
+    },
+    30_000,
+  );
+
+  it(
+    "completes first-run setup by browsing the server's real filesystem, not typing a path",
+    async () => {
+      // A real subfolder of the server's actual home directory — the
+      // DirectoryBrowser's initial listing (no path given) is the server's
+      // homedir, so this is created there specifically so the test can
+      // click into it by name, proving a real navigate-into-a-subdirectory
+      // round trip through the real fs.list-directory WS command, not a
+      // mock. Uniquely named and always removed in `finally`.
+      const browseDir = fs.mkdtempSync(path.join(os.homedir(), "argusde-web-smoke-browse-"));
+      const browseTargetDir = path.join(browseDir, "target-project");
+      fs.mkdirSync(browseTargetDir);
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: browseTargetDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: browseTargetDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: browseTargetDir });
+      fs.writeFileSync(path.join(browseTargetDir, "file.txt"), "hello\n");
+      execFileSync("git", ["add", "-A"], { cwd: browseTargetDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: browseTargetDir });
+
+      const browseDirName = path.basename(browseDir);
+      const browsePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await browsePage.goto(`http://127.0.0.1:${server.port}/`);
+
+        // Default view is the browser (homedir listing), not a text input.
+        await browsePage.getByRole("button", { name: browseDirName }).click();
+        await browsePage.getByRole("button", { name: "target-project" }).click();
+
+        // Nothing but files inside target-project — the browser still
+        // lets you select the directory you're currently in.
+        await browsePage.waitForSelector("text=/no subfolders here/i", { timeout: 10_000 });
+        await browsePage.getByRole("button", { name: /select this folder/i }).click();
+
+        await browsePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        const project = eventStore.getProjectByWorkspaceRoot(browseTargetDir);
+        expect(project?.workspaceRoot).toBe(browseTargetDir);
+      } finally {
+        await browsePage.close();
+        fs.rmSync(browseDir, { recursive: true, force: true });
+      }
     },
     30_000,
   );
@@ -231,6 +277,7 @@ describe("web smoke: server + browser round trip", () => {
       const worktreePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       try {
         await worktreePage.goto(`http://127.0.0.1:${server.port}/`);
+        await worktreePage.getByRole("button", { name: /type a path manually/i }).click();
         await worktreePage.getByLabel(/workspace path/i).fill(worktreeTestRepoDir);
         await worktreePage.getByRole("button", { name: /start/i }).click();
         await worktreePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
@@ -285,6 +332,7 @@ describe("web smoke: server + browser round trip", () => {
       try {
         // A fresh Project + Thread B, on its own page/WS connection.
         await secondPage.goto(`http://127.0.0.1:${server.port}/`);
+        await secondPage.getByRole("button", { name: /type a path manually/i }).click();
         await secondPage.getByLabel(/workspace path/i).fill(multiTestRepoDir);
         await secondPage.getByRole("button", { name: /start/i }).click();
         await secondPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
@@ -356,6 +404,7 @@ describe("web smoke: server + browser round trip", () => {
       const closePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       try {
         await closePage.goto(`http://127.0.0.1:${server.port}/`);
+        await closePage.getByRole("button", { name: /type a path manually/i }).click();
         await closePage.getByLabel(/workspace path/i).fill(closeTestRepoDir);
         await closePage.getByRole("button", { name: /start/i }).click();
         await closePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
@@ -420,6 +469,7 @@ describe("web smoke: server + browser round trip", () => {
       const reloadPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
       try {
         await reloadPage.goto(`http://127.0.0.1:${server.port}/`);
+        await reloadPage.getByRole("button", { name: /type a path manually/i }).click();
         await reloadPage.getByLabel(/workspace path/i).fill(reloadTestRepoDir);
         await reloadPage.getByRole("button", { name: /start/i }).click();
         await reloadPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
@@ -457,7 +507,7 @@ describe("web smoke: server + browser round trip", () => {
 
         await staleIdPage.reload();
 
-        await staleIdPage.waitForSelector("text=/workspace path/i", { timeout: 15_000 });
+        await staleIdPage.waitForSelector("text=/choose a workspace folder/i", { timeout: 15_000 });
       } finally {
         await staleIdPage.close();
       }

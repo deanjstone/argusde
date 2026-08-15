@@ -1,18 +1,21 @@
 import { useState } from "react";
-import type { ProjectRecord } from "../../shared/ws-protocol.js";
+import type { DirectoryListing, ProjectRecord } from "../../shared/ws-protocol.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
+import { DirectoryBrowser } from "./directory-browser.js";
 
 export interface ProjectPickerProps {
   projects: ProjectRecord[];
   onSelectProject: (projectId: string) => void;
   onCreateProject: (workspaceRoot: string) => void;
+  listDirectory: (path?: string) => Promise<DirectoryListing>;
   creating?: boolean;
 }
 
 /** First screen of the Threads tab's Projects→Threads drill-down (spec #33 decision #10). */
-export function ProjectPicker({ projects, onSelectProject, onCreateProject, creating = false }: ProjectPickerProps) {
+export function ProjectPicker({ projects, onSelectProject, onCreateProject, listDirectory, creating = false }: ProjectPickerProps) {
   const [showForm, setShowForm] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
 
   function handleCreate() {
@@ -43,15 +46,37 @@ export function ProjectPicker({ projects, onSelectProject, onCreateProject, crea
 
       {showForm ? (
         <div className="mt-3 space-y-2 border-t border-neutral-800 pt-3">
-          <Input
-            placeholder="/home/you/repos/project"
-            value={workspaceRoot}
-            onChange={(event) => setWorkspaceRoot(event.target.value)}
-            disabled={creating}
-          />
-          <Button size="sm" onClick={handleCreate} disabled={creating} className="w-full">
-            {creating ? "Creating…" : "Create"}
-          </Button>
+          {manualMode ? (
+            <>
+              <Input
+                placeholder="/home/you/repos/project"
+                value={workspaceRoot}
+                onChange={(event) => setWorkspaceRoot(event.target.value)}
+                disabled={creating}
+              />
+              <Button size="sm" onClick={handleCreate} disabled={creating} className="w-full">
+                {creating ? "Creating…" : "Create"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setManualMode(false)}
+                className="text-xs text-neutral-500 underline hover:text-neutral-300"
+              >
+                or browse folders
+              </button>
+            </>
+          ) : (
+            <>
+              <DirectoryBrowser listDirectory={listDirectory} onSelect={onCreateProject} />
+              <button
+                type="button"
+                onClick={() => setManualMode(true)}
+                className="text-xs text-neutral-500 underline hover:text-neutral-300"
+              >
+                or type a path manually
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <Button variant="outline" size="sm" onClick={() => setShowForm(true)} className="mt-3">

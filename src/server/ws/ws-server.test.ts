@@ -775,6 +775,41 @@ describe("ws-server", () => {
     expect(messagesB).toEqual([]);
   }, 20_000);
 
+  it("fs.list-directory lists a real directory's subdirectories, excluding dotfiles and plain files", async () => {
+    fs.mkdirSync(path.join(repoDir, "subdir-a"));
+    fs.mkdirSync(path.join(repoDir, "subdir-b"));
+    fs.mkdirSync(path.join(repoDir, ".hidden-dir"));
+    fs.writeFileSync(path.join(repoDir, "not-a-dir.txt"), "hi");
+
+    const result = await send({ type: "fs.list-directory", commandId: "fs1", path: repoDir });
+    expect(result.ok).toBe(true);
+    const listing = result.ok ? (result.result as { path: string; parentPath: string | null; entries: { name: string; path: string }[] }) : undefined;
+
+    expect(listing?.path).toBe(repoDir);
+    expect(listing?.parentPath).toBe(path.dirname(repoDir));
+    expect(listing?.entries.map((e) => e.name)).toEqual(["subdir-a", "subdir-b"]);
+    expect(listing?.entries.map((e) => e.path)).toEqual([path.join(repoDir, "subdir-a"), path.join(repoDir, "subdir-b")]);
+  });
+
+  it("fs.list-directory defaults to the server's home directory when no path is given", async () => {
+    const result = await send({ type: "fs.list-directory", commandId: "fs2" });
+    expect(result.ok).toBe(true);
+    const listing = result.ok ? (result.result as { path: string }) : undefined;
+    expect(listing?.path).toBe(os.homedir());
+  });
+
+  it("fs.list-directory replies ok: false for a path that doesn't exist", async () => {
+    const result = await send({ type: "fs.list-directory", commandId: "fs3", path: path.join(repoDir, "does-not-exist") });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toEqual(expect.any(String));
+  });
+
+  it("fs.list-directory replies ok: false for a path that's a file, not a directory", async () => {
+    fs.writeFileSync(path.join(repoDir, "just-a-file.txt"), "hi");
+    const result = await send({ type: "fs.list-directory", commandId: "fs4", path: path.join(repoDir, "just-a-file.txt") });
+    expect(result.ok).toBe(false);
+  });
+
   it(
     "replies with ok: false and an error message for a command referencing an unknown thread",
     async () => {
