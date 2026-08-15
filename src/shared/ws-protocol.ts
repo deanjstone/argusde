@@ -48,6 +48,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.list"), commandId: z.string() }),
   z.object({ type: z.literal("thread.list"), commandId: z.string(), projectId: z.string() }),
   z.object({ type: z.literal("thread.get-history"), commandId: z.string(), threadId: z.string() }),
+  z.object({ type: z.literal("fs.list-directory"), commandId: z.string(), path: z.string().optional() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -84,6 +85,22 @@ export interface ThreadRecord {
   createdAt: string;
   /** Set once the Thread is closed — its live session is torn down and (if promoted) its worktree removed, but persisted history stays browsable. */
   closedAt: string | null;
+}
+
+/**
+ * Response shape for fs.list-directory — lets a client browse the
+ * *server's* filesystem to pick a project path, since that's whose
+ * filesystem actually matters (true for Electron, and unavoidably true
+ * for the PWA reached over Tailscale from a different device entirely).
+ * Directories only, dotfiles excluded — this is for picking a project
+ * root, not a general file browser.
+ */
+export interface DirectoryListing {
+  /** Resolved absolute path actually listed. */
+  path: string;
+  /** null only at the filesystem root. */
+  parentPath: string | null;
+  entries: { name: string; path: string }[];
 }
 
 export type CommandResult =

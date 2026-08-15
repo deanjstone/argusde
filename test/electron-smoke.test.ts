@@ -94,7 +94,7 @@ describe("electron smoke: loads the server-served shared UI", () => {
   it(
     "does not expose the connect-screen's privileged bridge to the server-served page",
     async () => {
-      await window.waitForSelector("text=/workspace path/i", { timeout: 15_000 });
+      await window.waitForSelector("text=/choose a workspace folder/i", { timeout: 15_000 });
 
       // window.argusdeConnect (getServerUrl/setServerUrl/retryConnect) must
       // only ever be defined on the locally-bundled connect screen — the
@@ -109,8 +109,9 @@ describe("electron smoke: loads the server-served shared UI", () => {
   it(
     "drives a real chat round trip inside the real Electron window",
     async () => {
+      await window.getByRole("button", { name: /type a path manually/i }).click();
       await window.getByLabel(/workspace path/i).fill(repoDir);
-      await window.getByRole("button", { name: /start/i }).click();
+      await window.getByRole("button", { name: /^start$/i }).click();
 
       await window.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
 

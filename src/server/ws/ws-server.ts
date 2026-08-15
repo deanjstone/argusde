@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import type { AcpSession } from "../../utility/acp-session.js";
 import type { EventStore, DomainEvent } from "../persistence/event-store.js";
@@ -7,7 +10,14 @@ import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
-import { API_VERSION, ClientCommandSchema, WS_PATH, type ClientCommand, type ServerPush } from "../../shared/ws-protocol.js";
+import {
+  API_VERSION,
+  ClientCommandSchema,
+  WS_PATH,
+  type ClientCommand,
+  type DirectoryListing,
+  type ServerPush,
+} from "../../shared/ws-protocol.js";
 
 export interface WsServerOptions {
   host?: string;
@@ -342,6 +352,20 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           connectionError: connectionState.error,
           messages,
         };
+      }
+      case "fs.list-directory": {
+        const target = command.path ?? os.homedir();
+        const dirents = await fs.readdir(target, { withFileTypes: true });
+        const entries = dirents
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => ({ name: d.name, path: path.join(target, d.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const parentPath = path.dirname(target);
+        return {
+          path: target,
+          parentPath: parentPath === target ? null : parentPath,
+          entries,
+        } satisfies DirectoryListing;
       }
     }
   }
