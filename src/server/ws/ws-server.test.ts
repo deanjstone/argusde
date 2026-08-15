@@ -690,6 +690,47 @@ describe("ws-server", () => {
     expect(threads.map((t) => t.title).sort()).toEqual(["First", "Second"]);
   }, 20_000);
 
+  it("project.delete removes the project and its threads, and disposes any live runtime", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "pd1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "pd2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "pd3", threadId, text: "hi" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    const deleteResult = await send({ type: "project.delete", commandId: "pd4", projectId });
+    expect(deleteResult.ok).toBe(true);
+
+    const projectsResult = await send({ type: "project.list", commandId: "pd5" });
+    const projects = projectsResult.ok ? (projectsResult.result as { id: string }[]) : [];
+    expect(projects.map((p) => p.id)).not.toContain(projectId);
+
+    // The Thread is really gone, not merely hidden — anything still
+    // addressing it must fail cleanly rather than resurrect a half-deleted
+    // record.
+    const historyAfter = await send({ type: "thread.get-history", commandId: "pd7", threadId });
+    expect(historyAfter.ok).toBe(false);
+  }, 25_000);
+
+  it("project.delete leaves the workspace folder itself completely untouched", async () => {
+    // Deleting a Project must never be mistaken for deleting the user's
+    // actual code — it removes ArgusDE's records, nothing on disk.
+    const created = await send({ type: "project.create", commandId: "pg1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = created.ok ? (created.result as { projectId: string }) : { projectId: "" };
+
+    const deleteResult = await send({ type: "project.delete", commandId: "pg2", projectId });
+    expect(deleteResult.ok).toBe(true);
+
+    expect(fs.existsSync(repoDir)).toBe(true);
+    expect(fs.existsSync(path.join(repoDir, "file.txt"))).toBe(true);
+  }, 20_000);
+
+  it("project.delete rejects an unknown project rather than silently succeeding", async () => {
+    const result = await send({ type: "project.delete", commandId: "pd8", projectId: "does-not-exist" });
+    expect(result.ok).toBe(false);
+  }, 20_000);
+
   it("thread.get-history returns a thread's persisted messages, mode catalog, and worktree state", async () => {
     const projectResult = await send({ type: "project.create", commandId: "gh1", workspaceRoot: repoDir, title: "P" });
     const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };

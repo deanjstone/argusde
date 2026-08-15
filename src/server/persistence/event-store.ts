@@ -34,7 +34,14 @@ export type DomainEvent =
     }
   | { kind: "thread.mode-changed"; threadId: string; modeId: string; timestamp: string }
   | { kind: "thread.worktree-promoted"; threadId: string; worktreePath: string; timestamp: string }
-  | { kind: "thread.closed"; threadId: string; timestamp: string };
+  | { kind: "thread.closed"; threadId: string; timestamp: string }
+  /**
+   * Removes a Project and everything projected from it. The events
+   * themselves stay in the append-only log — this is a read-model deletion,
+   * which is what "remove it from my list" actually means here, and keeps
+   * the log's history intact rather than rewriting it.
+   */
+  | { kind: "project.deleted"; projectId: string; timestamp: string };
 
 /**
  * Append-only event log plus the SQLite read-model projected from it.
@@ -147,6 +154,18 @@ export class EventStore {
           .prepare("UPDATE threads SET closed_at = ? WHERE id = ?")
           .run(event.timestamp, event.threadId);
         break;
+      case "project.deleted": {
+        // Checkpoints first, then threads, then the project — the reverse
+        // of the foreign-key dependency order, so no statement ever leaves
+        // a dangling reference. appendEvent already wraps this in a
+        // transaction, so a failure part-way rolls the whole thing back.
+        this.db
+          .prepare("DELETE FROM checkpoints WHERE thread_id IN (SELECT id FROM threads WHERE project_id = ?)")
+          .run(event.projectId);
+        this.db.prepare("DELETE FROM threads WHERE project_id = ?").run(event.projectId);
+        this.db.prepare("DELETE FROM projects WHERE id = ?").run(event.projectId);
+        break;
+      }
       case "thread.message-recorded":
         // Turn/message history projection lands with the UI work that reads
         // it (Phase 2+) — the event is durable in the log either way.

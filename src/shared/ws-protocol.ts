@@ -46,6 +46,11 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.revert-checkpoint"), commandId: z.string(), threadId: z.string(), turn: z.number() }),
   z.object({ type: z.literal("thread.close"), commandId: z.string(), threadId: z.string() }),
   z.object({ type: z.literal("project.list"), commandId: z.string() }),
+  /**
+   * Removes a Project and its Threads from ArgusDE. Records only — the
+   * workspace folder on disk is never touched.
+   */
+  z.object({ type: z.literal("project.delete"), commandId: z.string(), projectId: z.string() }),
   z.object({ type: z.literal("thread.list"), commandId: z.string(), projectId: z.string() }),
   z.object({ type: z.literal("thread.get-history"), commandId: z.string(), threadId: z.string() }),
   z.object({ type: z.literal("fs.list-directory"), commandId: z.string(), path: z.string().optional() }),
