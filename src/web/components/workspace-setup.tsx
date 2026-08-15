@@ -29,7 +29,7 @@ export function WorkspaceSetup({ onSubmit, listDirectory, submitting = false, er
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 bg-neutral-950 px-6 text-neutral-100">
+    <main className="flex h-full flex-col items-center justify-center gap-4 bg-neutral-950 px-6 text-neutral-100">
       <div className="w-full max-w-sm">
         <h1 className="mb-1 text-lg font-semibold">ArgusDE</h1>
         <p className="mb-4 text-sm text-neutral-400">Choose a workspace folder to start chatting.</p>
@@ -73,6 +73,6 @@ export function WorkspaceSetup({ onSubmit, listDirectory, submitting = false, er
         {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
         {submitting && !manualMode && <p className="mt-2 text-sm text-neutral-500">Starting…</p>}
       </div>
-    </div>
+    </main>
   );
 }
