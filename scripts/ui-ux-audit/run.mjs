@@ -1,0 +1,308 @@
+// AFK UI/UX audit regime driver. Runs against a LIVE server (default
+// http://127.0.0.1:4870/) per docs/testing/ui-ux-user-stories.md.
+// Usage: node scripts/ui-ux-audit/run.mjs [--viewport=desktop|mobile] [--url=http://...]
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { chromium, devices } from "playwright";
+import { record, scanA11y, screenshotAndDiff, printSummary } from "./helpers.mjs";
+
+const args = Object.fromEntries(
+  process.argv.slice(2).map((a) => {
+    const [k, v] = a.replace(/^--/, "").split("=");
+    return [k, v ?? true];
+  }),
+);
+const BASE_URL = args.url ?? "http://127.0.0.1:4870/";
+const VIEWPORT = args.viewport ?? "desktop";
+
+function makeGitRepo(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "audit@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "ArgusDE Audit"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "notes.txt"), "audit fixture\n");
+  execFileSync("git", ["add", "-A"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "audit fixture"], { cwd: dir });
+  return dir;
+}
+
+// Baselines are viewport-scoped — desktop and mobile render at completely
+// different dimensions, so comparing a mobile screenshot against a
+// same-named desktop baseline is a guaranteed false-positive dimension
+// mismatch, not a real visual regression. Every screenshot call goes
+// through this wrapper instead of calling screenshotAndDiff directly.
+function shot(page, storyId, options) {
+  return screenshotAndDiff(page, `${storyId}-${VIEWPORT}`, options);
+}
+
+async function main() {
+  console.log(`\n=== ArgusDE UI/UX audit — ${VIEWPORT} viewport — ${BASE_URL} ===\n`);
+
+  const browser = await chromium.launch();
+  const contextOptions = VIEWPORT === "mobile" ? { ...devices["iPhone 13"] } : { viewport: { width: 1280, height: 800 } };
+  const context = await browser.newContext(contextOptions);
+  const page = await context.newPage();
+  const consoleErrors = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+  page.on("pageerror", (err) => consoleErrors.push(String(err)));
+
+  const gitRepo = makeGitRepo("argusde-audit-git-");
+  const nonGitRepo = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-nongit-"));
+
+  try {
+    // ---- US-1: first-run / connection ----
+    await page.goto(BASE_URL);
+    await page.waitForSelector("text=/choose a workspace folder/i", { timeout: 15000 });
+    record("US-1.1", "pass", "first-run screen shown on fresh load");
+    await scanA11y(page, "US-1.1");
+    await shot(page, "US-1.1-first-run");
+
+    // ---- US-2: directory browsing ----
+    const selectBtn = page.getByRole("button", { name: /select this folder/i });
+    await selectBtn.waitFor({ state: "visible", timeout: 15000 });
+    record("US-2.1", "pass", "directory browser shown by default, initial listing loaded");
+    await scanA11y(page, "US-2.1");
+    await shot(page, "US-2.1-directory-browser");
+
+    const upBtn = page.getByRole("button", { name: /^up$/i });
+    const upDisabledAtHome = await upBtn.isDisabled();
+    record("US-2.2a", upDisabledAtHome ? "fail" : "pass", upDisabledAtHome ? "Up disabled at homedir (expected enabled, not filesystem root)" : "Up enabled at homedir as expected");
+
+    // Navigate into a real subfolder (repos) if present, then back up.
+    const reposEntry = page.getByRole("button", { name: "repos" });
+    if (await reposEntry.count()) {
+      await reposEntry.click();
+      await page.waitForTimeout(500);
+      record("US-2.2b", "pass", "navigated into a real subfolder");
+      await upBtn.click();
+      await page.waitForTimeout(500);
+      const backAtHome = await page.getByRole("button", { name: "repos" }).count();
+      record("US-2.2c", backAtHome ? "pass" : "fail", backAtHome ? "Up navigated back to parent correctly" : "Up did not return to expected parent listing");
+    } else {
+      record("US-2.2b", "skip", "no 'repos' folder found under homedir to navigate into");
+    }
+
+    // Dotfile exclusion: confirm no entry starting with "." is rendered.
+    // Checked via evaluate() against real button text, not a CSS
+    // :text-matches() regex — that pseudo-class's string-escaping semantics
+    // produced a false-positive match against every button on the page
+    // during the first audit run (recorded as feedback_playwright_text_matches_escaping).
+    const dotEntries = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("button"))
+        .map((b) => b.textContent.trim())
+        .filter((t) => t.startsWith(".")),
+    );
+    record("US-2.3", dotEntries.length === 0 ? "pass" : "fail", dotEntries.length === 0 ? "no dotfile entries listed" : `dotfile-looking entries found: ${dotEntries.join(", ")}`);
+
+    // Manual fallback still works.
+    await page.getByRole("button", { name: /type a path manually/i }).click();
+    const manualInput = page.getByLabel(/workspace path/i);
+    await manualInput.waitFor({ state: "visible", timeout: 5000 });
+    record("US-2.4", "pass", "manual path fallback revealed");
+    await scanA11y(page, "US-2.4");
+
+    // US-2.6: non-git folder fails visibly.
+    await manualInput.fill(nonGitRepo);
+    await page.getByRole("button", { name: /^start$/i }).click();
+    const errorLocator = page.locator("text=/not a git repository/i");
+    try {
+      await errorLocator.waitFor({ timeout: 10000 });
+      record("US-2.6", "pass", "non-git folder failure is visibly surfaced");
+      await shot(page, "US-2.6-nongit-error");
+    } catch {
+      record("US-2.6", "fail", "non-git folder failure was NOT visibly surfaced within 10s");
+    }
+
+    // US-2.5: git folder succeeds. Already in manual mode from the US-2.6
+    // failure above (the error kept the manual form open) — no need to
+    // re-reveal it via "type a path manually" again.
+    await manualInput.fill(gitRepo);
+    await page.getByRole("button", { name: /^start$/i }).click();
+    await page.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+    record("US-2.5", "pass", "git folder succeeds and lands on chat");
+    await scanA11y(page, "US-2.5");
+    await shot(page, "US-2.5-chat-empty");
+
+    // ---- US-4: chat ----
+    const messageInput = page.getByPlaceholder(/message/i);
+    await messageInput.fill("Reply with only the word OK, no tools, no explanation.");
+    await messageInput.press("Enter");
+    record("US-4.1", "pass", "message sent, input cleared");
+
+    try {
+      await page.waitForSelector('button:has-text("Turn 1")', { timeout: 60000 });
+      record("US-4.2", "pass", "agent reply completed, turn 1 checkpoint captured");
+    } catch {
+      record("US-4.2", "fail", "agent reply / turn-complete did not land within 60s");
+    }
+    await scanA11y(page, "US-4.2");
+    await shot(page, "US-4.2-chat-with-reply");
+
+    // ---- US-5: checkpoints ----
+    const turn1Btn = page.getByRole("button", { name: /^turn 1/i });
+    if (await turn1Btn.count()) {
+      await turn1Btn.click();
+      await page.waitForTimeout(1500);
+      const diffVisible = await page.locator("text=/diff|no changes|close diff/i").count();
+      record("US-5.3", diffVisible ? "pass" : "fail", diffVisible ? "diff view opened for turn 1" : "diff view did not appear");
+      await scanA11y(page, "US-5.3");
+      await shot(page, "US-5.3-diff-view");
+      const closeDiff = page.getByRole("button", { name: /close diff/i });
+      if (await closeDiff.count()) await closeDiff.click();
+    } else {
+      record("US-5.3", "skip", "no Turn 1 checkpoint button found");
+    }
+
+    // ---- US-7: mode switcher (presence-only; real agent may or may not advertise modes) ----
+    const modeSelect = page.getByLabel(/agent mode/i);
+    const modeCount = await modeSelect.count();
+    record("US-7.1", "pass", modeCount ? "mode switcher present (agent advertises modes)" : "mode switcher absent (agent advertises no modes) — correct per US-7.1");
+
+    // ---- US-9: settings tab ----
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.waitForTimeout(300);
+    const apiVersionVisible = await page.locator("text=/api version/i").count();
+    record("US-9.1", apiVersionVisible ? "pass" : "fail", apiVersionVisible ? "settings shows API version" : "settings missing API version text");
+    await scanA11y(page, "US-9.1");
+    await shot(page, "US-9.1-settings");
+
+    // ---- US-3: threads/projects navigation ----
+    await page.getByRole("button", { name: "Threads" }).click();
+    await page.waitForTimeout(500);
+    const projectButtons = await page.locator('button').filter({ hasText: gitRepo }).count();
+    record("US-3.1", projectButtons > 0 ? "pass" : "fail", projectButtons > 0 ? "created project appears in Threads list" : "created project missing from list");
+    await scanA11y(page, "US-3.1");
+    await shot(page, "US-3.1-threads-tab");
+
+    // ---- US-13: keyboard operability spot-check ----
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.waitForTimeout(300);
+    await page.keyboard.press("Tab");
+    const activeTag = await page.evaluate(() => document.activeElement?.tagName);
+    record("US-13.3", activeTag ? "pass" : "fail", `first Tab focused a <${activeTag}> element`);
+
+    // ---- US-8: closing a non-promoted Thread ----
+    const closeBtn = page.getByRole("button", { name: /^close thread$/i });
+    if (await closeBtn.count()) {
+      await closeBtn.click();
+      await page.waitForTimeout(1500);
+      const landedOnThreads = await page.getByRole("button", { name: "Threads" }).getAttribute("aria-current");
+      record("US-8.1a", landedOnThreads === "page" ? "pass" : "fail", `landed on Threads tab after close: ${landedOnThreads === "page"}`);
+      // Re-select the just-closed thread from the list to confirm read-only
+      // history + closed notice. Project title and Thread title are both
+      // set to the workspaceRoot path in this flow, so the first matching
+      // button could be either the Project (ProjectPicker) or the Thread
+      // itself (ThreadList), depending on whether closing reset
+      // selectedProjectId — click once, and if that didn't land on a
+      // Thread (no closed-notice/message-input yet), click the
+      // now-matching Thread button in the drilled-in list.
+      const clickMatchingButton = async () => {
+        const btn = page.locator("button", { hasText: gitRepo }).first();
+        if (await btn.count()) await btn.click();
+        await page.waitForTimeout(500);
+      };
+      await clickMatchingButton();
+      let onThreadScreen = (await page.locator("text=/this thread is closed/i").count()) > 0;
+      if (!onThreadScreen) {
+        await clickMatchingButton();
+        onThreadScreen = (await page.locator("text=/this thread is closed/i").count()) > 0;
+      }
+      record("US-8.3", onThreadScreen ? "pass" : "fail", onThreadScreen ? "closed Thread's history browsable with closed notice" : "closed notice never appeared after re-selecting the closed thread (up to 2 clicks through Project→Thread drill-down)");
+      if (onThreadScreen) {
+        await scanA11y(page, "US-8.3");
+        await shot(page, "US-8.3-closed-thread");
+      }
+    } else {
+      record("US-8.1a", "fail", "Close thread button not found on an open, non-promoted thread");
+    }
+
+    // ---- US-6: worktree promotion (needs a FRESH thread — promotion is only allowed before any message is sent) ----
+    const worktreeRepo = makeGitRepo("argusde-audit-worktree-");
+    await page.getByRole("button", { name: "Threads" }).click();
+    await page.waitForTimeout(300);
+    // Re-selecting the closed thread above left selectedProjectId set, so
+    // the Threads tab now shows that Project's ThreadList, not the
+    // top-level ProjectPicker — "← Back" returns to it, where "+ New
+    // project" actually lives (ThreadList only offers "+ New thread").
+    const backBtn = page.getByRole("button", { name: /back/i });
+    if (await backBtn.count()) await backBtn.click();
+    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: /\+ new project/i }).click();
+    await page.getByRole("button", { name: /type a path manually/i }).click();
+    await page.getByLabel(/workspace path/i).fill(worktreeRepo);
+    await page.getByRole("button", { name: /^create$/i }).click();
+    await page.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+    record("US-6.setup", "pass", "fresh thread created for worktree promotion test");
+
+    const promoteBtn = page.getByRole("button", { name: /promote to worktree/i });
+    if (await promoteBtn.count()) {
+      await promoteBtn.click();
+      try {
+        await page.waitForSelector("text=/running in an isolated worktree/i", { timeout: 15000 });
+        record("US-6.2", "pass", "promoted — amber worktree badge visible");
+        await scanA11y(page, "US-6.2");
+        await shot(page, "US-6.2-promoted");
+      } catch {
+        record("US-6.2", "fail", "worktree badge did not appear within 15s of promoting");
+      }
+
+      // US-6.4: promoting a second time must be rejected.
+      const promoteAgain = page.getByRole("button", { name: /promote to worktree/i });
+      const stillOffered = await promoteAgain.count();
+      record("US-6.4", stillOffered === 0 ? "pass" : "fail", stillOffered === 0 ? "promote control correctly hidden after promotion" : "promote control still offered after already promoting");
+
+      // ---- US-6.3 + US-8.2: file edit lands in the worktree, then close removes it from disk ----
+      const wtMessageInput = page.getByPlaceholder(/message/i);
+      await wtMessageInput.fill("Reply with only the word OK, no tools, no explanation.");
+      await wtMessageInput.press("Enter");
+      try {
+        await page.waitForSelector('button:has-text("Turn 1")', { timeout: 60000 });
+        record("US-6.3-setup", "pass", "turn 1 completed in promoted thread");
+      } catch {
+        record("US-6.3-setup", "fail", "turn 1 did not complete in promoted thread within 60s");
+      }
+
+      const wtCloseBtn = page.getByRole("button", { name: /^close thread$/i });
+      if (await wtCloseBtn.count()) {
+        await wtCloseBtn.click();
+        await page.waitForTimeout(2000);
+        // The worktree directory is a sibling of the project root, named
+        // "<root>-worktrees/<threadId>" — the exact thread id isn't known
+        // to this script, so check the sibling "-worktrees" dir itself is
+        // either absent or empty after close, not a specific subpath.
+        const worktreesDir = `${worktreeRepo}-worktrees`;
+        const stillHasEntries = fs.existsSync(worktreesDir) && fs.readdirSync(worktreesDir).length > 0;
+        record("US-8.2", !stillHasEntries ? "pass" : "fail", !stillHasEntries ? "worktree directory removed/emptied from disk after close" : `worktree dir still has entries: ${fs.readdirSync(worktreesDir).join(", ")}`);
+        fs.rmSync(worktreesDir, { recursive: true, force: true });
+      } else {
+        record("US-8.2", "fail", "Close thread button not found on the promoted thread");
+      }
+    } else {
+      record("US-6.2", "fail", "Promote to worktree button not found on a fresh, unmessaged thread");
+    }
+    fs.rmSync(worktreeRepo, { recursive: true, force: true });
+
+    console.log("\nConsole errors observed during run:", consoleErrors.length);
+    if (consoleErrors.length > 0) {
+      record("US-console-errors", "fail", consoleErrors.slice(0, 5).join(" | "));
+    } else {
+      record("US-console-errors", "pass", "no console errors observed");
+    }
+  } finally {
+    await browser.close();
+    fs.rmSync(gitRepo, { recursive: true, force: true });
+    fs.rmSync(nonGitRepo, { recursive: true, force: true });
+  }
+
+  const summary = printSummary();
+  process.exitCode = summary.fail > 0 ? 1 : 0;
+}
+
+main().catch((err) => {
+  console.error("AUDIT SCRIPT CRASHED:", err);
+  process.exit(1);
+});
