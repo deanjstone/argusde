@@ -564,17 +564,17 @@ export function App() {
   // window.
   if (!connected) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
+      <main className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
         <p className="text-sm">Connecting…</p>
-      </div>
+      </main>
     );
   }
 
   if (restoring) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
+      <main className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
         <p className="text-sm">Restoring your last session…</p>
-      </div>
+      </main>
     );
   }
 
@@ -586,7 +586,7 @@ export function App() {
 
   return (
     <div className="flex h-dvh flex-col">
-      <div className="min-h-0 flex-1">
+      <main className="min-h-0 flex-1">
         {tab === "chat" &&
           (thread ? (
             <ChatView
@@ -642,7 +642,7 @@ export function App() {
             {thread && <p className="text-neutral-500">Thread ID: {thread.threadId}</p>}
           </div>
         )}
-      </div>
+      </main>
       <TabBar active={tab} onChange={setTab} />
     </div>
   );
