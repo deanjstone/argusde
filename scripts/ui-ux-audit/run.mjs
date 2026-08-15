@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium, devices } from "playwright";
-import { record, scanA11y, screenshotAndDiff, printSummary } from "./helpers.mjs";
+import { record, scanA11y, screenshotAndDiff, printSummary, checkNoHorizontalScroll } from "./helpers.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -126,6 +126,31 @@ async function main() {
     record("US-2.5", "pass", "git folder succeeds and lands on chat");
     await scanA11y(page, "US-2.5");
     await shot(page, "US-2.5-chat-empty");
+    await checkNoHorizontalScroll(page, "US-12.3-chat-empty");
+
+    // ---- US-10: PWA installability (manifest + service worker) ----
+    const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
+    if (manifestHref) {
+      const manifestResp = await page.request.get(new URL(manifestHref, BASE_URL).toString());
+      if (manifestResp.ok()) {
+        const manifest = await manifestResp.json();
+        const hasIcons = Array.isArray(manifest.icons) && manifest.icons.length > 0;
+        record("US-10.1", hasIcons ? "pass" : "fail", hasIcons ? `manifest fetchable with ${manifest.icons.length} icon(s)` : "manifest fetchable but has no icons");
+      } else {
+        record("US-10.1", "fail", `manifest.json returned HTTP ${manifestResp.status()}`);
+      }
+    } else {
+      record("US-10.1", "fail", "no <link rel=\"manifest\"> found in document");
+    }
+
+    const swState = await page.evaluate(async () => {
+      if (!("serviceWorker" in navigator)) return "unsupported";
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) return "unregistered";
+      await navigator.serviceWorker.ready;
+      return reg.active ? "active" : "registered-not-active";
+    });
+    record("US-10.2", swState === "active" ? "pass" : "fail", `service worker state: ${swState}`);
 
     // ---- US-4: chat ----
     const messageInput = page.getByPlaceholder(/message/i);
@@ -141,6 +166,19 @@ async function main() {
     }
     await scanA11y(page, "US-4.2");
     await shot(page, "US-4.2-chat-with-reply");
+
+    // ---- US-14.3: rapid double-tap on Send never produces a duplicate message ----
+    // handleSubmit clears `text` synchronously on the first submit, so a
+    // same-tick second click sees an empty input and no-ops — this is
+    // exactly the behavior US-14.3 requires, verified end-to-end rather
+    // than just read out of the component.
+    await messageInput.fill("PING-DEDUP-CHECK");
+    const sendBtn = page.getByRole("button", { name: "Send" });
+    await Promise.all([sendBtn.click(), sendBtn.click()]);
+    await page.waitForTimeout(1000);
+    const pingCount = await page.locator("text=/PING-DEDUP-CHECK/").count();
+    record("US-14.3", pingCount === 1 ? "pass" : "fail", `rapid double-tap on Send produced ${pingCount} instance(s) of the message (expected 1)`);
+    await page.waitForSelector('button:has-text("Turn 2")', { timeout: 60000 }).catch(() => {});
 
     // ---- US-5: checkpoints ----
     const turn1Btn = page.getByRole("button", { name: /^turn 1/i });
@@ -167,8 +205,16 @@ async function main() {
     await page.waitForTimeout(300);
     const apiVersionVisible = await page.locator("text=/api version/i").count();
     record("US-9.1", apiVersionVisible ? "pass" : "fail", apiVersionVisible ? "settings shows API version" : "settings missing API version text");
+    const threadIdVisible = await page.locator("text=/thread id/i").count();
+    record("US-9.1b", threadIdVisible ? "pass" : "fail", threadIdVisible ? "settings shows active Thread ID" : "settings missing Thread ID while a thread is active");
     await scanA11y(page, "US-9.1");
     await shot(page, "US-9.1-settings");
+
+    // ---- US-3.5: tab switching never loses the active Thread's state ----
+    await page.getByRole("button", { name: "Chat" }).click();
+    await page.waitForTimeout(300);
+    const messageStillVisible = await page.locator("text=/Reply with only the word OK/").count();
+    record("US-3.5", messageStillVisible ? "pass" : "fail", messageStillVisible ? "returning to Chat after Settings/Threads shows the same conversation" : "conversation was lost/reset after switching tabs");
 
     // ---- US-3: threads/projects navigation ----
     await page.getByRole("button", { name: "Threads" }).click();
@@ -177,6 +223,42 @@ async function main() {
     record("US-3.1", projectButtons > 0 ? "pass" : "fail", projectButtons > 0 ? "created project appears in Threads list" : "created project missing from list");
     await scanA11y(page, "US-3.1");
     await shot(page, "US-3.1-threads-tab");
+    await checkNoHorizontalScroll(page, "US-12.3-threads-tab");
+
+    // ---- US-3.2: drilling into a Project's Thread list, then "Back", returns cleanly ----
+    const gitRepoProjectBtn = page.locator("button", { hasText: gitRepo }).first();
+    await gitRepoProjectBtn.click();
+    await page.waitForTimeout(400);
+    const onThreadListAfterDrillIn = await page.getByRole("button", { name: /\+ new thread/i }).count();
+    record("US-3.2a", onThreadListAfterDrillIn ? "pass" : "fail", onThreadListAfterDrillIn ? "selecting a Project drilled into its Thread list" : "did not land on Thread list after selecting Project");
+
+    const backToProjectsBtn = page.getByRole("button", { name: /back/i });
+    await backToProjectsBtn.click();
+    await page.waitForTimeout(400);
+    const onProjectListAfterBack = await page.getByRole("button", { name: /\+ new project/i }).count();
+    const projectStillListedAfterBack = await page.locator("button", { hasText: gitRepo }).count();
+    record("US-3.2b", onProjectListAfterBack && projectStillListedAfterBack ? "pass" : "fail", `"Back" returned to Project list: ${!!onProjectListAfterBack}, project still listed: ${!!projectStillListedAfterBack}`);
+
+    // ---- US-2.7: ProjectPicker's "+ New project" form has the same browse/manual parity as first-run ----
+    await page.getByRole("button", { name: /\+ new project/i }).click();
+    await page.waitForTimeout(300);
+    const browseFormPresentInPicker = await page.getByRole("button", { name: /select this folder/i }).count();
+    record("US-2.7", browseFormPresentInPicker ? "pass" : "fail", browseFormPresentInPicker ? "ProjectPicker's \"+ New project\" form defaults to the folder browser, same as first-run" : "ProjectPicker's create form did not show the folder browser by default");
+    await page.getByRole("button", { name: /type a path manually/i }).click();
+    const pickerManualInput = page.getByLabel(/workspace path/i);
+    await pickerManualInput.waitFor({ state: "visible", timeout: 5000 });
+    record("US-2.7b", "pass", "manual path fallback also present in ProjectPicker's create form");
+
+    // ---- US-2.8: re-selecting an existing workspace root is idempotent (Project-level dedup) ----
+    // Not exercised end-to-end here — actually submitting would spin up a
+    // second real Claude Code agent session purely to re-derive what
+    // src/server/ws/ws-server.test.ts's "project.create is idempotent by
+    // workspaceRoot" test already covers directly against the protocol
+    // handler, at zero extra live-agent cost.
+    record("US-2.8", "skip", "server-side idempotency covered by ws-server.test.ts's dedicated unit test; not re-exercised here to avoid spinning up an unnecessary extra live agent session");
+    // Back out of the create form without submitting.
+    const cancelBrowseToggle = page.getByRole("button", { name: /or browse folders/i });
+    if (await cancelBrowseToggle.count()) await cancelBrowseToggle.click();
 
     // ---- US-13: keyboard operability spot-check ----
     await page.getByRole("button", { name: "Chat" }).click();
@@ -184,6 +266,16 @@ async function main() {
     await page.keyboard.press("Tab");
     const activeTag = await page.evaluate(() => document.activeElement?.tagName);
     record("US-13.3", activeTag ? "pass" : "fail", `first Tab focused a <${activeTag}> element`);
+
+    // ---- US-13.4: focus order through the tab bar is logical (Chat -> Threads -> Settings) ----
+    const chatTabBtn = page.getByRole("button", { name: "Chat" });
+    await chatTabBtn.focus();
+    await page.keyboard.press("Tab");
+    const afterChatTag = await page.evaluate(() => document.activeElement?.textContent?.trim());
+    await page.keyboard.press("Tab");
+    const afterThreadsTag = await page.evaluate(() => document.activeElement?.textContent?.trim());
+    const focusOrderLogical = afterChatTag === "Threads" && afterThreadsTag === "Settings";
+    record("US-13.4", focusOrderLogical ? "pass" : "fail", `tab-bar focus order: Chat -> ${afterChatTag} -> ${afterThreadsTag} (expected Threads -> Settings)`);
 
     // ---- US-8: closing a non-promoted Thread ----
     const closeBtn = page.getByRole("button", { name: /^close thread$/i });
@@ -215,6 +307,24 @@ async function main() {
       if (onThreadScreen) {
         await scanA11y(page, "US-8.3");
         await shot(page, "US-8.3-closed-thread");
+
+        // ---- US-4.4: sending is disabled on a closed Thread ----
+        const closedInput = page.getByPlaceholder(/message/i);
+        const closedInputDisabled = (await closedInput.count()) === 0 || (await closedInput.isDisabled().catch(() => true));
+        record("US-4.4", closedInputDisabled ? "pass" : "fail", `message input disabled on closed Thread: ${closedInputDisabled}`);
+
+        // ---- US-3.4: the closed Thread's row in its Thread list shows a "closed" badge ----
+        // Re-selecting the closed thread reset selectedProjectId to null (via
+        // becomeActiveThread), so "Threads" alone lands back on the top-level
+        // ProjectPicker, not the drilled-in ThreadList where row badges live —
+        // drill into the Project explicitly first.
+        await page.getByRole("button", { name: "Threads" }).click();
+        await page.waitForTimeout(300);
+        const gitRepoProjectBtnForBadge = page.locator("button", { hasText: gitRepo }).first();
+        if (await gitRepoProjectBtnForBadge.count()) await gitRepoProjectBtnForBadge.click();
+        await page.waitForTimeout(400);
+        const closedBadgeInList = await page.locator("text=/^closed$/i").count();
+        record("US-3.4", closedBadgeInList ? "pass" : "fail", closedBadgeInList ? "closed Thread row shows a visible \"closed\" badge in its Thread list" : "no \"closed\" badge found in Thread list row");
       }
     } else {
       record("US-8.1a", "fail", "Close thread button not found on an open, non-promoted thread");
@@ -255,15 +365,23 @@ async function main() {
       const stillOffered = await promoteAgain.count();
       record("US-6.4", stillOffered === 0 ? "pass" : "fail", stillOffered === 0 ? "promote control correctly hidden after promotion" : "promote control still offered after already promoting");
 
-      // ---- US-6.3 + US-8.2: file edit lands in the worktree, then close removes it from disk ----
+      // ---- US-6.3: a real file edit lands in the worktree, not the Project's main workspace ----
       const wtMessageInput = page.getByPlaceholder(/message/i);
-      await wtMessageInput.fill("Reply with only the word OK, no tools, no explanation.");
+      const marker = "worktree-audit-marker.txt";
+      await wtMessageInput.fill(`Create a file named ${marker} in the repo root containing exactly the text HELLO. Use your file-write tool directly, no explanation.`);
       await wtMessageInput.press("Enter");
       try {
-        await page.waitForSelector('button:has-text("Turn 1")', { timeout: 60000 });
+        await page.waitForSelector('button:has-text("Turn 1")', { timeout: 90000 });
         record("US-6.3-setup", "pass", "turn 1 completed in promoted thread");
+        const worktreesDirPreClose = `${worktreeRepo}-worktrees`;
+        const markerInWorktree = fs.existsSync(worktreesDirPreClose)
+          ? fs.readdirSync(worktreesDirPreClose).some((entry) => fs.existsSync(path.join(worktreesDirPreClose, entry, marker)))
+          : false;
+        const markerInMainRepo = fs.existsSync(path.join(worktreeRepo, marker));
+        record("US-6.3", markerInWorktree && !markerInMainRepo ? "pass" : "fail", `marker file in worktree: ${markerInWorktree}, marker file leaked into main repo: ${markerInMainRepo}`);
       } catch {
-        record("US-6.3-setup", "fail", "turn 1 did not complete in promoted thread within 60s");
+        record("US-6.3-setup", "fail", "turn 1 did not complete in promoted thread within 90s");
+        record("US-6.3", "skip", "could not verify file placement — turn never completed");
       }
 
       const wtCloseBtn = page.getByRole("button", { name: /^close thread$/i });
@@ -278,6 +396,10 @@ async function main() {
         const stillHasEntries = fs.existsSync(worktreesDir) && fs.readdirSync(worktreesDir).length > 0;
         record("US-8.2", !stillHasEntries ? "pass" : "fail", !stillHasEntries ? "worktree directory removed/emptied from disk after close" : `worktree dir still has entries: ${fs.readdirSync(worktreesDir).join(", ")}`);
         fs.rmSync(worktreesDir, { recursive: true, force: true });
+
+        // ---- US-8.4: attempting to close an already-closed Thread is rejected cleanly ----
+        const closeStillOffered = await page.getByRole("button", { name: /^close thread$/i }).count();
+        record("US-8.4", closeStillOffered === 0 ? "pass" : "fail", closeStillOffered === 0 ? "Close control correctly hidden after closing — no way to double-close via the UI" : "Close control still offered on an already-closed Thread");
       } else {
         record("US-8.2", "fail", "Close thread button not found on the promoted thread");
       }
