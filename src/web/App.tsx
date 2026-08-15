@@ -587,6 +587,10 @@ export function App() {
   return (
     <div className="flex h-dvh flex-col">
       <main className="min-h-0 flex-1">
+        {/* Visually hidden — the compact mobile-first chrome has no room for a
+            visible page title, but every page needs exactly one <h1> for
+            screen readers (axe page-has-heading-one). */}
+        <h1 className="sr-only">ArgusDE</h1>
         {tab === "chat" &&
           (thread ? (
             <ChatView
