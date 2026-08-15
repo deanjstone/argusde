@@ -10,10 +10,19 @@ export interface ProjectPickerProps {
   onCreateProject: (workspaceRoot: string) => void;
   listDirectory: (path?: string) => Promise<DirectoryListing>;
   creating?: boolean;
+  /**
+   * Surfaced from a failed project/thread creation — e.g. picking a folder
+   * that isn't a git repository. Without this, the failure was only ever
+   * visible inside ChatView's connectionError, which this screen never
+   * reaches (creation failing means there's no active Thread to show a
+   * Chat tab for) — a silent failure that looked exactly like "nothing
+   * happened" when tapping Select this folder / Create.
+   */
+  error?: string;
 }
 
 /** First screen of the Threads tab's Projects→Threads drill-down (spec #33 decision #10). */
-export function ProjectPicker({ projects, onSelectProject, onCreateProject, listDirectory, creating = false }: ProjectPickerProps) {
+export function ProjectPicker({ projects, onSelectProject, onCreateProject, listDirectory, creating = false, error }: ProjectPickerProps) {
   const [showForm, setShowForm] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
@@ -46,6 +55,7 @@ export function ProjectPicker({ projects, onSelectProject, onCreateProject, list
 
       {showForm ? (
         <div className="mt-3 space-y-2 border-t border-neutral-800 pt-3">
+          {error && <p className="text-sm text-red-400">{error}</p>}
           {manualMode ? (
             <>
               <Input
