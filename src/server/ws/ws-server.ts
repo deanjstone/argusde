@@ -318,6 +318,41 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       }
       case "project.list":
         return eventStore.listProjects();
+      case "project.delete": {
+        const project = eventStore.getProject(command.projectId);
+        if (!project) throw new Error(`Unknown project: ${command.projectId}`);
+
+        // Tear down anything still live for this Project's Threads first.
+        // Skipping this would strand an agent subprocess per open Thread
+        // with no record left to reach it through — the same leak class as
+        // argusde#67, reintroduced by the back door.
+        for (const thread of eventStore.listThreads(command.projectId)) {
+          const runtime = runtimes.get(thread.id);
+          if (runtime) {
+            await runtime.dispose().catch(() => undefined);
+            runtimes.delete(thread.id);
+          }
+          // A promoted Thread's worktree is ArgusDE's own scratch directory
+          // (a sibling of the workspace, not part of it), so it goes with
+          // the records. The workspace root itself is never touched.
+          if (thread.worktreePath) {
+            try {
+              worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath);
+            } catch {
+              // Already gone, or the main repo has moved on — the records
+              // are still being removed either way, and a stale scratch
+              // directory must not block that.
+            }
+          }
+        }
+
+        eventStore.appendEvent({
+          kind: "project.deleted",
+          projectId: command.projectId,
+          timestamp: new Date().toISOString(),
+        });
+        return {};
+      }
       case "thread.list":
         return eventStore.listThreads(command.projectId);
       case "thread.get-history": {

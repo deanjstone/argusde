@@ -670,4 +670,94 @@ describe("EventStore", () => {
       fs.rmSync(legacyDbDir, { recursive: true, force: true });
     }
   });
+
+  it("projects a project.deleted event by removing the project, its threads, and their checkpoints", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/workspace-one",
+      title: "Project One",
+      timestamp: "2026-08-16T00:00:00.000Z",
+    });
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-2",
+      workspaceRoot: "/workspace-two",
+      title: "Project Two",
+      timestamp: "2026-08-16T00:00:01.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "Doomed",
+      worktreePath: null,
+      timestamp: "2026-08-16T00:01:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId: "thread-1",
+      turn: 0,
+      ref: "ref-0",
+      timestamp: "2026-08-16T00:01:01.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-2",
+      projectId: "proj-2",
+      title: "Survivor",
+      worktreePath: null,
+      timestamp: "2026-08-16T00:02:00.000Z",
+    });
+    store.appendEvent({
+      kind: "thread.checkpoint-captured",
+      threadId: "thread-2",
+      turn: 0,
+      ref: "ref-other",
+      timestamp: "2026-08-16T00:02:01.000Z",
+    });
+
+    store.appendEvent({ kind: "project.deleted", projectId: "proj-1", timestamp: "2026-08-16T00:03:00.000Z" });
+
+    expect(store.getProject("proj-1")).toBeUndefined();
+    expect(store.listThreads("proj-1")).toEqual([]);
+    expect(store.getThread("thread-1")).toBeUndefined();
+    expect(store.listCheckpoints("thread-1")).toEqual([]);
+
+    // Strictly scoped — a sibling project keeps everything.
+    expect(store.getProject("proj-2")?.title).toBe("Project Two");
+    expect(store.getThread("thread-2")?.title).toBe("Survivor");
+    expect(store.listCheckpoints("thread-2")).toHaveLength(1);
+  });
+
+  it("frees the deleted project's workspaceRoot for reuse, so the same folder can be added again", () => {
+    store.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/reusable",
+      title: "First",
+      timestamp: "2026-08-16T00:00:00.000Z",
+    });
+    store.appendEvent({ kind: "project.deleted", projectId: "proj-1", timestamp: "2026-08-16T00:01:00.000Z" });
+
+    expect(store.getProjectByWorkspaceRoot("/reusable")).toBeUndefined();
+    // The unique index on workspace_root would throw here if the delete
+    // hadn't really removed the row.
+    expect(() =>
+      store.appendEvent({
+        kind: "project.created",
+        projectId: "proj-2",
+        workspaceRoot: "/reusable",
+        title: "Second",
+        timestamp: "2026-08-16T00:02:00.000Z",
+      }),
+    ).not.toThrow();
+    expect(store.getProjectByWorkspaceRoot("/reusable")?.id).toBe("proj-2");
+  });
+
+  it("deleting an unknown project is a no-op, not an error", () => {
+    expect(() =>
+      store.appendEvent({ kind: "project.deleted", projectId: "nope", timestamp: "2026-08-16T00:00:00.000Z" }),
+    ).not.toThrow();
+  });
 });

@@ -28,6 +28,72 @@ function makeGitRepo(prefix) {
   return dir;
 }
 
+/**
+ * Deletes every Project this run created, over the same WS API the UI uses.
+ *
+ * The audit drives a LIVE server the user also uses day to day, so it must
+ * not leave its throwaway /tmp fixtures sitting in their Projects list. This
+ * runs unconditionally in `finally`, so a crashed or timed-out run cleans up
+ * too — that's the whole point, since a failing run is exactly when junk
+ * would otherwise pile up. Records only: the workspace folders are already
+ * removed separately by the fixture teardown.
+ */
+async function deleteAuditProjects(workspaceRoots) {
+  const wsUrl = new URL(BASE_URL);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+  wsUrl.pathname = "/ws";
+
+  const socket = new WebSocket(wsUrl.toString());
+  const pending = new Map();
+  let commandCounter = 0;
+
+  const send = (command) =>
+    new Promise((resolve, reject) => {
+      const commandId = `audit-cleanup-${commandCounter++}`;
+      pending.set(commandId, { resolve, reject });
+      socket.send(JSON.stringify({ ...command, commandId }));
+    });
+
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", () => reject(new Error("cleanup socket failed to open")), { once: true });
+    });
+
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      // A protocol-error carries no commandId (the server couldn't parse the
+      // command well enough to know one), so it can't be matched to a single
+      // caller — fail everything in flight rather than hanging forever, which
+      // is what an older server missing project.delete would otherwise cause.
+      if (message.type === "protocol-error") {
+        for (const [, entry] of pending) entry.reject(new Error(`protocol-error: ${message.message}`));
+        pending.clear();
+        return;
+      }
+      if (message.type !== "command.result") return;
+      const entry = pending.get(message.commandId);
+      if (!entry) return;
+      pending.delete(message.commandId);
+      if (message.ok) entry.resolve(message.result);
+      else entry.reject(new Error(message.error));
+    });
+
+    const projects = await send({ type: "project.list" });
+    const targets = projects.filter((p) => workspaceRoots.includes(p.workspaceRoot));
+    for (const project of targets) {
+      await send({ type: "project.delete", projectId: project.id });
+    }
+    record("US-cleanup", "pass", `removed ${targets.length} audit Project(s) from the live server`);
+  } catch (error) {
+    // Never mask the real audit result with a teardown failure — report it
+    // as its own finding instead.
+    record("US-cleanup", "fail", `could not remove audit Projects: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    socket.close();
+  }
+}
+
 // Baselines are viewport-scoped — desktop and mobile render at completely
 // different dimensions, so comparing a mobile screenshot against a
 // same-named desktop baseline is a guaranteed false-positive dimension
@@ -52,6 +118,9 @@ async function main() {
 
   const gitRepo = makeGitRepo("argusde-audit-git-");
   const nonGitRepo = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-nongit-"));
+  // Declared out here, not at its point of use, so the finally block can
+  // still clean up after a crash partway through the worktree section.
+  let worktreeRepo;
 
   try {
     // ---- US-1: first-run / connection ----
@@ -331,7 +400,7 @@ async function main() {
     }
 
     // ---- US-6: worktree promotion (needs a FRESH thread — promotion is only allowed before any message is sent) ----
-    const worktreeRepo = makeGitRepo("argusde-audit-worktree-");
+    worktreeRepo = makeGitRepo("argusde-audit-worktree-");
     await page.getByRole("button", { name: "Threads" }).click();
     await page.waitForTimeout(300);
     // Re-selecting the closed thread above left selectedProjectId set, so
@@ -406,7 +475,6 @@ async function main() {
     } else {
       record("US-6.2", "fail", "Promote to worktree button not found on a fresh, unmessaged thread");
     }
-    fs.rmSync(worktreeRepo, { recursive: true, force: true });
 
     console.log("\nConsole errors observed during run:", consoleErrors.length);
     if (consoleErrors.length > 0) {
@@ -416,8 +484,13 @@ async function main() {
     }
   } finally {
     await browser.close();
-    fs.rmSync(gitRepo, { recursive: true, force: true });
-    fs.rmSync(nonGitRepo, { recursive: true, force: true });
+    // Server-side records first, while the paths are still known, then the
+    // fixture directories themselves.
+    await deleteAuditProjects([gitRepo, nonGitRepo, worktreeRepo].filter(Boolean));
+    for (const dir of [gitRepo, nonGitRepo, worktreeRepo].filter(Boolean)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}-worktrees`, { recursive: true, force: true });
+    }
   }
 
   const summary = printSummary();
