@@ -100,3 +100,9 @@ export async function screenshotAndDiff(page, storyId, options = {}) {
 export async function waitForToast() {
   // placeholder no-op reserved for future use; keeps helper surface stable
 }
+
+/** US-12.3: no horizontal scrollbar/clipped content at the current viewport. */
+export async function checkNoHorizontalScroll(page, storyId) {
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  record(storyId, overflow <= 1 ? "pass" : "fail", overflow <= 1 ? "no horizontal overflow" : `scrollWidth exceeds clientWidth by ${overflow}px`);
+}
