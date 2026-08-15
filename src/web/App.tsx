@@ -552,7 +552,7 @@ export function App() {
   // window.
   if (!connected) {
     return (
-      <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
+      <div className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
         <p className="text-sm">Connecting…</p>
       </div>
     );
@@ -560,7 +560,7 @@ export function App() {
 
   if (restoring) {
     return (
-      <div className="flex h-screen items-center justify-center bg-neutral-950 text-neutral-400">
+      <div className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
         <p className="text-sm">Restoring your last session…</p>
       </div>
     );
@@ -571,7 +571,7 @@ export function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh flex-col">
       <div className="min-h-0 flex-1">
         {tab === "chat" &&
           (thread ? (
