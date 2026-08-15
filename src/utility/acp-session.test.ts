@@ -291,4 +291,45 @@ describe("AcpSession", () => {
 
     expect(stateChanges).toContainEqual({ kind: "connection-state", state: "disconnected" });
   });
+
+  it("dispose() also tears down a transport that owns a subprocess", async () => {
+    // Closing the ACP connection only closes the child's stdio — the real
+    // claude-agent-acp keeps running through that, so every closed Thread
+    // leaked an agent process until dispose() started reaching through to
+    // the transport itself.
+    const fakeAgent = createFakeAgent({ steps: [] });
+    let disposed = 0;
+    const session = new AcpSession({
+      name: "argusde-test",
+      cwd: "/tmp/argusde-test",
+      createTransport: () => Object.assign(fakeAgent, { dispose: () => void disposed++ }),
+    });
+
+    await session.start();
+    expect(disposed).toBe(0);
+
+    await session.dispose();
+
+    expect(disposed).toBe(1);
+  });
+
+  it("restartSession() disposes the outgoing transport before spawning its replacement", async () => {
+    // Promotion-to-worktree restarts the session against a new cwd. Without
+    // this, each promotion stranded the pre-promotion agent process.
+    const disposals: number[] = [];
+    let created = 0;
+    const session = new AcpSession({
+      name: "argusde-test",
+      cwd: "/tmp/argusde-test",
+      createTransport: () => {
+        const id = created++;
+        return Object.assign(createFakeAgent({ steps: [] }), { dispose: () => disposals.push(id) });
+      },
+    });
+
+    await session.start();
+    await session.restartSession();
+
+    expect(disposals).toEqual([0]);
+  });
 });

@@ -22,6 +22,7 @@ import type {
   ToolCallSummary,
   ToolCallUpdateSummary,
 } from "../shared/acp-events.js";
+import { isDisposableStream } from "./spawn-agent-process.js";
 
 export interface AcpSessionOptions {
   /** Human-readable client name reported to the agent during initialize. */
@@ -95,6 +96,8 @@ export class AcpSession extends EventEmitter {
   private readonly options: AcpSessionOptions;
   private state: ConnectionState = "disconnected";
   private connection: ClientConnection | undefined;
+  /** Retained solely so closeConnection() can kill the subprocess it owns. */
+  private transport: Stream | AgentApp | undefined;
   private activeSession: ActiveSession | undefined;
   private pendingPermissions = new Map<string, PendingPermissionRequest>();
   private permissionCounter = 0;
@@ -134,6 +137,7 @@ export class AcpSession extends EventEmitter {
       });
 
     const transport = this.options.createTransport();
+    this.transport = transport;
     const connection = app.connect(transport as never);
     this.connection = connection;
 
@@ -310,6 +314,14 @@ export class AcpSession extends EventEmitter {
       this.connection.close();
       this.connection = undefined;
     }
+    // Closing the connection only closes the agent subprocess's stdio, which
+    // the real claude-agent-acp happily survives. The transport owns the
+    // process, so it's the only thing that can actually end it — skipped for
+    // in-process test agents, which have nothing to kill.
+    if (isDisposableStream(this.transport)) {
+      this.transport.dispose();
+    }
+    this.transport = undefined;
     this.activeSession = undefined;
     if (this.state !== "disconnected") {
       this.setState("disconnected");
