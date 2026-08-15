@@ -89,4 +89,11 @@ describe("ProjectPicker", () => {
     fireEvent.click(screen.getByRole("button", { name: /type a path manually/i }));
     expect(screen.getByRole("button", { name: /creating/i })).toBeDisabled();
   });
+
+  it("shows an error message when project creation fails", () => {
+    renderPicker({ error: "Command failed: git add -A -- .\nfatal: not a git repository" });
+
+    fireEvent.click(screen.getByRole("button", { name: /new project/i }));
+    expect(screen.getByText(/not a git repository/i)).toBeInTheDocument();
+  });
 });

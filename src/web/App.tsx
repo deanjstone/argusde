@@ -107,6 +107,7 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
   const [creatingProject, setCreatingProject] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | undefined>(undefined);
   const [creatingThread, setCreatingThread] = useState(false);
   // Guards against an in-flight fetchDiff call overwriting a *later* one's
   // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
@@ -379,6 +380,7 @@ export function App() {
     const client = clientRef.current;
     if (!client || creatingProject) return;
     setCreatingProject(true);
+    setCreateProjectError(undefined);
     try {
       const { projectId } = await client.sendCommand<{ projectId: string }>({
         type: "project.create",
@@ -392,9 +394,13 @@ export function App() {
       });
       await loadThreadHistoryAndBecomeActive(threadId);
     } catch (error) {
-      setChatState((s) =>
-        chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
-      );
+      // Shown directly on the Threads tab (ProjectPicker's own error prop),
+      // not just dispatched into chatState.connectionError — that field is
+      // only ever rendered inside ChatView, which this screen never reaches
+      // when creation itself is what failed (no active Thread to show a
+      // Chat tab for). Without this, a failure here looked exactly like
+      // tapping Select this folder / Create did nothing at all.
+      setCreateProjectError(error instanceof Error ? error.message : String(error));
     } finally {
       setCreatingProject(false);
     }
@@ -618,6 +624,7 @@ export function App() {
               onCreateProject={(workspaceRoot) => void handleCreateProject(workspaceRoot)}
               listDirectory={listDirectory}
               creating={creatingProject}
+              error={createProjectError}
             />
           ) : (
             <ThreadList
