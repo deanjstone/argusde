@@ -778,14 +778,23 @@ async function main() {
           });
         });
 
-        const failureVisible = async () =>
+        // Asserts the banner names *this* command, not merely that some
+        // injected error is on screen. Every one of these lands in the same
+        // always-visible banner, and clearing it is a React state update
+        // racing this poll — matching only the shared prefix would let a
+        // stale "promote" message satisfy the "send" check.
+        const failureVisible = async (commandType) =>
           matrixPage
-            .waitForFunction((needle) => document.body.innerText.includes(needle), INJECTED, { timeout: 8000 })
+            .waitForFunction((needle) => document.body.innerText.includes(needle), `${INJECTED}: ${commandType}`, { timeout: 8000 })
             .then(() => true)
             .catch(() => false);
+        // Waits for the banner to actually be gone before the next check, so
+        // no assertion can be satisfied by the previous one's message.
         const clearFailure = async () => {
           failing.clear();
-          await matrixPage.waitForTimeout(200);
+          await matrixPage
+            .waitForFunction((needle) => !document.body.innerText.includes(needle), INJECTED, { timeout: 8000 })
+            .catch(() => undefined);
         };
 
         await matrixPage.goto(BASE_URL);
@@ -794,7 +803,7 @@ async function main() {
         // fs.list-directory — the folder browser's own failure path.
         failing.add("fs.list-directory");
         await matrixPage.getByRole("button", { name: /^up$/i }).click();
-        record("US-14.1b", (await failureVisible()) ? "pass" : "fail", "directory listing failure is visibly surfaced");
+        record("US-14.1b", (await failureVisible("fs.list-directory")) ? "pass" : "fail", "directory listing failure is visibly surfaced");
         await clearFailure();
 
         // thread.create — reached via first-run, which creates a project then a thread.
@@ -804,7 +813,7 @@ async function main() {
         await matrixPage.getByRole("button", { name: /type a path manually/i }).click();
         await matrixPage.getByLabel(/workspace path/i).fill(matrixRepo);
         await matrixPage.getByRole("button", { name: /^start$/i }).click();
-        record("US-14.1c", (await failureVisible()) ? "pass" : "fail", "thread creation failure is visibly surfaced");
+        record("US-14.1c", (await failureVisible("thread.create")) ? "pass" : "fail", "thread creation failure is visibly surfaced");
         await clearFailure();
 
         // Now let a real thread through, and fail the thread-scoped actions on it.
@@ -819,7 +828,7 @@ async function main() {
           const other = values.find((v) => v !== current);
           if (other) {
             await matrixMode.selectOption(other);
-            record("US-14.1d", (await failureVisible()) ? "pass" : "fail", "mode-switch failure is visibly surfaced");
+            record("US-14.1d", (await failureVisible("thread.set-mode")) ? "pass" : "fail", "mode-switch failure is visibly surfaced");
           } else {
             record("US-14.1d", "skip", "agent advertises a single mode — nothing to switch to");
           }
@@ -830,26 +839,47 @@ async function main() {
 
         failing.add("thread.promote-to-worktree");
         await matrixPage.getByRole("button", { name: /promote to worktree/i }).click();
-        record("US-14.1e", (await failureVisible()) ? "pass" : "fail", "worktree-promotion failure is visibly surfaced");
+        record("US-14.1e", (await failureVisible("thread.promote-to-worktree")) ? "pass" : "fail", "worktree-promotion failure is visibly surfaced");
         await clearFailure();
 
         failing.add("thread.send-message");
         const matrixInput = matrixPage.getByPlaceholder(/message/i);
         await matrixInput.fill("this send is going to fail");
         await matrixInput.press("Enter");
-        record("US-14.1f", (await failureVisible()) ? "pass" : "fail", "send-message failure is visibly surfaced");
+        record("US-14.1f", (await failureVisible("thread.send-message")) ? "pass" : "fail", "send-message failure is visibly surfaced");
         await clearFailure();
 
+        // revert has its own distinct success path (closes the diff panel,
+        // refreshes the strip), so its failure path is worth proving rather
+        // than assuming the others cover it. It needs a real completed turn
+        // to target — the send above was intercepted, so let one through.
+        const realSend = matrixPage.getByPlaceholder(/message/i);
+        await realSend.fill("Reply with only the word OK, no tools, no explanation.");
+        await realSend.press("Enter");
+        const gotTurn = await matrixPage
+          .waitForSelector('button:has-text("Turn 1")', { timeout: 90000 })
+          .then(() => true)
+          .catch(() => false);
+        if (gotTurn) {
+          await matrixPage.getByRole("button", { name: /^turn 1/i }).click();
+          await matrixPage.waitForSelector("text=/revert to this checkpoint/i", { timeout: 10000 });
+          failing.add("thread.revert-checkpoint");
+          await matrixPage.getByRole("button", { name: /revert to this checkpoint/i }).click();
+          record("US-14.1h", (await failureVisible("thread.revert-checkpoint")) ? "pass" : "fail", "checkpoint-revert failure is visibly surfaced");
+          await clearFailure();
+        } else {
+          record("US-14.1h", "skip", "no turn completed within 90s, so there was no checkpoint to attempt a revert against");
+        }
+
+        await scanA11y(matrixPage, "US-14.1");
+        await shot(matrixPage, "US-14.1-action-failure");
+
+        // Closing ends the thread, so it goes last — everything above needs
+        // a live one.
         failing.add("thread.close");
         await matrixPage.getByRole("button", { name: /^close thread$/i }).click();
-        record("US-14.1g", (await failureVisible()) ? "pass" : "fail", "thread-close failure is visibly surfaced");
+        record("US-14.1g", (await failureVisible("thread.close")) ? "pass" : "fail", "thread-close failure is visibly surfaced");
         await clearFailure();
-
-        // thread.revert-checkpoint needs a turn to revert to, which needs a
-        // real agent round trip. The send above was intercepted, so no turn
-        // ever completed on this thread.
-        record("US-14.1h", "skip", "revert needs a completed turn to target; provoking one here would cost a second live agent round trip purely to re-assert the same error path the other six already prove");
-        await shot(matrixPage, "US-14.1-action-failure");
       } finally {
         await matrixPage.close();
       }
@@ -877,14 +907,48 @@ async function main() {
         });
         const win = await app.firstWindow();
 
-        await win.waitForSelector("text=/not connected/i", { timeout: 20000 });
+        await win.waitForSelector('input[name="server-url"]', { timeout: 20000 });
         const onConnectScreen = win.url().includes("connect-screen");
-        const hasUrlField = (await win.$('input[name="server-url"]')) !== null;
         const hasConnectButton = (await win.$('button:has-text("Connect")')) !== null;
         record(
           "US-1.4a",
-          onConnectScreen && hasUrlField && hasConnectButton ? "pass" : "fail",
-          `unreachable server shows the connect screen with a URL field and Connect button (screen: ${onConnectScreen}, field: ${hasUrlField}, button: ${hasConnectButton})`,
+          onConnectScreen && hasConnectButton ? "pass" : "fail",
+          `unreachable server falls back to the connect screen with a URL field and Connect button (screen: ${onConnectScreen}, button: ${hasConnectButton})`,
+        );
+
+        // Deliberately asserts #error, not the screen's static "Not
+        // connected. Enter the address…" copy — that <p> is hardcoded in
+        // index.html and renders unconditionally, so keying off it would pass
+        // even if connect-failure reporting were entirely broken.
+        const errorText = async () => (await win.textContent("#error").catch(() => ""))?.trim() ?? "";
+        // Waits for the field to empty *then* refill, so an assertion can
+        // never be satisfied by the previous attempt's message. The connect
+        // screen clears synchronously on submit, but relying on that timing
+        // is exactly the stale-read trap worth designing out.
+        const awaitFreshError = async () => {
+          await win
+            .waitForFunction(() => (document.querySelector("#error")?.textContent ?? "").trim().length === 0, undefined, { timeout: 10000 })
+            .catch(() => undefined);
+          return win
+            .waitForFunction(() => (document.querySelector("#error")?.textContent ?? "").trim().length > 0, undefined, { timeout: 20000 })
+            .then(() => true)
+            .catch(() => false);
+        };
+
+        await win.fill('input[name="server-url"]', "http://127.0.0.1:59998/");
+        await win.click('button:has-text("Connect")');
+        const reportedUnreachable = await awaitFreshError();
+        record("US-1.4c", reportedUnreachable ? "pass" : "fail", reportedUnreachable ? `an unreachable server reports a real error: "${await errorText()}"` : "connecting to an unreachable server surfaced nothing in #error");
+
+        // ---- US-14.2: a malformed URL resolves to a clear error, never a crash ----
+        await win.fill('input[name="server-url"]', "not-a-url");
+        await win.click('button:has-text("Connect")');
+        const handledMalformed = await awaitFreshError();
+        const windowSurvived = !win.isClosed() && win.url().includes("connect-screen");
+        record(
+          "US-14.2",
+          handledMalformed && windowSurvived ? "pass" : "fail",
+          handledMalformed && windowSurvived ? `a malformed URL is rejected with a visible error and the app stays up: "${await errorText()}"` : `malformed URL handling failed (error shown: ${handledMalformed}, still on connect screen: ${windowSurvived})`,
         );
 
         // Hands off to the shared web UI against the real live server — the
@@ -909,8 +973,11 @@ async function main() {
     // API_VERSION. That's inherently synthetic — there's no live-server
     // signal to gain, which is the only thing this regime adds over the
     // hermetic suite, and that suite already asserts the message names both
-    // versions.
-    record("US-1.5", "skip", "version-mismatch needs a deliberately-wrong-version server, which gains nothing from running live; test/electron-connect-screen.test.ts asserts it directly");
+    // versions. Recorded only on the desktop pass, matching US-1.4's gating:
+    // both are Electron-only chrome.
+    if (VIEWPORT === "desktop") {
+      record("US-1.5", "skip", "version-mismatch needs a deliberately-wrong-version server, which gains nothing from running live; test/electron-connect-screen.test.ts asserts it directly");
+    }
 
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server

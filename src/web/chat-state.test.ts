@@ -43,15 +43,38 @@ describe("chatStateReducer", () => {
   it("clears a previous error when a new attempt starts, so a one-off failure doesn't stick forever", () => {
     // The error banner is now always visible when set, so nothing else would
     // ever take a stale message down.
-    const state = reduceAll([{ kind: "protocol-error", message: "promote failed" }, { kind: "action-retried" }]);
+    const state = reduceAll([{ kind: "protocol-error", message: "promote failed" }, { kind: "action-attempted" }]);
     expect(state.connectionError).toBeUndefined();
+  });
+
+  it("clearing an error leaves a pending permission request alone", () => {
+    // handleRespondPermission clears the banner too, and must not take the
+    // prompt down with it — the prompt has its own permission-responded path.
+    const withRequest = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "permission-request",
+          request: {
+            requestId: "perm-1",
+            toolCall: { toolCallId: "tc-1", content: [] },
+            options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+          },
+        },
+      },
+      { kind: "protocol-error", message: "earlier failure" },
+      { kind: "action-attempted" },
+    ]);
+    expect(withRequest.connectionError).toBeUndefined();
+    expect(withRequest.pendingPermissionRequest?.requestId).toBe("perm-1");
   });
 
   it("clearing an error leaves the rest of the conversation untouched", () => {
     const state = reduceAll([
       { kind: "user-message-sent", text: "hello" },
       { kind: "protocol-error", message: "promote failed" },
-      { kind: "action-retried" },
+      { kind: "action-attempted" },
     ]);
     expect(state.connectionError).toBeUndefined();
     expect(state.timeline).toHaveLength(1);

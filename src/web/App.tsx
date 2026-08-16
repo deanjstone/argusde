@@ -438,7 +438,7 @@ export function App() {
     const client = clientRef.current;
     if (!client || !selectedProjectId || creatingThread) return;
     setCreatingThread(true);
-    setChatState((s) => chatStateReducer(s, { kind: "action-retried" }));
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     try {
       const { threadId } = await client.sendCommand<{ threadId: string }>({
         type: "thread.create",
@@ -458,7 +458,7 @@ export function App() {
   async function handleSend(text: string) {
     const client = clientRef.current;
     if (!client || !thread) return;
-    setChatState((s) => chatStateReducer(chatStateReducer(s, { kind: "action-retried" }), { kind: "user-message-sent", text }));
+    setChatState((s) => chatStateReducer(chatStateReducer(s, { kind: "action-attempted" }), { kind: "user-message-sent", text }));
     try {
       await client.sendCommand({ type: "thread.send-message", threadId: thread.threadId, text });
     } catch (error) {
@@ -509,7 +509,7 @@ export function App() {
   function handleSetMode(modeId: string) {
     const client = clientRef.current;
     if (!client || !thread) return;
-    setChatState((s) => chatStateReducer(s, { kind: "action-retried" }));
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     client.sendCommand({ type: "thread.set-mode", threadId: thread.threadId, modeId }).catch((error) => {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),
@@ -521,7 +521,7 @@ export function App() {
     const client = clientRef.current;
     if (!client || !thread || promoting) return;
     setPromoting(true);
-    setChatState((s) => chatStateReducer(s, { kind: "action-retried" }));
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     try {
       const result = await client.sendCommand<{ worktreePath: string }>({
         type: "thread.promote-to-worktree",
@@ -541,7 +541,7 @@ export function App() {
     const client = clientRef.current;
     if (!client || !thread || activeTurn === undefined || reverting) return;
     setReverting(true);
-    setChatState((s) => chatStateReducer(s, { kind: "action-retried" }));
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     try {
       await client.sendCommand({ type: "thread.revert-checkpoint", threadId: thread.threadId, turn: activeTurn });
       handleCloseDiff(); // the diff just shown is now stale — the workspace has moved on
@@ -559,7 +559,7 @@ export function App() {
     const client = clientRef.current;
     if (!client || !thread || closing || thread.closedAt) return;
     setClosing(true);
-    setChatState((s) => chatStateReducer(s, { kind: "action-retried" }));
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     try {
       await client.sendCommand({ type: "thread.close", threadId: thread.threadId });
       setThread(null);
@@ -576,6 +576,7 @@ export function App() {
   function handleRespondPermission(requestId: string, outcome: PermissionOutcome) {
     const client = clientRef.current;
     if (!client || !thread) return;
+    setChatState((s) => chatStateReducer(s, { kind: "action-attempted" }));
     client.sendCommand({ type: "thread.respond-permission", threadId: thread.threadId, requestId, outcome }).catch((error) => {
       // The permission prompt is already cleared optimistically below — if
       // the send actually failed, at least surface it instead of leaving
