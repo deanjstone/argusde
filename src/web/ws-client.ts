@@ -16,6 +16,13 @@ interface PendingCommand {
 }
 
 /**
+ * Surfaced directly to the user by App.tsx's error paths, so it says what
+ * happened *and* what to do — the underlying failures are a raw
+ * DOMException or (in Node) no error at all.
+ */
+const CONNECTION_LOST_MESSAGE = "Lost the connection to the ArgusDE server. Check it's still running, then reload.";
+
+/**
  * Browser-side counterpart to the server's WS API (src/server/ws/ws-server.ts).
  * Runs against the standard global `WebSocket` (available natively in
  * browsers and in Node 22+, which is what this module's own tests run
@@ -62,8 +69,28 @@ export class WsClient {
   sendCommand<T = unknown>(command: OutgoingCommand): Promise<T> {
     const commandId = `cmd-${++this.commandCounter}-${Date.now()}`;
     return new Promise<T>((resolve, reject) => {
+      // Sending on a dead socket has to be rejected here, before anything is
+      // registered as pending. The two runtimes fail differently and both
+      // are bad: browsers throw a raw DOMException ("WebSocket is already in
+      // CLOSING or CLOSED state"), which App.tsx renders verbatim to the
+      // user; Node's WebSocket doesn't throw at all, so the command simply
+      // never settles and the UI sits on its in-flight spinner forever.
+      if (this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error(CONNECTION_LOST_MESSAGE));
+        return;
+      }
+
       this.pending.set(commandId, { resolve: resolve as (result: unknown) => void, reject });
-      this.socket.send(JSON.stringify({ ...command, commandId }));
+      try {
+        this.socket.send(JSON.stringify({ ...command, commandId }));
+      } catch {
+        // The socket can close between the readyState check above and the
+        // send itself. Drop the entry rather than leaving one that nothing
+        // will ever settle — a later close sweep would reject an
+        // already-rejected promise.
+        this.pending.delete(commandId);
+        reject(new Error(CONNECTION_LOST_MESSAGE));
+      }
     });
   }
 

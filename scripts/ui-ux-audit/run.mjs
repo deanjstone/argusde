@@ -722,14 +722,18 @@ async function main() {
         await dropPage.getByLabel(/workspace path/i).fill(gitRepo);
         await dropPage.getByRole("button", { name: /^start$/i }).click();
 
-        // The failure has to become visible — the specific wording is the
-        // client's, so this only asserts that *something* surfaced and that
-        // it didn't sit on the in-flight spinner forever.
+        // Asserts the *shape* of the outcome, not exact copy: the in-flight
+        // spinner must clear and a connection failure must be named. Matching
+        // the literal wording would make this a change-detector — an earlier
+        // version did exactly that and failed the moment the message was
+        // improved from a raw DOMException to something readable.
         const surfacedError = await dropPage
           .waitForFunction(
             () => {
               const text = document.body.innerText;
-              return /closed|error|failed|not connected/i.test(text) && !/^\s*Starting…\s*$/.test(text);
+              const stillSubmitting = /Starting…/.test(text);
+              const namesAConnectionFailure = /(lost|closed|dropped|failed|error|unavailable|not connected).{0,60}(connection|server)|connection.{0,60}(lost|closed|dropped|failed|error)/i.test(text);
+              return !stillSubmitting && namesAConnectionFailure;
             },
             undefined,
             { timeout: 15000 },
