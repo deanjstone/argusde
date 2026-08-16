@@ -76,6 +76,7 @@ export function App() {
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
   const [diff, setDiff] = useState<DiffState>(EMPTY_DIFF);
   const [activeTurn, setActiveTurn] = useState<number | undefined>(undefined);
+  const [diffRange, setDiffRange] = useState<{ from: number; to: number } | undefined>(undefined);
   const [promoting, setPromoting] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -490,6 +491,7 @@ export function App() {
 
   function handleSelectTurn(turn: number) {
     setActiveTurn(turn);
+    setDiffRange({ from: turn - 1, to: turn });
     void fetchDiff(turn - 1, turn);
   }
 
@@ -497,13 +499,27 @@ export function App() {
     const latest = checkpoints.at(-1);
     if (!latest || latest.turn === 0) return;
     setActiveTurn(latest.turn);
+    setDiffRange({ from: 0, to: latest.turn });
     void fetchDiff(0, latest.turn);
+  }
+
+  /**
+   * An arbitrary pair chosen from the diff panel's own pickers. activeTurn
+   * follows the right-hand end, so the strip keeps highlighting the turn
+   * being compared *to* — and revert, which targets activeTurn, still means
+   * "restore to the checkpoint shown on the right".
+   */
+  function handleChangeDiffRange(next: { from: number; to: number }) {
+    setDiffRange(next);
+    setActiveTurn(next.to);
+    void fetchDiff(next.from, next.to);
   }
 
   function handleCloseDiff() {
     diffRequestRef.current++; // invalidate any in-flight fetchDiff so it can't resurrect the panel after close
     setDiff(EMPTY_DIFF);
     setActiveTurn(undefined);
+    setDiffRange(undefined);
   }
 
   function handleSetMode(modeId: string) {
@@ -635,6 +651,9 @@ export function App() {
               onSelectTurn={handleSelectTurn}
               onSinceStart={handleSinceStart}
               activeTurn={activeTurn}
+              availableTurns={checkpoints.map((c) => c.turn)}
+              diffRange={diffRange}
+              onChangeDiffRange={handleChangeDiffRange}
               diff={diff}
               onCloseDiff={handleCloseDiff}
               onRevert={() => void handleRevertCheckpoint()}

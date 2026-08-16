@@ -63,9 +63,61 @@ describe("DiffView", () => {
   });
 
   it("disables and relabels the revert control while reverting is in progress", () => {
-    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={() => {}} reverting />);
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} reverting onRevert={() => {}} />);
 
     const button = screen.getByRole("button", { name: /reverting/i });
     expect(button).toBeDisabled();
+  });
+
+  describe("comparing an arbitrary pair of checkpoints", () => {
+    const TURNS = [0, 1, 2, 3];
+    const withRange = (overrides = {}) => ({
+      diff: SAMPLE_DIFF,
+      loading: false,
+      error: undefined,
+      onClose: () => {},
+      availableTurns: TURNS,
+      range: { from: 1, to: 2 },
+      onChangeRange: vi.fn(),
+      ...overrides,
+    });
+
+    it("renders no range controls when the caller doesn't supply them", () => {
+      render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} />);
+      expect(screen.queryByLabelText(/compare from/i)).not.toBeInTheDocument();
+    });
+
+    it("shows both ends of the current comparison", () => {
+      const props = withRange();
+      render(<DiffView {...props} />);
+
+      expect((screen.getByLabelText(/compare from/i) as HTMLSelectElement).value).toBe("1");
+      expect((screen.getByLabelText(/compare to/i) as HTMLSelectElement).value).toBe("2");
+    });
+
+    it("offers every captured checkpoint at both ends, so any pair can be compared", () => {
+      render(<DiffView {...withRange()} />);
+
+      const optionValues = (select: HTMLElement) =>
+        Array.from(select.querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
+      expect(optionValues(screen.getByLabelText(/compare from/i))).toEqual(["0", "1", "2", "3"]);
+      expect(optionValues(screen.getByLabelText(/compare to/i))).toEqual(["0", "1", "2", "3"]);
+    });
+
+    it("requests a new comparison when either end changes", () => {
+      const onChangeRange = vi.fn();
+      render(<DiffView {...withRange({ onChangeRange })} />);
+
+      fireEvent.change(screen.getByLabelText(/compare from/i), { target: { value: "0" } });
+      expect(onChangeRange).toHaveBeenCalledWith({ from: 0, to: 2 });
+
+      fireEvent.change(screen.getByLabelText(/compare to/i), { target: { value: "3" } });
+      expect(onChangeRange).toHaveBeenCalledWith({ from: 1, to: 3 });
+    });
+
+    it("labels turn 0 as the thread's starting point, not a turn number", () => {
+      render(<DiffView {...withRange()} />);
+      expect(screen.getAllByRole("option", { name: /start/i }).length).toBeGreaterThan(0);
+    });
   });
 });

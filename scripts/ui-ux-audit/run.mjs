@@ -330,6 +330,31 @@ async function main() {
       const showsRealDiff = /revert-marker/.test(diffPanelText) && !/no changes/i.test(diffPanelText);
       record("US-5.4", showsRealDiff ? "pass" : "fail", showsRealDiff ? "a turn with real changes renders diff content, not the empty-state text" : `diff panel did not show the expected change (text: ${diffPanelText.slice(0, 120)})`);
 
+      // ---- US-5.3b (spec #33 story 10): any two checkpoints can be compared ----
+      // The strip's taps only ever produce turn N-1 -> N and 0 -> latest.
+      // Comparing a non-adjacent pair is the case the story exists for, and
+      // it's checked by content: turn 1 captured ALPHA and turn 2 BETA, so a
+      // 1 -> 2 comparison must show that transition, not just any diff.
+      const fromPicker = page.getByLabel(/compare from/i);
+      if (await fromPicker.count()) {
+        await fromPicker.selectOption("1");
+        await page.getByLabel(/compare to/i).selectOption("2");
+        await page.waitForTimeout(2000);
+        const rangeDiff = (await page.textContent("body")) ?? "";
+        const showsTransition = /-ALPHA/.test(rangeDiff) && /\+BETA/.test(rangeDiff);
+        record(
+          "US-5.3b",
+          showsTransition ? "pass" : "fail",
+          showsTransition ? "an arbitrary checkpoint pair (turn 1 vs turn 2) diffs to exactly that range's change" : "comparing turn 1 with turn 2 did not show the ALPHA -> BETA transition those checkpoints captured",
+        );
+        // Back to the turn-1 view the revert checks below expect.
+        await page.getByLabel(/compare from/i).selectOption("0");
+        await page.getByLabel(/compare to/i).selectOption("1");
+        await page.waitForTimeout(1500);
+      } else {
+        record("US-5.3b", "fail", "no checkpoint-comparison pickers rendered — arbitrary pairs can't be reached from the UI");
+      }
+
       // ---- US-5.5: reverting actually rewrites the working tree on disk ----
       // Turn 1 captured ALPHA, turn 2 captured BETA. Reverting to turn 1 must
       // put ALPHA back on disk — the whole point of the feature, and the one

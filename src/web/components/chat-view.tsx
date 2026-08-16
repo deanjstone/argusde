@@ -5,7 +5,7 @@ import type { ChatState, TimelineItem } from "../chat-state.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
-import { DiffView } from "./diff-view.js";
+import { DiffView, type DiffRange } from "./diff-view.js";
 import { ModeSwitcher } from "./mode-switcher.js";
 
 export interface DiffState {
@@ -26,6 +26,10 @@ export interface ChatViewProps {
   onCloseDiff?: () => void;
   onRevert?: () => void;
   reverting?: boolean;
+  /** Every captured turn, so the diff panel can offer any pair for comparison. */
+  availableTurns?: number[];
+  diffRange?: DiffRange;
+  onChangeDiffRange?: (range: DiffRange) => void;
   onSetMode?: (modeId: string) => void;
   worktreePath?: string | null;
   onPromoteToWorktree?: () => void;
@@ -97,6 +101,9 @@ export function ChatView({
   onCloseDiff = () => {},
   onRevert,
   reverting = false,
+  availableTurns,
+  diffRange,
+  onChangeDiffRange,
   onSetMode = () => {},
   worktreePath = null,
   onPromoteToWorktree = () => {},
@@ -179,7 +186,17 @@ export function ChatView({
       )}
 
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
-      <DiffView diff={diff.text} loading={diff.loading} error={diff.error} onClose={onCloseDiff} onRevert={onRevert} reverting={reverting} />
+      <DiffView
+        diff={diff.text}
+        loading={diff.loading}
+        error={diff.error}
+        onClose={onCloseDiff}
+        onRevert={onRevert}
+        reverting={reverting}
+        availableTurns={availableTurns}
+        range={diffRange}
+        onChangeRange={onChangeDiffRange}
+      />
 
       <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {state.timeline.map((item) => (
