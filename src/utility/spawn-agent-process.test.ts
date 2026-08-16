@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,8 +33,23 @@ async function readPid(pidFile: string): Promise<number> {
 }
 
 describe("spawnAgentProcessTransport", () => {
+  // Each test needs its own directory for the child's pid file. Tracked and
+  // removed in afterEach — without it every run left another
+  // argusde-spawn-test-* directory behind in the system temp dir forever.
+  const tempDirs: string[] = [];
+
+  function makePidFile(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-spawn-test-"));
+    tempDirs.push(dir);
+    return path.join(dir, "pid");
+  }
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("dispose() terminates the spawned agent process, even one that ignores stdin EOF", async () => {
-    const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "argusde-spawn-test-")), "pid");
+    const pidFile = makePidFile();
     const transport = spawnAgentProcessTransport({ command: process.execPath, args: [FIXTURE, pidFile] });
 
     const pid = await readPid(pidFile);
@@ -49,7 +64,7 @@ describe("spawnAgentProcessTransport", () => {
   });
 
   it("dispose() is safe to call twice", async () => {
-    const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "argusde-spawn-test-")), "pid");
+    const pidFile = makePidFile();
     const transport = spawnAgentProcessTransport({ command: process.execPath, args: [FIXTURE, pidFile] });
 
     const pid = await readPid(pidFile);
