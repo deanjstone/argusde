@@ -1,10 +1,11 @@
 // AFK UI/UX audit regime driver. Runs against a LIVE server (default
 // http://127.0.0.1:4870/) per docs/testing/ui-ux-user-stories.md.
 // Usage: node scripts/ui-ux-audit/run.mjs [--viewport=desktop|mobile] [--url=http://...]
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium, devices } from "playwright";
 import { record, scanA11y, screenshotAndDiff, printSummary, checkNoHorizontalScroll } from "./helpers.mjs";
 
@@ -197,6 +198,34 @@ async function main() {
     await shot(page, "US-2.5-chat-empty");
     await checkNoHorizontalScroll(page, "US-12.3-chat-empty");
 
+    // ---- US-5.1: on a thread with only the turn-0 baseline, the strip shows
+    // a bare "Start" marker and no Turn buttons that would imply work already
+    // happened ----
+    const startMarkers = await page.locator("text=/^Start$/").count();
+    const prematureTurnButtons = await page.getByRole("button", { name: /^turn \d/i }).count();
+    record(
+      "US-5.1",
+      startMarkers === 1 && prematureTurnButtons === 0 ? "pass" : "fail",
+      `fresh thread strip: ${startMarkers} Start marker(s), ${prematureTurnButtons} Turn button(s) (expected 1 and 0)`,
+    );
+
+    // ---- US-6.1: "Promote to worktree" is offered before anything is sent ----
+    const promoteOfferedBeforeSend = await page.getByRole("button", { name: /promote to worktree/i }).count();
+    record("US-6.1a", promoteOfferedBeforeSend > 0 ? "pass" : "fail", `promote control offered on a fresh, unmessaged thread: ${promoteOfferedBeforeSend > 0}`);
+
+    // ---- US-12.1: the bottom tab bar is fully within the viewport ----
+    // The h-dvh fix's automatable half — a fixed-viewport check can prove the
+    // bar isn't pushed off-screen at rest, though NOT that it survives a real
+    // mobile browser's collapsing toolbar (US-12.2, real-device-only).
+    const tabBarBox = await page.getByRole("button", { name: "Chat" }).boundingBox();
+    const viewportHeight = page.viewportSize()?.height ?? 0;
+    const tabBarFullyVisible = tabBarBox !== null && tabBarBox.y >= 0 && tabBarBox.y + tabBarBox.height <= viewportHeight + 1;
+    record(
+      "US-12.1",
+      tabBarFullyVisible ? "pass" : "fail",
+      tabBarBox ? `tab bar bottom edge at ${Math.round(tabBarBox.y + tabBarBox.height)}px vs viewport ${viewportHeight}px` : "tab bar not found",
+    );
+
     // ---- US-10: PWA installability (manifest + service worker) ----
     const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
     if (manifestHref) {
@@ -222,6 +251,14 @@ async function main() {
     record("US-10.2", swState === "active" ? "pass" : "fail", `service worker state: ${swState}`);
 
     // ---- US-4: chat ----
+    // A checkpoint captures whatever is on disk when the turn completes, so
+    // the workspace is staged directly here rather than asking the agent to
+    // write exact file contents. That makes the revert assertions below
+    // depend on the checkpoint machinery alone, not on the agent choosing to
+    // use a file-write tool — and costs no extra agent turns.
+    const revertMarker = path.join(gitRepo, "revert-marker.txt");
+    fs.writeFileSync(revertMarker, "ALPHA\n");
+
     const messageInput = page.getByPlaceholder(/message/i);
     await messageInput.fill("Reply with only the word OK, no tools, no explanation.");
     await messageInput.press("Enter");
@@ -236,11 +273,19 @@ async function main() {
     await scanA11y(page, "US-4.2");
     await shot(page, "US-4.2-chat-with-reply");
 
+    // ---- US-6.1: the promote control is gone once a message has been sent ----
+    const promoteOfferedAfterSend = await page.getByRole("button", { name: /promote to worktree/i }).count();
+    record("US-6.1b", promoteOfferedAfterSend === 0 ? "pass" : "fail", promoteOfferedAfterSend === 0 ? "promote control correctly withdrawn after the first message" : "promote control still offered after a message was sent");
+
     // ---- US-14.3: rapid double-tap on Send never produces a duplicate message ----
     // handleSubmit clears `text` synchronously on the first submit, so a
     // same-tick second click sees an empty input and no-ops — this is
     // exactly the behavior US-14.3 requires, verified end-to-end rather
     // than just read out of the component.
+    // Second distinct on-disk state, captured by turn 2 below — reverting to
+    // turn 1 later must bring ALPHA back.
+    fs.writeFileSync(revertMarker, "BETA\n");
+
     await messageInput.fill("PING-DEDUP-CHECK");
     const sendBtn = page.getByRole("button", { name: "Send" });
     await Promise.all([sendBtn.click(), sendBtn.click()]);
@@ -248,6 +293,22 @@ async function main() {
     const pingCount = await page.locator("text=/PING-DEDUP-CHECK/").count();
     record("US-14.3", pingCount === 1 ? "pass" : "fail", `rapid double-tap on Send produced ${pingCount} instance(s) of the message (expected 1)`);
     await page.waitForSelector('button:has-text("Turn 2")', { timeout: 60000 }).catch(() => {});
+
+    // ---- US-5.2: turn numbering is 1:1 with real completed turns ----
+    // Two messages have been sent, so exactly Turn 1 and Turn 2 must exist —
+    // no gaps, no phantom extra turn. Note turn 1 changed no files by the
+    // agent's own hand, which is the case US-5.2 specifically calls out.
+    const turnLabels = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("button"))
+        .map((b) => b.textContent.trim())
+        .filter((t) => /^Turn \d/.test(t))
+        .map((t) => t.split(/\s+/).slice(0, 2).join(" ")),
+    );
+    record(
+      "US-5.2",
+      turnLabels.join(",") === "Turn 1,Turn 2" ? "pass" : "fail",
+      `after 2 completed turns the strip shows: ${turnLabels.join(", ") || "(none)"} (expected Turn 1, Turn 2)`,
+    );
 
     // ---- US-5: checkpoints ----
     const turn1Btn = page.getByRole("button", { name: /^turn 1/i });
@@ -258,8 +319,52 @@ async function main() {
       record("US-5.3", diffVisible ? "pass" : "fail", diffVisible ? "diff view opened for turn 1" : "diff view did not appear");
       await scanA11y(page, "US-5.3");
       await shot(page, "US-5.3-diff-view");
+
+      // ---- US-5.4: a diff with real content is visibly distinct from "No changes." ----
+      const diffPanelText = (await page.locator("text=/^Diff$/i").locator("xpath=..").locator("xpath=..").textContent().catch(() => "")) ?? "";
+      const showsRealDiff = /revert-marker/.test(diffPanelText) && !/no changes/i.test(diffPanelText);
+      record("US-5.4", showsRealDiff ? "pass" : "fail", showsRealDiff ? "a turn with real changes renders diff content, not the empty-state text" : `diff panel did not show the expected change (text: ${diffPanelText.slice(0, 120)})`);
+
+      // ---- US-5.5: reverting actually rewrites the working tree on disk ----
+      // Turn 1 captured ALPHA, turn 2 captured BETA. Reverting to turn 1 must
+      // put ALPHA back on disk — the whole point of the feature, and the one
+      // thing no other check in this regime proves.
+      const beforeRevert = fs.readFileSync(revertMarker, "utf8").trim();
+      const turnsBeforeRevert = await page.getByRole("button", { name: /^turn \d/i }).count();
+      const revertBtn = page.getByRole("button", { name: /revert to this checkpoint/i });
+      if ((await revertBtn.count()) && beforeRevert === "BETA") {
+        await revertBtn.click();
+        await page.waitForTimeout(4000);
+
+        const afterRevert = fs.readFileSync(revertMarker, "utf8").trim();
+        record("US-5.5a", afterRevert === "ALPHA" ? "pass" : "fail", `on-disk content ${beforeRevert} -> ${afterRevert} after reverting to turn 1 (expected ALPHA)`);
+
+        const diffStillOpen = await page.getByRole("button", { name: /revert to this checkpoint/i }).count();
+        record("US-5.5b", diffStillOpen === 0 ? "pass" : "fail", diffStillOpen === 0 ? "diff panel closed on a successful revert" : "diff panel stayed open after reverting");
+
+        // A safety snapshot of the pre-revert state, then the revert itself.
+        const turnsAfterRevert = await page.getByRole("button", { name: /^turn \d/i }).count();
+        record(
+          "US-5.5c",
+          turnsAfterRevert === turnsBeforeRevert + 2 ? "pass" : "fail",
+          `turn count ${turnsBeforeRevert} -> ${turnsAfterRevert} (expected +2: an unmarked safety snapshot, then the marked revert)`,
+        );
+
+        const revertBadge = await page.locator("text=/reverted to turn 1/i").count();
+        record("US-5.5d", revertBadge > 0 ? "pass" : "fail", revertBadge > 0 ? "the new checkpoint is visibly marked as a revert" : "no 'reverted to turn N' marker appeared in the strip");
+        await shot(page, "US-5.5-after-revert");
+      } else {
+        record("US-5.5a", "skip", `preconditions not met (revert control present: ${(await revertBtn.count()) > 0}, on-disk state: ${beforeRevert})`);
+      }
+
       const closeDiff = page.getByRole("button", { name: /close diff/i });
       if (await closeDiff.count()) await closeDiff.click();
+      // ---- US-5.6: reverting while a turn is in flight is rejected ----
+      // Deliberately not raced here. Winning the race needs the revert click
+      // to land inside a live turn, and losing it produces a false failure
+      // rather than a real finding — ws-server.test.ts asserts the rejection
+      // directly against the handler instead.
+      record("US-5.6", "skip", "in-flight revert rejection is covered directly by ws-server.test.ts; racing it through the UI would be flaky, not more truthful");
     } else {
       record("US-5.3", "skip", "no Turn 1 checkpoint button found");
     }
@@ -293,6 +398,23 @@ async function main() {
     await scanA11y(page, "US-3.1");
     await shot(page, "US-3.1-threads-tab");
     await checkNoHorizontalScroll(page, "US-12.3-threads-tab");
+
+    // ---- US-12.4: at a desktop viewport, content actually uses the width ----
+    // The failure this guards against is a mobile-width column stranded in the
+    // middle of a wide window. Checked on the project rows, which should track
+    // the container rather than sitting at a fixed phone width.
+    if (VIEWPORT === "desktop") {
+      const rowBox = await page.locator("button", { hasText: gitRepo }).first().boundingBox();
+      const viewportWidth = page.viewportSize()?.width ?? 0;
+      const usesWidth = rowBox !== null && rowBox.width > viewportWidth * 0.5;
+      record(
+        "US-12.4",
+        usesWidth ? "pass" : "fail",
+        rowBox ? `project row is ${Math.round(rowBox.width)}px wide in a ${viewportWidth}px viewport (${Math.round((rowBox.width / viewportWidth) * 100)}%)` : "no project row found to measure",
+      );
+    } else {
+      record("US-12.4", "skip", "desktop-layout story — not meaningful at a mobile viewport");
+    }
 
     // ---- US-3.2: drilling into a Project's Thread list, then "Back", returns cleanly ----
     const gitRepoProjectBtn = page.locator("button", { hasText: gitRepo }).first();
@@ -475,6 +597,41 @@ async function main() {
     } else {
       record("US-6.2", "fail", "Promote to worktree button not found on a fresh, unmessaged thread");
     }
+
+    // ---- US-11: `argusde serve` startup output ----
+    // Spawned on its own ephemeral port so it can't disturb the live server
+    // this audit is running against.
+    const probePort = 4900 + (process.pid % 90);
+    const serveOutput = await new Promise((resolve) => {
+      const child = spawn(process.execPath, ["dist/server/cli.js", "serve", "--host", "0.0.0.0", "--port", String(probePort)], {
+        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+      });
+      let out = "";
+      const done = (value) => {
+        child.kill("SIGTERM");
+        resolve(value);
+      };
+      child.stdout.on("data", (chunk) => {
+        out += String(chunk);
+        if (/listening at/i.test(out)) setTimeout(() => done(out), 1200);
+      });
+      child.stderr.on("data", (chunk) => (out += String(chunk)));
+      child.on("error", () => resolve(out));
+      setTimeout(() => done(out), 15000);
+    });
+
+    const boundToRequestedHost = new RegExp(`listening at http://0\\.0\\.0\\.0:${probePort}/`, "i").test(serveOutput);
+    record("US-11.2a", boundToRequestedHost ? "pass" : "fail", boundToRequestedHost ? "a non-default --host is honoured and reported in the startup line" : `startup line did not report the requested host/port (got: ${serveOutput.split("\n")[0] ?? ""})`);
+
+    const skippedTailscale = !/Remote access via Tailscale/i.test(serveOutput);
+    record("US-11.2b", skippedTailscale ? "pass" : "fail", skippedTailscale ? "Tailscale wiring skipped for a non-loopback --host, with no error" : "Tailscale wiring was attempted despite a non-loopback --host");
+
+    // US-11.1 needs a machine with no pre-existing `tailscale serve` mapping
+    // on the port. This one has the user's real mapping, so the server takes
+    // its skip-to-avoid-overwriting branch and legitimately prints neither the
+    // URL nor the QR code. Testing it here would mean overwriting live
+    // Tailscale config, which an audit has no business doing.
+    record("US-11.1", "skip", "cannot verify without clobbering the machine's existing tailscale serve mapping");
 
     console.log("\nConsole errors observed during run:", consoleErrors.length);
     if (consoleErrors.length > 0) {
