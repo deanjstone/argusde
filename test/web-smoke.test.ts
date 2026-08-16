@@ -345,7 +345,7 @@ describe("web smoke: server + browser round trip", () => {
         // drill-down itself — leaves it fresh/empty, currently active.
         await secondPage.getByRole("button", { name: "Threads" }).click();
         await secondPage.waitForSelector("text=Projects", { timeout: 10_000 });
-        await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
+        await secondPage.getByRole("button", { name: multiTestRepoDir, exact: true }).click();
         await secondPage.waitForSelector("text=/back/i", { timeout: 10_000 });
         await secondPage.getByRole("button", { name: /new thread/i }).click();
         await secondPage.getByPlaceholder(/title/i).fill("Thread C");
@@ -372,8 +372,10 @@ describe("web smoke: server + browser round trip", () => {
         // correct history replays — not empty, not Thread C's, not Thread A's.
         await secondPage.getByRole("button", { name: "Threads" }).click();
         await secondPage.waitForSelector("text=Projects", { timeout: 10_000 });
-        await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
+        await secondPage.getByRole("button", { name: multiTestRepoDir, exact: true }).click();
         await secondPage.waitForSelector("text=/back/i", { timeout: 10_000 });
+        // Thread row, not a Project row — see the closed-thread test below
+        // for why these deliberately aren't exact.
         await secondPage.getByRole("button", { name: multiTestRepoDir }).click();
         await secondPage.waitForSelector("text=hello from thread B", { timeout: 15_000 });
 
@@ -434,10 +436,13 @@ describe("web smoke: server + browser round trip", () => {
         expect(fs.existsSync(worktreePath)).toBe(false);
 
         // History stays browsable: drill back into the closed thread.
-        await closePage.getByRole("button", { name: closeTestRepoDir }).click();
+        await closePage.getByRole("button", { name: closeTestRepoDir, exact: true }).click();
         await closePage.waitForSelector("text=/back/i", { timeout: 10_000 });
         await closePage.waitForSelector("text=/closed/i", { timeout: 10_000 });
 
+        // Not `exact` — this is the Thread row, whose accessible name also
+        // carries its "closed" badge. Only the Project rows above need exact
+        // matching (to separate them from their own "Remove <path>" control).
         await closePage.getByRole("button", { name: closeTestRepoDir }).click();
         await closePage.waitForSelector("text=hello from the thread being closed", { timeout: 15_000 });
 
@@ -489,6 +494,58 @@ describe("web smoke: server + browser round trip", () => {
       } finally {
         await reloadPage.close();
         fs.rmSync(reloadTestRepoDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "removes a Project through the UI — confirmed first, gone from the list, and the workspace folder left on disk",
+    async () => {
+      const deleteTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-delete-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: deleteTestRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: deleteTestRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: deleteTestRepoDir });
+      fs.writeFileSync(path.join(deleteTestRepoDir, "keep-me.txt"), "must survive\n");
+      execFileSync("git", ["add", "-A"], { cwd: deleteTestRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: deleteTestRepoDir });
+
+      const deletePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await deletePage.goto(`http://127.0.0.1:${server.port}/`);
+        await deletePage.getByRole("button", { name: /type a path manually/i }).click();
+        await deletePage.getByLabel(/workspace path/i).fill(deleteTestRepoDir);
+        await deletePage.getByRole("button", { name: /start/i }).click();
+        await deletePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await deletePage.getByRole("button", { name: "Threads" }).click();
+        await deletePage.waitForSelector("text=Projects", { timeout: 10_000 });
+        await deletePage.getByRole("button", { name: `Remove ${deleteTestRepoDir}` }).click();
+
+        // Nothing is removed on the first click — the confirmation has to
+        // appear, and it has to say the folder itself is safe.
+        expect(await deletePage.textContent("body")).toMatch(/folder on disk is not deleted/i);
+        expect(await deletePage.getByRole("button", { name: deleteTestRepoDir, exact: true }).count()).toBe(1);
+
+        await deletePage.getByRole("button", { name: /^remove$/i }).click();
+
+        await deletePage
+          .locator("button", { hasText: deleteTestRepoDir })
+          .first()
+          .waitFor({ state: "detached", timeout: 10_000 });
+        expect(await deletePage.getByRole("button", { name: deleteTestRepoDir, exact: true }).count()).toBe(0);
+
+        // The whole point of the confirmation copy: records go, files stay.
+        expect(fs.existsSync(deleteTestRepoDir)).toBe(true);
+        expect(fs.existsSync(path.join(deleteTestRepoDir, "keep-me.txt"))).toBe(true);
+
+        // The deleted Project owned the active Thread, so Chat must not
+        // still be showing a conversation whose records no longer exist.
+        await deletePage.getByRole("button", { name: "Chat" }).click();
+        expect(await deletePage.textContent("body")).not.toMatch(/hello from the web smoke test agent/i);
+      } finally {
+        await deletePage.close();
+        fs.rmSync(deleteTestRepoDir, { recursive: true, force: true });
       }
     },
     30_000,
