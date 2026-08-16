@@ -48,6 +48,20 @@ export type ChatEvent =
   | { kind: "welcome"; apiVersion: string }
   | { kind: "session-event"; threadId: string; event: AcpSessionEvent }
   | { kind: "protocol-error"; message: string }
+  /**
+   * Takes a previously-surfaced action failure back down as a new
+   * user-initiated action starts. The error banner is always visible once
+   * set, so without this a one-off failure would sit there for the rest of
+   * the session.
+   *
+   * Dispatched per handler rather than from a shared sendCommand wrapper on
+   * purpose: background refreshes (checkpoints, project/thread lists,
+   * history) also send commands, and letting those clear the banner would
+   * hide a real failure the moment any poll happened to run. "The user
+   * tried something" is the signal, not "a command went out" — so every new
+   * user-initiated handler has to opt in.
+   */
+  | { kind: "action-attempted" }
   | { kind: "user-message-sent"; text: string }
   | { kind: "permission-responded"; requestId: string }
   | {
@@ -118,6 +132,8 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
       return applySessionEvent(state, event.event);
     case "protocol-error":
       return { ...state, connectionError: event.message };
+    case "action-attempted":
+      return state.connectionError === undefined ? state : { ...state, connectionError: undefined };
     case "user-message-sent":
       return {
         ...state,

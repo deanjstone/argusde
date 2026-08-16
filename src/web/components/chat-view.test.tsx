@@ -93,6 +93,26 @@ describe("ChatView", () => {
     expect(screen.getByText("stream closed")).toBeInTheDocument();
   });
 
+  it("shows an action's error even while the agent connection is healthy", () => {
+    // Promote/revert/close/set-mode/thread-create failures all land in
+    // connectionError while connectionState stays "connected" — gating the
+    // banner on "not connected" made every one of them a silent no-op.
+    const state = stateWith({ connectionState: "connected", connectionError: "Could not promote: worktree already exists" });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} />);
+    expect(screen.getByText("Could not promote: worktree already exists")).toBeInTheDocument();
+  });
+
+  it("still shows an error on a closed thread, even though the status line is suppressed there", () => {
+    const state = stateWith({ connectionState: "connected", connectionError: "Could not close: turn still in flight" });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} threadClosed />);
+    expect(screen.getByText("Could not close: turn still in flight")).toBeInTheDocument();
+  });
+
+  it("does not show a bare status line when connected and there's nothing wrong", () => {
+    render(<ChatView state={stateWith({ connectionState: "connected" })} onSend={() => {}} onRespondPermission={() => {}} />);
+    expect(screen.queryByText(/^connected…$/i)).not.toBeInTheDocument();
+  });
+
   it("renders no mode switcher when the agent has no available modes", () => {
     render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
     expect(screen.queryByRole("combobox", { name: /agent mode/i })).not.toBeInTheDocument();
