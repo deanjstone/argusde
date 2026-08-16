@@ -108,6 +108,7 @@ export function App() {
   const [threadsInProject, setThreadsInProject] = useState<ThreadRecord[]>([]);
   const [creatingProject, setCreatingProject] = useState(false);
   const [createProjectError, setCreateProjectError] = useState<string | undefined>(undefined);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | undefined>(undefined);
   const [creatingThread, setCreatingThread] = useState(false);
   // Guards against an in-flight fetchDiff call overwriting a *later* one's
   // result — e.g. a slow "Turn 5" request resolving after a fast "Turn 8"
@@ -406,6 +407,33 @@ export function App() {
     }
   }
 
+  async function handleDeleteProject(projectId: string) {
+    const client = clientRef.current;
+    if (!client || deletingProjectId) return;
+    setDeletingProjectId(projectId);
+    setCreateProjectError(undefined);
+    try {
+      await client.sendCommand({ type: "project.delete", projectId });
+
+      // If the active Thread belonged to this Project, its records are gone
+      // — leaving it mounted would show a conversation that can no longer be
+      // reloaded or sent to, and would restore it again on next launch.
+      if (thread?.projectId === projectId) {
+        activeThreadIdRef.current = null;
+        setThread(null);
+        clearLastActiveThreadId();
+      }
+      await refreshProjects();
+    } catch (error) {
+      // Same reasoning as handleCreateProject's error handling: this screen
+      // never reaches ChatView, so a failure has to surface here or it looks
+      // like the tap did nothing.
+      setCreateProjectError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeletingProjectId(undefined);
+    }
+  }
+
   async function handleCreateThread(title: string) {
     const client = clientRef.current;
     if (!client || !selectedProjectId || creatingThread) return;
@@ -629,6 +657,8 @@ export function App() {
               listDirectory={listDirectory}
               creating={creatingProject}
               error={createProjectError}
+              onDeleteProject={(projectId) => void handleDeleteProject(projectId)}
+              deletingProjectId={deletingProjectId}
             />
           ) : (
             <ThreadList
