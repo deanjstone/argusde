@@ -181,4 +181,45 @@ describe("WsClient", () => {
     },
     15_000,
   );
+
+  it(
+    "sending on an already-closed socket rejects with a readable message, not a raw WebSocket exception",
+    async () => {
+      // The raw failure here is a DOMException reading "WebSocket is already
+      // in CLOSING or CLOSED state." — which App.tsx renders verbatim to the
+      // user, leaking an implementation detail with no hint of what to do.
+      await client.waitUntilOpen();
+      client.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const rejection = await client
+        .sendCommand({ type: "project.create", workspaceRoot: repoDir, title: "Test Project" })
+        .then(() => undefined)
+        .catch((error: Error) => error);
+
+      expect(rejection).toBeInstanceOf(Error);
+      expect(rejection!.message).not.toMatch(/CLOSING or CLOSED/i);
+      expect(rejection!.message).toMatch(/connection/i);
+      // Tells the user what to do about it, rather than only what broke.
+      expect(rejection!.message).toMatch(/reload|reconnect|running/i);
+    },
+    15_000,
+  );
+
+  it(
+    "a command that fails to send does not leak a pending entry that can never settle",
+    async () => {
+      await client.waitUntilOpen();
+      client.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      await client.sendCommand({ type: "project.list" }).catch(() => undefined);
+
+      // A second failure must reject just as cleanly — a stale entry left
+      // behind by the first would be rejected again by a later close sweep,
+      // producing an unhandled rejection.
+      await expect(client.sendCommand({ type: "project.list" })).rejects.toThrow(/connection/i);
+    },
+    15_000,
+  );
 });
