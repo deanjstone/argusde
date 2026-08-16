@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, devices } from "playwright";
+import { chromium, devices, _electron as electron } from "playwright";
 import { record, scanA11y, screenshotAndDiff, printSummary, checkNoHorizontalScroll } from "./helpers.mjs";
 
 const args = Object.fromEntries(
@@ -17,6 +17,7 @@ const args = Object.fromEntries(
 );
 const BASE_URL = args.url ?? "http://127.0.0.1:4870/";
 const VIEWPORT = args.viewport ?? "desktop";
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function makeGitRepo(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -122,6 +123,10 @@ async function main() {
   // Declared out here, not at its point of use, so the finally block can
   // still clean up after a crash partway through the worktree section.
   let worktreeRepo;
+  // Fixtures created deeper in the run (the failure-matrix section) register
+  // themselves here so teardown removes their Projects and directories too,
+  // crash or not.
+  const cleanupRepos = [];
 
   try {
     // ---- US-1: first-run / connection ----
@@ -746,8 +751,166 @@ async function main() {
       } finally {
         await dropPage.close();
       }
+
+      // ---- US-14.1: every async action has a distinct, visible failure UI ----
+      // One page, one real thread, and a mutable set of command types to fail:
+      // the route answers the targeted command with a real ok:false result
+      // instead of forwarding it, so each action's own error path runs for
+      // real. Reusing a single thread keeps this to one live agent session
+      // rather than one per action.
+      const matrixPage = await faultContext.newPage();
+      try {
+        const failing = new Set();
+        const INJECTED = "INJECTED-AUDIT-FAILURE";
+        await matrixPage.routeWebSocket(/\/ws$/, (route) => {
+          const server = route.connectToServer();
+          route.onMessage((message) => {
+            try {
+              const command = JSON.parse(message);
+              if (failing.has(command.type)) {
+                route.send(JSON.stringify({ type: "command.result", commandId: command.commandId, ok: false, error: `${INJECTED}: ${command.type}` }));
+                return;
+              }
+            } catch {
+              // Not a command we can parse — forward untouched.
+            }
+            server.send(message);
+          });
+        });
+
+        const failureVisible = async () =>
+          matrixPage
+            .waitForFunction((needle) => document.body.innerText.includes(needle), INJECTED, { timeout: 8000 })
+            .then(() => true)
+            .catch(() => false);
+        const clearFailure = async () => {
+          failing.clear();
+          await matrixPage.waitForTimeout(200);
+        };
+
+        await matrixPage.goto(BASE_URL);
+        await matrixPage.waitForSelector("text=/choose a workspace folder/i", { timeout: 20000 });
+
+        // fs.list-directory — the folder browser's own failure path.
+        failing.add("fs.list-directory");
+        await matrixPage.getByRole("button", { name: /^up$/i }).click();
+        record("US-14.1b", (await failureVisible()) ? "pass" : "fail", "directory listing failure is visibly surfaced");
+        await clearFailure();
+
+        // thread.create — reached via first-run, which creates a project then a thread.
+        const matrixRepo = makeGitRepo("argusde-audit-matrix-");
+        cleanupRepos.push(matrixRepo);
+        failing.add("thread.create");
+        await matrixPage.getByRole("button", { name: /type a path manually/i }).click();
+        await matrixPage.getByLabel(/workspace path/i).fill(matrixRepo);
+        await matrixPage.getByRole("button", { name: /^start$/i }).click();
+        record("US-14.1c", (await failureVisible()) ? "pass" : "fail", "thread creation failure is visibly surfaced");
+        await clearFailure();
+
+        // Now let a real thread through, and fail the thread-scoped actions on it.
+        await matrixPage.getByRole("button", { name: /^start$/i }).click();
+        await matrixPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 25000 });
+
+        failing.add("thread.set-mode");
+        const matrixMode = matrixPage.getByLabel(/agent mode/i);
+        if (await matrixMode.count()) {
+          const values = await matrixMode.locator("option:not([disabled])").evaluateAll((els) => els.map((e) => e.value));
+          const current = await matrixMode.inputValue();
+          const other = values.find((v) => v !== current);
+          if (other) {
+            await matrixMode.selectOption(other);
+            record("US-14.1d", (await failureVisible()) ? "pass" : "fail", "mode-switch failure is visibly surfaced");
+          } else {
+            record("US-14.1d", "skip", "agent advertises a single mode — nothing to switch to");
+          }
+        } else {
+          record("US-14.1d", "skip", "no mode switcher — agent advertises no modes");
+        }
+        await clearFailure();
+
+        failing.add("thread.promote-to-worktree");
+        await matrixPage.getByRole("button", { name: /promote to worktree/i }).click();
+        record("US-14.1e", (await failureVisible()) ? "pass" : "fail", "worktree-promotion failure is visibly surfaced");
+        await clearFailure();
+
+        failing.add("thread.send-message");
+        const matrixInput = matrixPage.getByPlaceholder(/message/i);
+        await matrixInput.fill("this send is going to fail");
+        await matrixInput.press("Enter");
+        record("US-14.1f", (await failureVisible()) ? "pass" : "fail", "send-message failure is visibly surfaced");
+        await clearFailure();
+
+        failing.add("thread.close");
+        await matrixPage.getByRole("button", { name: /^close thread$/i }).click();
+        record("US-14.1g", (await failureVisible()) ? "pass" : "fail", "thread-close failure is visibly surfaced");
+        await clearFailure();
+
+        // thread.revert-checkpoint needs a turn to revert to, which needs a
+        // real agent round trip. The send above was intercepted, so no turn
+        // ever completed on this thread.
+        record("US-14.1h", "skip", "revert needs a completed turn to target; provoking one here would cost a second live agent round trip purely to re-assert the same error path the other six already prove");
+        await shot(matrixPage, "US-14.1-action-failure");
+      } finally {
+        await matrixPage.close();
+      }
       await faultContext.close();
     }
+
+    // ---- US-1.4 / US-1.5: Electron's native connect screen ----
+    // The Electron surface is the half of this regime the browser pages can't
+    // reach at all. Runs once (not per viewport) — the connect screen is a
+    // desktop-only chrome with no mobile variant.
+    if (VIEWPORT !== "desktop") {
+      record("US-1.4", "skip", "Electron connect screen is desktop-only chrome — checked on the desktop pass");
+    } else if (!process.env.DISPLAY) {
+      // Not silently skipped: this is the exact condition that made the
+      // Electron suites look like flaky tests for a whole session.
+      record("US-1.4", "skip", "no DISPLAY — Electron needs a display; re-run under `xvfb-run -a node scripts/ui-ux-audit/run.mjs`");
+    } else {
+      const electronUserData = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-electron-"));
+      let app;
+      try {
+        app = await electron.launch({
+          args: [projectRoot, "--no-sandbox", "--disable-gpu", `--user-data-dir=${electronUserData}`],
+          // A real closed port, not a mock — a genuine connection refusal.
+          env: { ...process.env, ARGUSDE_SERVER_URL: "http://127.0.0.1:59999/" },
+        });
+        const win = await app.firstWindow();
+
+        await win.waitForSelector("text=/not connected/i", { timeout: 20000 });
+        const onConnectScreen = win.url().includes("connect-screen");
+        const hasUrlField = (await win.$('input[name="server-url"]')) !== null;
+        const hasConnectButton = (await win.$('button:has-text("Connect")')) !== null;
+        record(
+          "US-1.4a",
+          onConnectScreen && hasUrlField && hasConnectButton ? "pass" : "fail",
+          `unreachable server shows the connect screen with a URL field and Connect button (screen: ${onConnectScreen}, field: ${hasUrlField}, button: ${hasConnectButton})`,
+        );
+
+        // Hands off to the shared web UI against the real live server — the
+        // thing the hermetic Electron tests can't check, since they spin up
+        // their own throwaway server.
+        await win.fill('input[name="server-url"]', BASE_URL);
+        await win.click('button:has-text("Connect")');
+        const handedOff = await win
+          .waitForSelector("text=/choose a workspace folder/i", { timeout: 25000 })
+          .then(() => true)
+          .catch(() => false);
+        record("US-1.4b", handedOff ? "pass" : "fail", handedOff ? "a valid server URL hands off to the shared web UI" : "did not reach the shared web UI after connecting to the live server");
+      } catch (error) {
+        record("US-1.4", "fail", `Electron connect-screen check could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await app?.close().catch(() => undefined);
+        fs.rmSync(electronUserData, { recursive: true, force: true });
+      }
+    }
+
+    // US-1.5 needs a server that deliberately reports a mismatched
+    // API_VERSION. That's inherently synthetic — there's no live-server
+    // signal to gain, which is the only thing this regime adds over the
+    // hermetic suite, and that suite already asserts the message names both
+    // versions.
+    record("US-1.5", "skip", "version-mismatch needs a deliberately-wrong-version server, which gains nothing from running live; test/electron-connect-screen.test.ts asserts it directly");
 
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
@@ -755,7 +918,7 @@ async function main() {
     const probePort = 4900 + (process.pid % 90);
     const serveOutput = await new Promise((resolve) => {
       const child = spawn(process.execPath, ["dist/server/cli.js", "serve", "--host", "0.0.0.0", "--port", String(probePort)], {
-        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+        cwd: projectRoot,
       });
       let out = "";
       const done = (value) => {
@@ -794,8 +957,9 @@ async function main() {
     await browser.close();
     // Server-side records first, while the paths are still known, then the
     // fixture directories themselves.
-    await deleteAuditProjects([gitRepo, nonGitRepo, worktreeRepo].filter(Boolean));
-    for (const dir of [gitRepo, nonGitRepo, worktreeRepo].filter(Boolean)) {
+    const allFixtures = [gitRepo, nonGitRepo, worktreeRepo, ...cleanupRepos].filter(Boolean);
+    await deleteAuditProjects(allFixtures);
+    for (const dir of allFixtures) {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(`${dir}-worktrees`, { recursive: true, force: true });
     }

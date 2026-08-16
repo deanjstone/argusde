@@ -48,6 +48,12 @@ export type ChatEvent =
   | { kind: "welcome"; apiVersion: string }
   | { kind: "session-event"; threadId: string; event: AcpSessionEvent }
   | { kind: "protocol-error"; message: string }
+  /**
+   * Takes a previously-surfaced action failure back down when the user tries
+   * again. The error banner is always visible once set, so without this a
+   * one-off failure would sit there for the rest of the session.
+   */
+  | { kind: "action-retried" }
   | { kind: "user-message-sent"; text: string }
   | { kind: "permission-responded"; requestId: string }
   | {
@@ -118,6 +124,8 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
       return applySessionEvent(state, event.event);
     case "protocol-error":
       return { ...state, connectionError: event.message };
+    case "action-retried":
+      return state.connectionError === undefined ? state : { ...state, connectionError: undefined };
     case "user-message-sent":
       return {
         ...state,
