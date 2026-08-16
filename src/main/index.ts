@@ -118,7 +118,12 @@ function createWindow(): void {
     if (errorCode === ERR_ABORTED) return; // a superseded/cancelled navigation, not a real connection failure
     if (validatedURL === CONNECT_SCREEN_URL) return; // the connect screen itself failed to load — don't loop back into it
 
-    void showConnectScreen(window, `Couldn't reach ${validatedURL}: ${errorDescription}`);
+    // Electron reports an empty validatedURL when the address is malformed
+    // enough that it never parsed (ERR_INVALID_URL) — exactly the case where
+    // naming the address matters most, since a typo is the likely cause.
+    // Fall back to what the user actually asked for.
+    const failedUrl = validatedURL || currentServerUrl;
+    void showConnectScreen(window, `Couldn't reach ${failedUrl}: ${errorDescription}`);
   });
 
   window.webContents.on("did-finish-load", () => {

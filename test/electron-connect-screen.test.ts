@@ -171,4 +171,37 @@ describe("electron: shows the connect screen when no server is reachable", () =>
     },
     25_000,
   );
+
+  it(
+    "names the URL that failed, including one Electron can't even parse",
+    async () => {
+      // Electron reports an empty validatedURL for a malformed address, so
+      // interpolating it straight into the message produced "Couldn't reach
+      // : ERR_INVALID_URL" — the one detail the user needs to spot their own
+      // typo, missing.
+      const malformedUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-malformed-url-userdata-"));
+      let malformedApp: ElectronApplication | undefined;
+      try {
+        malformedApp = await electron.launch({
+          args: [projectRoot, "--no-sandbox", "--disable-gpu", `--user-data-dir=${malformedUserDataDir}`],
+          env: { ...process.env, ARGUSDE_SERVER_URL: "definitely-not-a-url" },
+        });
+        const malformedWindow = await malformedApp.firstWindow();
+
+        await malformedWindow.waitForFunction(
+          () => (document.querySelector("#error")?.textContent ?? "").trim().length > 0,
+          undefined,
+          { timeout: 15_000 },
+        );
+        const errorText = (await malformedWindow.textContent("#error"))?.trim() ?? "";
+
+        expect(errorText).toContain("definitely-not-a-url");
+        expect(errorText).not.toMatch(/reach\s*:/);
+      } finally {
+        await malformedApp?.close();
+        fs.rmSync(malformedUserDataDir, { recursive: true, force: true });
+      }
+    },
+    25_000,
+  );
 });
