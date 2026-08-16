@@ -374,6 +374,48 @@ async function main() {
     const modeCount = await modeSelect.count();
     record("US-7.1", "pass", modeCount ? "mode switcher present (agent advertises modes)" : "mode switcher absent (agent advertises no modes) — correct per US-7.1");
 
+    // ---- US-7.2: changing mode round-trips to the agent and sticks ----
+    if (modeCount) {
+      const optionValues = await modeSelect.locator("option:not([disabled])").evaluateAll((els) => els.map((e) => e.value));
+      const startingMode = await modeSelect.inputValue();
+      const target = optionValues.find((v) => v !== startingMode);
+      if (target) {
+        await modeSelect.selectOption(target);
+        await page.waitForTimeout(2500);
+        const afterSwitch = await modeSelect.inputValue();
+        record("US-7.2a", afterSwitch === target ? "pass" : "fail", `mode ${startingMode} -> ${afterSwitch} (requested ${target}); a value that silently reverted would mean the UI guessed instead of confirming`);
+
+        // Leaving and returning re-reads the mode from the server, so this
+        // separates a real round trip from an optimistic local update that
+        // was never actually persisted.
+        await page.getByRole("button", { name: "Settings" }).click();
+        await page.waitForTimeout(300);
+        await page.getByRole("button", { name: "Chat" }).click();
+        await page.waitForTimeout(500);
+        const afterReturn = await page.getByLabel(/agent mode/i).inputValue();
+        record("US-7.2b", afterReturn === target ? "pass" : "fail", `mode after leaving and returning to Chat: ${afterReturn} (expected the confirmed ${target})`);
+
+        await modeSelect.selectOption(startingMode);
+        await page.waitForTimeout(1500);
+      } else {
+        record("US-7.2a", "skip", `agent advertises only one mode (${startingMode}) — nothing to switch to`);
+      }
+    } else {
+      record("US-7.2a", "skip", "no mode switcher — agent advertises no modes");
+    }
+
+    // ---- US-7.3: an agent-driven mode change appearing live ----
+    record("US-7.3", "skip", "needs the agent to autonomously change mode mid-session, which no prompt reliably provokes; acp-session.test.ts covers the current_mode_update handling directly");
+
+    // ---- US-4.6: permission prompt ----
+    // The audit's agent runs with --permission-mode auto, so it never asks —
+    // provoking a real request would mean reconfiguring the live agent this
+    // audit shares with the user.
+    record("US-4.6", "skip", "the live agent runs in auto permission mode and never prompts; chat-view.test.tsx covers the prompt's rendering and resolution directly");
+
+    // ---- US-4.3: connection banner on a mid-use agent drop ----
+    record("US-4.3", "skip", "distinct from US-1.3 (transport drop, covered above) — this is the *agent* connection dropping mid-turn, which needs killing the agent subprocess out from under a live thread; no non-destructive way to do that against the shared live server");
+
     // ---- US-9: settings tab ----
     await page.getByRole("button", { name: "Settings" }).click();
     await page.waitForTimeout(300);
@@ -570,6 +612,32 @@ async function main() {
           : false;
         const markerInMainRepo = fs.existsSync(path.join(worktreeRepo, marker));
         record("US-6.3", markerInWorktree && !markerInMainRepo ? "pass" : "fail", `marker file in worktree: ${markerInWorktree}, marker file leaked into main repo: ${markerInMainRepo}`);
+
+        // ---- US-4.5: the tool call that wrote that file renders legibly ----
+        // This turn provably used a file-write tool (the marker exists), so
+        // the timeline must show it as a titled, status-bearing item rather
+        // than a raw id or an undecoded blob.
+        const toolItems = await page.evaluate(() => {
+          // Tool-call items are the bordered non-message rows; message
+          // bubbles are the rounded-2xl ones.
+          return Array.from(document.querySelectorAll("div.rounded-lg.border"))
+            .map((el) => {
+              const title = el.querySelector("span.font-medium")?.textContent?.trim() ?? "";
+              const status = el.querySelector("span.text-xs")?.textContent?.trim() ?? "";
+              return { title, status };
+            })
+            .filter((x) => x.title.length > 0);
+        });
+        const looksLikeRawId = (t) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t) || /^toolu_/i.test(t);
+        const legible = toolItems.filter((t) => !looksLikeRawId(t.title));
+        record(
+          "US-4.5",
+          legible.length > 0 ? "pass" : "fail",
+          legible.length > 0
+            ? `tool-call timeline item rendered with a legible title (e.g. "${legible[0].title}"${legible[0].status ? `, status "${legible[0].status}"` : ", no status shown"})`
+            : `no legibly-titled tool-call item found despite a tool having run (items seen: ${JSON.stringify(toolItems).slice(0, 160)})`,
+        );
+        if (legible.length > 0) await shot(page, "US-4.5-tool-call");
       } catch {
         record("US-6.3-setup", "fail", "turn 1 did not complete in promoted thread within 90s");
         record("US-6.3", "skip", "could not verify file placement — turn never completed");
@@ -596,6 +664,85 @@ async function main() {
       }
     } else {
       record("US-6.2", "fail", "Promote to worktree button not found on a fresh, unmessaged thread");
+    }
+
+    // ---- US-1.2 / US-1.3 / US-14.1: connection states, via real WebSocket
+    // fault injection ----
+    // These run on their own pages so the injected faults can't disturb the
+    // main flow above. routeWebSocket intercepts the real socket rather than
+    // stubbing the app, so what's exercised is the actual client behaviour.
+    {
+      // A separate context, not just a separate page: the main context has a
+      // remembered last-active thread in localStorage by now, so a page there
+      // would attempt a session restore instead of showing the first-run
+      // screen these checks key off. Fresh context == the brand-new-install
+      // state US-1.x actually describes.
+      const faultContext = await browser.newContext(contextOptions);
+      const connectingPage = await faultContext.newPage();
+      try {
+        await connectingPage.routeWebSocket(/\/ws$/, async (route) => {
+          // Hold the handshake open long enough to observe the state the app
+          // shows before server.welcome arrives.
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          route.connectToServer();
+        });
+        await connectingPage.goto(BASE_URL);
+        const connectingVisible = await connectingPage
+          .locator("text=/connecting/i")
+          .first()
+          .isVisible()
+          .catch(() => false);
+        record("US-1.2", connectingVisible ? "pass" : "fail", connectingVisible ? "a Connecting… state is shown while the socket is still connecting" : "no connecting state shown during the handshake window — blank or premature first-run form");
+
+        // And it must not get stuck there once the socket does connect.
+        const recovered = await connectingPage
+          .waitForSelector("text=/choose a workspace folder/i", { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        record("US-1.2b", recovered ? "pass" : "fail", recovered ? "advances past Connecting… once the socket connects" : "stuck on Connecting… after the socket connected");
+      } finally {
+        await connectingPage.close();
+      }
+
+      const dropPage = await faultContext.newPage();
+      try {
+        let socketRoute;
+        await dropPage.routeWebSocket(/\/ws$/, (route) => {
+          socketRoute = route;
+          route.connectToServer();
+        });
+        await dropPage.goto(BASE_URL);
+        await dropPage.waitForSelector("text=/choose a workspace folder/i", { timeout: 20000 });
+
+        // Drop the socket, then issue a command that can now never complete.
+        socketRoute?.close();
+        await dropPage.waitForTimeout(500);
+
+        await dropPage.getByRole("button", { name: /type a path manually/i }).click();
+        await dropPage.getByLabel(/workspace path/i).fill(gitRepo);
+        await dropPage.getByRole("button", { name: /^start$/i }).click();
+
+        // The failure has to become visible — the specific wording is the
+        // client's, so this only asserts that *something* surfaced and that
+        // it didn't sit on the in-flight spinner forever.
+        const surfacedError = await dropPage
+          .waitForFunction(
+            () => {
+              const text = document.body.innerText;
+              return /closed|error|failed|not connected/i.test(text) && !/^\s*Starting…\s*$/.test(text);
+            },
+            undefined,
+            { timeout: 15000 },
+          )
+          .then(() => true)
+          .catch(() => false);
+        record("US-1.3", surfacedError ? "pass" : "fail", surfacedError ? "a command in flight when the socket drops fails visibly instead of hanging" : "no visible failure within 15s of a dropped socket — the action hangs silently");
+        record("US-14.1a", surfacedError ? "pass" : "fail", surfacedError ? "project creation has a distinct visible failure state (transport failure)" : "project creation failure was not visibly distinguishable from success");
+        if (surfacedError) await shot(dropPage, "US-1.3-socket-drop");
+      } finally {
+        await dropPage.close();
+      }
+      await faultContext.close();
     }
 
     // ---- US-11: `argusde serve` startup output ----
