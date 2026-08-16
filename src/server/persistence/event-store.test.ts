@@ -85,7 +85,12 @@ describe("EventStore", () => {
     ).toThrow(/UNIQUE constraint failed/);
   });
 
-  it("upgrading a database that already has duplicate workspace_root rows (from before this constraint existed) doesn't break — falls back to a non-unique index", () => {
+  it("upgrading a database that already has duplicate workspace_root rows merges them and establishes the real UNIQUE constraint", () => {
+    // Previously this fell back to a *non-unique* index and left it there.
+    // That silently disabled dedup forever: project.create is insert-first
+    // and only detects a duplicate when the index rejects the insert, so
+    // without a real constraint every resubmission made another row —
+    // duplicates were what prevented the constraint that would stop them.
     const legacyDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-legacy-dup-projects-"));
     const legacyDbPath = path.join(legacyDbDir, "argusde.sqlite");
     const legacyDb = new Database(legacyDbPath);
@@ -96,22 +101,83 @@ describe("EventStore", () => {
         title TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        worktree_path TEXT,
+        current_mode_id TEXT,
+        created_at TEXT NOT NULL
+      );
     `);
-    legacyDb
-      .prepare("INSERT INTO projects (id, workspace_root, title, created_at) VALUES (?, ?, ?, ?)")
-      .run("proj-a", "/dup", "A", "2026-08-14T00:00:00.000Z");
-    legacyDb
-      .prepare("INSERT INTO projects (id, workspace_root, title, created_at) VALUES (?, ?, ?, ?)")
-      .run("proj-b", "/dup", "B", "2026-08-14T00:00:01.000Z");
+    const insertProject = legacyDb.prepare("INSERT INTO projects (id, workspace_root, title, created_at) VALUES (?, ?, ?, ?)");
+    insertProject.run("proj-a", "/dup", "A", "2026-08-14T00:00:00.000Z");
+    insertProject.run("proj-b", "/dup", "B", "2026-08-14T00:00:01.000Z");
+    insertProject.run("proj-c", "/dup", "C", "2026-08-14T00:00:02.000Z");
+    insertProject.run("proj-solo", "/unique", "Solo", "2026-08-14T00:00:03.000Z");
+    const insertThread = legacyDb.prepare(
+      "INSERT INTO threads (id, project_id, title, worktree_path, current_mode_id, created_at) VALUES (?, ?, ?, NULL, NULL, ?)",
+    );
+    insertThread.run("thread-a", "proj-a", "On A", "2026-08-14T01:00:00.000Z");
+    insertThread.run("thread-b", "proj-b", "On B", "2026-08-14T01:00:01.000Z");
+    insertThread.run("thread-c", "proj-c", "On C", "2026-08-14T01:00:02.000Z");
+    insertThread.run("thread-solo", "proj-solo", "On Solo", "2026-08-14T01:00:03.000Z");
     legacyDb.close();
 
-    expect(() => new EventStore(legacyDbPath)).not.toThrow();
     const upgraded = new EventStore(legacyDbPath);
     try {
-      expect(upgraded.listProjects().map((p) => p.id)).toEqual(["proj-a", "proj-b"]);
+      // The earliest row wins; the later duplicates are merged into it.
+      expect(upgraded.listProjects().map((p) => p.id).sort()).toEqual(["proj-a", "proj-solo"]);
+
+      // Crucially, no Thread is discarded — they're re-parented onto the
+      // winner, because every duplicate described the same folder.
+      expect(upgraded.listThreads("proj-a").map((t) => t.id).sort()).toEqual(["thread-a", "thread-b", "thread-c"]);
+      expect(upgraded.listThreads("proj-solo").map((t) => t.id)).toEqual(["thread-solo"]);
+
+      // And the constraint is now real, so dedup actually works again.
+      expect(() =>
+        upgraded.appendEvent({
+          kind: "project.created",
+          projectId: "proj-new",
+          workspaceRoot: "/dup",
+          title: "Another",
+          timestamp: "2026-08-16T00:00:00.000Z",
+        }),
+      ).toThrow(/UNIQUE/i);
     } finally {
       upgraded.close();
       fs.rmSync(legacyDbDir, { recursive: true, force: true });
+    }
+  });
+
+  it("the duplicate merge is idempotent — reopening an already-clean database changes nothing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-event-store-dedup-idempotent-"));
+    const p = path.join(dir, "argusde.sqlite");
+    const first = new EventStore(p);
+    first.appendEvent({
+      kind: "project.created",
+      projectId: "proj-1",
+      workspaceRoot: "/only",
+      title: "Only",
+      timestamp: "2026-08-16T00:00:00.000Z",
+    });
+    first.appendEvent({
+      kind: "thread.created",
+      threadId: "thread-1",
+      projectId: "proj-1",
+      title: "T",
+      worktreePath: null,
+      timestamp: "2026-08-16T00:01:00.000Z",
+    });
+    first.close();
+
+    const reopened = new EventStore(p);
+    try {
+      expect(reopened.listProjects().map((x) => x.id)).toEqual(["proj-1"]);
+      expect(reopened.listThreads("proj-1").map((t) => t.id)).toEqual(["thread-1"]);
+    } finally {
+      reopened.close();
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

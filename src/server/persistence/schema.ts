@@ -73,23 +73,69 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
 /**
  * Enforces (and indexes) projects.workspace_root uniqueness at the schema
  * level, so the dedup invariant ws-server.ts's project.create handler
- * relies on isn't only enforced by that one call site. A single index name
- * either way — CREATE ... IF NOT EXISTS treats an existing index of that
- * name as satisfied regardless of its uniqueness, so this never ends up
- * maintaining two indexes on the same column. Falls back to a plain
- * (non-unique) index only when a real pre-existing database already has
- * duplicate rows for this column: re-deduplicating that data would mean
- * re-pointing foreign-key references from "losing" duplicate rows to a
- * "winning" one, well beyond what this fix is for.
+ * relies on isn't only enforced by that one call site.
+ *
+ * This previously fell back to a plain (non-unique) index when a real
+ * database already had duplicate rows, and left it that way. That looked
+ * conservative but silently disabled dedup permanently: project.create is
+ * insert-first and only detects a duplicate when the index *rejects* the
+ * insert, so with no real constraint every resubmission created another
+ * row. Having duplicates was what prevented the constraint that would have
+ * stopped more of them (argusde#72) — so the duplicates are merged first,
+ * and the constraint always ends up real.
+ *
+ * A single index name either way — CREATE ... IF NOT EXISTS treats an
+ * existing index of that name as satisfied regardless of its uniqueness,
+ * so an older database that already has the non-unique version has to have
+ * it dropped explicitly rather than "created over".
  */
 function ensureWorkspaceRootIndex(db: Database.Database): void {
-  try {
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
-  } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
-      db.exec("CREATE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
-      return;
+  mergeDuplicateProjects(db);
+  // An existing non-unique index of this name (written by the older
+  // fallback above) would otherwise satisfy CREATE ... IF NOT EXISTS and
+  // leave the constraint permanently absent.
+  db.exec("DROP INDEX IF EXISTS idx_projects_workspace_root");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_workspace_root ON projects(workspace_root)");
+}
+
+/**
+ * Collapses projects that describe the same workspace_root down to one.
+ *
+ * The earliest-created row wins and the rest are merged into it. Threads
+ * are re-parented rather than dropped — every duplicate row described the
+ * same folder, so their Threads are all legitimately that Project's
+ * history, and losing them would be losing real user data to a cleanup.
+ *
+ * Idempotent: on a database with no duplicates this does nothing, so it's
+ * safe on every open.
+ */
+function mergeDuplicateProjects(db: Database.Database): void {
+  // Only meaningful once both tables exist — on a brand-new database this
+  // runs before threads is created, and there's nothing to merge anyway.
+  const hasThreads = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'threads'")
+    .get() as { name: string } | undefined;
+
+  const duplicateRoots = db
+    .prepare("SELECT workspace_root FROM projects GROUP BY workspace_root HAVING COUNT(*) > 1")
+    .all() as { workspace_root: string }[];
+  if (duplicateRoots.length === 0) return;
+
+  const merge = db.transaction(() => {
+    for (const { workspace_root: root } of duplicateRoots) {
+      const rows = db
+        .prepare("SELECT id FROM projects WHERE workspace_root = ? ORDER BY created_at, id")
+        .all(root) as { id: string }[];
+      const [winner, ...losers] = rows;
+      if (!winner || losers.length === 0) continue;
+
+      for (const loser of losers) {
+        if (hasThreads) {
+          db.prepare("UPDATE threads SET project_id = ? WHERE project_id = ?").run(winner.id, loser.id);
+        }
+        db.prepare("DELETE FROM projects WHERE id = ?").run(loser.id);
+      }
     }
-    throw error;
-  }
+  });
+  merge();
 }
