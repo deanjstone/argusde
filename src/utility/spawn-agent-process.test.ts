@@ -63,6 +63,27 @@ describe("spawnAgentProcessTransport", () => {
     expect(await waitFor(() => !isAlive(pid))).toBe(true);
   });
 
+  it("passes env through to the spawned agent, so a fixture agent can be configured per session", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-spawn-env-"));
+    tempDirs.push(dir);
+    const echoScript = path.join(dir, "echo-env.mjs");
+    const outFile = path.join(dir, "seen");
+    fs.writeFileSync(
+      echoScript,
+      `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(outFile)}, process.env.ARGUSDE_SPAWN_ENV_PROBE ?? "");\nprocess.stdin.resume();\nsetInterval(() => {}, 1 << 30);\n`,
+    );
+
+    const transport = spawnAgentProcessTransport({
+      command: process.execPath,
+      args: [echoScript],
+      env: { ...process.env, ARGUSDE_SPAWN_ENV_PROBE: "configured-for-this-session" },
+    });
+
+    await waitFor(() => fs.existsSync(outFile) && fs.readFileSync(outFile, "utf8").length > 0);
+    expect(fs.readFileSync(outFile, "utf8")).toBe("configured-for-this-session");
+    transport.dispose();
+  });
+
   it("dispose() is safe to call twice", async () => {
     const pidFile = makePidFile();
     const transport = spawnAgentProcessTransport({ command: process.execPath, args: [FIXTURE, pidFile] });

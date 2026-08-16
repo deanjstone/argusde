@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, devices, _electron as electron } from "playwright";
-import { record, scanA11y, screenshotAndDiff, printSummary, checkNoHorizontalScroll } from "./helpers.mjs";
+import { record, scanA11y, screenshotAndDiff, printSummary, checkNoHorizontalScroll, startIsolatedServer } from "./helpers.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -410,16 +410,16 @@ async function main() {
     }
 
     // ---- US-7.3: an agent-driven mode change appearing live ----
-    record("US-7.3", "skip", "needs the agent to autonomously change mode mid-session, which no prompt reliably provokes; acp-session.test.ts covers the current_mode_update handling directly");
+
 
     // ---- US-4.6: permission prompt ----
     // The audit's agent runs with --permission-mode auto, so it never asks —
     // provoking a real request would mean reconfiguring the live agent this
     // audit shares with the user.
-    record("US-4.6", "skip", "the live agent runs in auto permission mode and never prompts; chat-view.test.tsx covers the prompt's rendering and resolution directly");
+
 
     // ---- US-4.3: connection banner on a mid-use agent drop ----
-    record("US-4.3", "skip", "distinct from US-1.3 (transport drop, covered above) — this is the *agent* connection dropping mid-turn, which needs killing the agent subprocess out from under a live thread; no non-destructive way to do that against the shared live server");
+
 
     // ---- US-9: settings tab ----
     await page.getByRole("button", { name: "Settings" }).click();
@@ -979,6 +979,118 @@ async function main() {
       record("US-1.5", "skip", "version-mismatch needs a deliberately-wrong-version server, which gains nothing from running live; test/electron-connect-screen.test.ts asserts it directly");
     }
 
+    // ---- US-4.3 / US-4.6 / US-7.3: stories that need a hostile agent ----
+    // Each of these requires the agent to do something the live one never
+    // will — prompt for permission, change mode unbidden, or die mid-turn.
+    // They run against a throwaway server with its own database, port and
+    // scripted agent, so nothing here can touch the user's instance.
+    if (VIEWPORT !== "desktop") {
+      record("US-4.6", "skip", "agent-behaviour stories run once, on the desktop pass");
+    } else {
+      let isolated;
+      const isolatedRepo = makeGitRepo("argusde-audit-isolated-");
+      const isolatedPage = await context.newPage();
+      try {
+        isolated = await startIsolatedServer({
+          modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }] },
+          steps: [
+            { type: "permission-request", title: "Write config.json" },
+            { type: "autonomous-mode-change", modeId: "plan" },
+            { type: "message", text: "done" },
+          ],
+        });
+
+        await isolatedPage.goto(isolated.url);
+        await isolatedPage.getByRole("button", { name: /type a path manually/i }).click();
+        await isolatedPage.getByLabel(/workspace path/i).fill(isolatedRepo);
+        await isolatedPage.getByRole("button", { name: /^start$/i }).click();
+        await isolatedPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        const modeBefore = await isolatedPage.getByLabel(/agent mode/i).inputValue();
+
+        const isolatedInput = isolatedPage.getByPlaceholder(/message/i);
+        await isolatedInput.fill("do the thing");
+        await isolatedInput.press("Enter");
+
+        // ---- US-4.6: the prompt pauses the flow with distinct options ----
+        const promptShown = await isolatedPage
+          .waitForSelector("text=/Write config.json/i", { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const allowBtn = isolatedPage.getByRole("button", { name: /^allow$/i });
+        const rejectBtn = isolatedPage.getByRole("button", { name: /^reject$/i });
+        const bothOptions = (await allowBtn.count()) > 0 && (await rejectBtn.count()) > 0;
+        record("US-4.6a", promptShown && bothOptions ? "pass" : "fail", `permission request pauses with a titled prompt and distinct options (prompt: ${promptShown}, both options: ${bothOptions})`);
+        if (promptShown) {
+          await scanA11y(isolatedPage, "US-4.6");
+          await shot(isolatedPage, "US-4.6-permission-prompt");
+        }
+
+        if (bothOptions) {
+          await allowBtn.click();
+          // The fixture echoes the outcome back, so this proves the *chosen*
+          // option actually reached the agent — not merely that the prompt
+          // went away.
+          const outcomeReached = await isolatedPage
+            .waitForFunction(() => /PERMISSION-OUTCOME:.*allow/.test(document.body.innerText), undefined, { timeout: 20000 })
+            .then(() => true)
+            .catch(() => false);
+          const promptGone = (await isolatedPage.getByRole("button", { name: /^allow$/i }).count()) === 0;
+          record("US-4.6b", outcomeReached && promptGone ? "pass" : "fail", `the selected option reaches the agent and the prompt resolves (outcome echoed: ${outcomeReached}, prompt cleared: ${promptGone})`);
+        } else {
+          record("US-4.6b", "skip", "no permission options rendered to choose from");
+        }
+
+        // ---- US-7.3: an agent-driven mode change lands live ----
+        const modeSwitchedLive = await isolatedPage
+          .waitForFunction(() => document.querySelector('select[aria-label="Agent mode"]')?.value === "plan", undefined, { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const modeAfter = await isolatedPage.getByLabel(/agent mode/i).inputValue();
+        record("US-7.3", modeSwitchedLive ? "pass" : "fail", `agent-driven mode change appeared without a refresh: ${modeBefore} -> ${modeAfter} (expected plan)`);
+      } catch (error) {
+        record("US-4.6a", "fail", `isolated-agent checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await isolatedPage.close();
+        await isolated?.close();
+        fs.rmSync(isolatedRepo, { recursive: true, force: true });
+      }
+
+      // US-4.3 needs its own server: the agent must die, which ends that
+      // server's usefulness for anything after it.
+      let dropServer;
+      const dropRepo = makeGitRepo("argusde-audit-agentdrop-");
+      const agentDropPage = await context.newPage();
+      try {
+        dropServer = await startIsolatedServer({ steps: [{ type: "exit" }] });
+        await agentDropPage.goto(dropServer.url);
+        await agentDropPage.getByRole("button", { name: /type a path manually/i }).click();
+        await agentDropPage.getByLabel(/workspace path/i).fill(dropRepo);
+        await agentDropPage.getByRole("button", { name: /^start$/i }).click();
+        await agentDropPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        const dropInput = agentDropPage.getByPlaceholder(/message/i);
+        await dropInput.fill("this kills the agent");
+        await dropInput.press("Enter");
+
+        // The connection banner must reflect the drop — the agent process is
+        // gone, so the thread can no longer do anything, and saying nothing
+        // would leave the user waiting on a reply that will never come.
+        const bannerReflectsDrop = await agentDropPage
+          .waitForFunction(() => /disconnected|error|closed|lost/i.test(document.body.innerText), undefined, { timeout: 25000 })
+          .then(() => true)
+          .catch(() => false);
+        record("US-4.3", bannerReflectsDrop ? "pass" : "fail", bannerReflectsDrop ? "an agent that dies mid-turn is reflected in the connection banner" : "the agent died mid-turn and the UI said nothing");
+        if (bannerReflectsDrop) await shot(agentDropPage, "US-4.3-agent-drop");
+      } catch (error) {
+        record("US-4.3", "fail", `agent-drop check could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await agentDropPage.close();
+        await dropServer?.close();
+        fs.rmSync(dropRepo, { recursive: true, force: true });
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.
@@ -1007,12 +1119,67 @@ async function main() {
     const skippedTailscale = !/Remote access via Tailscale/i.test(serveOutput);
     record("US-11.2b", skippedTailscale ? "pass" : "fail", skippedTailscale ? "Tailscale wiring skipped for a non-loopback --host, with no error" : "Tailscale wiring was attempted despite a non-loopback --host");
 
-    // US-11.1 needs a machine with no pre-existing `tailscale serve` mapping
-    // on the port. This one has the user's real mapping, so the server takes
-    // its skip-to-avoid-overwriting branch and legitimately prints neither the
-    // URL nor the QR code. Testing it here would mean overwriting live
-    // Tailscale config, which an audit has no business doing.
-    record("US-11.1", "skip", "cannot verify without clobbering the machine's existing tailscale serve mapping");
+    // ---- US-11.1: startup prints a scannable QR code and the plain MagicDNS URL ----
+    // Driven against a stub `tailscale` on PATH rather than the real one. The
+    // machine's actual tailnet already has a mapping on the live port, so the
+    // server would correctly take its skip-to-avoid-overwriting branch — and
+    // provoking the real path would mean mutating the user's tailscale serve
+    // config, which an audit has no business doing. The stub answers the three
+    // queries cli.ts makes, so what's exercised is ArgusDE's own output logic.
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-tsstub-"));
+    try {
+      const stubDnsName = "audit-stub-host.example-tailnet.ts.net";
+      fs.writeFileSync(
+        path.join(stubDir, "tailscale"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "status" ]; then',
+          `  echo '{"BackendState":"Running","Self":{"DNSName":"${stubDnsName}."}}'`,
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "serve" ] && [ "$2" = "status" ]; then',
+          `  echo '{"TCP":{}}'`,
+          "  exit 0",
+          "fi",
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const qrPort = 4960 + (process.pid % 30);
+      const tailscaleOutput = await new Promise((resolve) => {
+        const child = spawn(process.execPath, ["dist/server/cli.js", "serve", "--port", String(qrPort)], {
+          cwd: projectRoot,
+          env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` },
+        });
+        let out = "";
+        const done = () => {
+          child.kill("SIGTERM");
+          resolve(out);
+        };
+        child.stdout.on("data", (chunk) => {
+          out += String(chunk);
+          if (/Remote access via Tailscale/i.test(out)) setTimeout(done, 1200);
+        });
+        child.stderr.on("data", (chunk) => (out += String(chunk)));
+        child.on("error", () => resolve(out));
+        setTimeout(done, 15000);
+      });
+
+      const expectedUrl = `https://${stubDnsName}:${qrPort}/`;
+      const printedUrl = tailscaleOutput.includes(expectedUrl);
+      // qrcode-terminal draws with half-block glyphs — their presence is what
+      // makes the code scannable rather than just a URL echoed twice.
+      const printedQr = /[\u2580-\u259F]/.test(tailscaleOutput);
+      record(
+        "US-11.1",
+        printedUrl && printedQr ? "pass" : "fail",
+        `startup prints the plain MagicDNS URL (${printedUrl}) and a rendered QR code (${printedQr})`,
+      );
+    } finally {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    }
 
     console.log("\nConsole errors observed during run:", consoleErrors.length);
     if (consoleErrors.length > 0) {

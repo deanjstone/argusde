@@ -6,6 +6,12 @@ export interface SpawnAgentProcessOptions {
   command: string;
   args?: string[];
   cwd?: string;
+  /**
+   * Environment for the agent process. Omit to inherit this process's own —
+   * passing a partial object would *replace* the environment rather than
+   * extend it, so callers that need an addition should spread `process.env`.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -36,6 +42,7 @@ export function isDisposableStream(transport: unknown): transport is DisposableS
 export function spawnAgentProcessTransport(options: SpawnAgentProcessOptions): DisposableStream {
   const child = spawn(options.command, options.args ?? [], {
     cwd: options.cwd,
+    env: options.env,
     stdio: ["pipe", "pipe", "inherit"],
   });
 
