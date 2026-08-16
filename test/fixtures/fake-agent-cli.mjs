@@ -30,6 +30,46 @@ const app = agent({ name: "smoke-fake-agent" })
           update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: step.text } },
         });
       }
+
+      // Asks the client for permission and waits for the real answer, so a
+      // caller can drive the prompt's full round trip — not just its
+      // appearance. The real claude-agent-acp only does this when its
+      // permission mode calls for it, which the audit's live agent never
+      // does.
+      if (step.type === "permission-request") {
+        const response = await client.request(methods.client.session.requestPermission, {
+          sessionId: params.sessionId,
+          toolCall: { toolCallId: step.toolCallId ?? "tc-permission-1", title: step.title ?? "Write a file" },
+          options: step.options ?? [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        });
+        // Echoed back so a test can prove the *chosen* option reached the
+        // agent, rather than only that the prompt disappeared.
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `PERMISSION-OUTCOME:${JSON.stringify(response.outcome ?? response)}` },
+          },
+        });
+      }
+
+      // An agent-driven mode change — the one case AcpSession can't
+      // synthesize, since it isn't answering a client request.
+      if (step.type === "autonomous-mode-change") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "current_mode_update", currentModeId: step.modeId },
+        });
+      }
+
+      // Drops the agent connection mid-turn, without the client having asked
+      // for anything — models the agent process dying under a live thread.
+      if (step.type === "exit") {
+        process.exit(step.code ?? 1);
+      }
     }
     return { stopReason: "end_turn" };
   });

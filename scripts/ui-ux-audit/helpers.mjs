@@ -2,6 +2,7 @@
 // Plain JS, not TS — this is a standalone operational tool, not part of the
 // vitest/tsc pipeline, matching test/fixtures/fake-agent-cli.mjs's precedent.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
@@ -99,6 +100,66 @@ export async function screenshotAndDiff(page, storyId, options = {}) {
 
 export async function waitForToast() {
   // placeholder no-op reserved for future use; keeps helper surface stable
+}
+
+/**
+ * Boots a throwaway ArgusDE server backed by the controllable fake agent.
+ *
+ * A handful of stories can only be reached by doing something destructive to
+ * the agent — making it prompt for permission, change mode on its own, or die
+ * mid-turn. None of that is acceptable against the live server the user is
+ * also working in, and the live agent runs in auto-permission mode anyway, so
+ * it never prompts. This gives those checks their own server, database, port
+ * and agent, disposed at the end.
+ *
+ * Imports the built server directly (dist/) rather than shelling out to the
+ * CLI, because the CLI hard-codes ~/.argusde/argusde.sqlite — an isolated
+ * instance must never touch the real database.
+ */
+export async function startIsolatedServer({ steps = [], modes } = {}) {
+  const { EventStore } = await import("../../dist/server/persistence/event-store.js");
+  const { CheckpointStore } = await import("../../dist/server/checkpoint/checkpoint-store.js");
+  const { startWsServer } = await import("../../dist/server/ws/ws-server.js");
+  const { AcpSession } = await import("../../dist/utility/acp-session.js");
+  const { spawnAgentProcessTransport } = await import("../../dist/utility/spawn-agent-process.js");
+
+  const repoRoot = path.resolve(__dirname, "../..");
+  const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-isolated-db-"));
+  const eventStore = new EventStore(path.join(dbDir, "argusde.sqlite"));
+  const checkpointStore = new CheckpointStore();
+
+  const server = await startWsServer({
+    host: "127.0.0.1",
+    port: 0,
+    eventStore,
+    checkpointStore,
+    webDistDir: path.join(repoRoot, "dist/web"),
+    createSession: (_threadId, cwd) =>
+      new AcpSession({
+        name: "argusde-audit-isolated",
+        cwd,
+        createTransport: () =>
+          spawnAgentProcessTransport({
+            command: process.execPath,
+            args: [path.join(repoRoot, "test/fixtures/fake-agent-cli.mjs")],
+            cwd,
+            env: {
+              ...process.env,
+              ARGUSDE_FAKE_AGENT_STEPS: JSON.stringify(steps),
+              ...(modes ? { ARGUSDE_FAKE_AGENT_MODES: JSON.stringify(modes) } : {}),
+            },
+          }),
+      }),
+  });
+
+  return {
+    url: `http://127.0.0.1:${server.port}/`,
+    async close() {
+      await server.close();
+      eventStore.close();
+      fs.rmSync(dbDir, { recursive: true, force: true });
+    },
+  };
 }
 
 /** US-12.3: no horizontal scrollbar/clipped content at the current viewport. */
