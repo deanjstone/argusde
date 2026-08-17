@@ -668,7 +668,7 @@ export function App() {
   // window.
   if (!connected) {
     return (
-      <main className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
+      <main className="flex h-dvh items-center justify-center bg-background text-muted-foreground">
         <p className="text-sm">Connecting…</p>
       </main>
     );
@@ -676,7 +676,7 @@ export function App() {
 
   if (restoring) {
     return (
-      <main className="flex h-dvh items-center justify-center bg-neutral-950 text-neutral-400">
+      <main className="flex h-dvh items-center justify-center bg-background text-muted-foreground">
         <p className="text-sm">Restoring your last session…</p>
       </main>
     );
@@ -723,7 +723,7 @@ export function App() {
           ) : (
             // Defensive fallback, not the primary flow — handleCloseThread
             // already switches to the Threads tab on success.
-            <div className="flex h-full items-center justify-center bg-neutral-950 p-4 text-center text-sm text-neutral-500">
+            <div className="flex h-full items-center justify-center bg-background p-4 text-center text-sm text-muted-foreground">
               No thread selected — pick one from the Threads tab.
             </div>
           ))}
@@ -757,10 +757,10 @@ export function App() {
             />
           ))}
         {tab === "settings" && (
-          <div className="flex h-full flex-col gap-2 bg-neutral-950 p-4 text-sm text-neutral-100">
-            <h2 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Connection</h2>
+          <div className="flex h-full flex-col gap-2 bg-background p-4 text-sm text-foreground">
+            <h2 className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Connection</h2>
             <p>Server API version: {chatState.apiVersion ?? "unknown"}</p>
-            {thread && <p className="text-neutral-500">Thread ID: {thread.threadId}</p>}
+            {thread && <p className="text-muted-foreground">Thread ID: {thread.threadId}</p>}
           </div>
         )}
       </main>

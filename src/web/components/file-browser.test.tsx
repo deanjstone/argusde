@@ -150,7 +150,7 @@ describe("FileBrowser", () => {
       query: "needle",
       files: [{ path: "src/index.ts", matches: [{ line: 2, text: "const needle = 1;" }], matchesTruncated: false }],
       totalMatches: 1,
-      truncated: { files: false, matches: false, timedOut: false },
+      truncated: { files: false, matches: false, output: false, timedOut: false },
     };
 
     it("searches the working tree and shows results in place of the tree", async () => {

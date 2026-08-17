@@ -504,7 +504,18 @@ async function main() {
           .then(() => true)
           .catch(() => false);
         const hasHits = (await page.locator('[data-testid="search-results"]').count()) > 0;
-        record("US-16.1", gotResults ? "pass" : "fail", gotResults ? `search settled (matches: ${hasHits})` : "search never settled within 20s");
+        const noMatches = (await page.locator('[data-testid="search-no-matches"]').count()) > 0;
+        // The audit fixture's working tree genuinely contains this term, so
+        // "results appeared" is the assertion. Passing on either state would
+        // have made this story unable to fail — and story 16.1's point is that
+        // the two states are distinguishable, which means exactly one shows.
+        record(
+          "US-16.1",
+          hasHits && !noMatches ? "pass" : "fail",
+          gotResults
+            ? `results: ${hasHits}, no-matches state: ${noMatches} (expected true/false)`
+            : "search never settled within 20s",
+        );
         await scanA11y(page, "US-16.1");
         await shot(page, "US-16.1-search-results");
 
@@ -530,8 +541,11 @@ async function main() {
       }
     } catch (error) {
       // Recorded rather than thrown: this is an operational tool, and letting
-      // one story abort the pass loses every story after it.
-      record("US-16.1", "fail", `workspace search story threw: ${error.message.split("\n")[0]}`);
+      // one story abort the pass loses every story after it. Recorded under a
+      // distinct id so it can never overwrite US-16.1's own verdict, and so a
+      // throw is visible rather than hidden behind a story that already
+      // reported.
+      record("US-16.throw", "fail", `workspace search story threw: ${error.message.split("\n")[0]}`);
     }
 
     // ---- US-9: settings tab ----

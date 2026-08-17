@@ -255,9 +255,15 @@ export interface SearchResults {
   truncated: {
     /** More files matched than the file cap allows. */
     files: boolean;
-    /** At least one file's matches were capped. */
+    /** Matches were capped — within a file, or across the whole result set. */
     matches: boolean;
-    /** The search hit its wall-clock bound; what came back is partial. */
+    /**
+     * git was cut off mid-stream (its output exceeded what the server will
+     * buffer, or it ran out of time), so these results are partial for a
+     * reason no per-file or per-result cap describes.
+     */
+    output: boolean;
+    /** The specific reason for `output`: the search hit its wall-clock bound. */
     timedOut: boolean;
   };
 }

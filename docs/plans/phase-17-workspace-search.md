@@ -33,6 +33,7 @@ Non-git roots cannot reach it: Thread creation captures a baseline checkpoint an
 |---|---|---|
 | matches per file | 20 | a file with 400 hits tells you nothing a file with 20 doesn't |
 | files | 100 | enough to judge relevance, bounded for a phone |
+| total matches | 500 | files × matchesPerFile would otherwise allow 2000, ~600KB at the line bound |
 | line characters | 300 | a minified file's single line can be megabytes — the payload bound that actually matters |
 | wall clock | 10s | `git grep` over a huge tree is unbounded work a client can ask for; a timeout returns the partial output **flagged** rather than discarding it |
 
@@ -63,6 +64,27 @@ So a search whose output exceeded 32MB fell through to the generic `Search faile
 
 That branch has a test, and the test was made to *prove* it: `truncated.files` is normally set by the file cap, which the parser only trips once it has seen 100 files — so "flagged truncated while returning fewer files than the cap" is reachable only through the cut-short branch. Confirmed red against the un-fixed code (with exactly that unhelpful `Search failed`) before being kept.
 
+## What review changed
+
+A two-axis pass (spec fidelity, plus correctness/security of the new server code) found **three real bugs** and several honesty gaps. All fixed.
+
+### Three bugs, all empirically demonstrated
+
+1. **A multi-line query matched every line in the repository.** `git grep -e` splits its pattern on newlines into an OR of patterns, and an empty one among them matches everything — verified: a newline-only query returned all 4 lines of a 4-line repo, and produced megabytes of output in a real one. The shipped UI trims, which masked it, but `thread.search` takes a `z.string()` straight off the wire. Now rejected outright rather than silently searching for part of what was asked: `git grep` cannot express a multi-line literal at all, so answering with the first line would answer a different question.
+2. **`truncated.files` was set unconditionally when git was cut off.** My own reasoning — "a cut-off stream means more was out there" — was true but attached to the wrong flag: it means "more *files* matched", and in a one-file repository that is simply false, and the badge repeats the lie to the user. A new `truncated.output` carries the honest claim; `files` and `matches` now say only what the parser actually found. As a bonus this made the cut-short test *sharper*, since `output` is reachable through no other path.
+3. **A filename containing a newline corrupted the path.** The parser split records on `\n` before locating fields, so `we\nird.ts` came back as `ird.ts` — a path that does not exist, cannot be opened, and silently replaced the real hit. Rewritten as a forward scanner that locates each field by its own delimiter; only the *content* field is newline-terminated, which is safe because content is always one line.
+
+### Honesty gaps
+
+- **The ticket's `total matches: 500` cap did not exist.** I had substituted a per-line bound for it and the plan doc quietly rewrote the table. Both now exist: the per-line bound is real and needed, *and* the total cap is implemented and tested.
+- **Two near-vacuous tests.** "Treats a flag-like query as a query" asserted only `totalMatches: 0` — which every wrong behaviour also returns; it now puts `--untracked` in a file and requires it to be found. And the promoted-Worktree case grepped for a string that existed only in an unrelated temp directory, so it could not have failed; it now writes *different* content to each tree and checks which comes back, at the protocol seam.
+- **`US-16.1` passed on results *or* no-matches**, making it unable to fail — while the story it encodes is precisely that the two are distinguishable. It now requires results (which the audit fixture guarantees) and the absence of the no-matches state. The fail-soft `catch` also re-recorded `US-16.1`, so a throw could overwrite a real verdict; it records under its own id now.
+- **The "no absolute path" assertion covered results but not errors**, which the ticket asked for explicitly.
+- **`App.tsx` still carried `neutral-*` literals** — raised in phase 16's review too, and exempted then on the grounds that this phase only threads data through it. Cheaper to migrate than to keep explaining, so it is done.
+- A stray `probe-search.mjs` was committed at the repo root. Removed.
+
+Also verified sound by that pass, and worth recording so it is not re-derived: no argument injection (`-e`, no shell); missing git, a non-git directory, a corrupt HEAD and a repo with no commits all degrade to a generic failure with no path leak; symlinks are not followed; a working tree inside a larger repository stays scoped to its own directory; unicode case-folding works; and NUL bytes and 200KB queries reject harmlessly.
+
 ## Files
 
 - `src/server/workspace/working-tree.ts` — `search`, `SEARCH_LIMITS`, the grep-output parser
@@ -76,7 +98,7 @@ That branch has a test, and the test was made to *prove* it: `truncated.files` i
 
 ## Verification
 
-- `pnpm typecheck` clean; full suite **446/446 across 32 files**, up from 410/410 across 31.
+- `pnpm typecheck` clean; full suite **452/452 across 32 files**, up from 410/410 across 31.
 - **Audit harness both viewports: 121 pass / 0 fail (desktop), 109 pass / 0 fail (mobile)**, with four new US-16 baselines. Zero axe violations, no horizontal scroll at 390px.
 - **Driven in a real browser at 390×844**, which is where the uncommitted-file case was actually proved:
 

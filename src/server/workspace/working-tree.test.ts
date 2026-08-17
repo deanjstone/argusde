@@ -374,8 +374,40 @@ describe("search", () => {
     expect(paths).not.toContain("blob.bin");
   });
 
-  it("treats a query that looks like a flag as a query", async () => {
-    await expect(search(root, "--untracked")).resolves.toMatchObject({ totalMatches: 0 });
+  it("treats a query that looks like a flag as a query, and finds it", async () => {
+    // Asserting "no matches" alone proved nothing — every wrong behaviour also
+    // returns nothing. This puts the text in a file, so the only way to pass is
+    // to have actually searched for it.
+    fs.writeFileSync(path.join(root, "src", "flags.ts"), "// pass --untracked to git grep\n");
+
+    const results = await search(root, "--untracked");
+    expect(results.files.map((f) => f.path)).toEqual(["src/flags.ts"]);
+  });
+
+  it("refuses a query spanning multiple lines rather than searching for something else", async () => {
+    // `git grep -e` splits its pattern on newlines into an OR of patterns, and
+    // an empty one among them matches EVERY line of EVERY file — verified: a
+    // newline-only query returned all 4 lines of a 4-line repository. Reachable
+    // straight over the WebSocket, since the UI's trim() only masks it.
+    await expect(search(root, "\n")).rejects.toThrow(/multiple lines/i);
+    await expect(search(root, "const x\n")).rejects.toThrow(/multiple lines/i);
+    await expect(search(root, "a\r\nb")).rejects.toThrow(/multiple lines/i);
+  });
+
+  it("returns nothing for a whitespace-only query instead of matching everything", async () => {
+    await expect(search(root, "   ")).resolves.toMatchObject({ totalMatches: 0, files: [] });
+  });
+
+  it("parses a filename containing a newline without corrupting the path", async () => {
+    // Splitting records on newline before locating the fields returned
+    // "ird.ts" for a file called "we\nird.ts" — a path that does not exist,
+    // cannot be opened, and silently replaced the real hit.
+    const weird = "we\nird.ts";
+    fs.writeFileSync(path.join(root, weird), "const needle = 1;\n");
+
+    const paths = (await search(root, "needle")).files.map((f) => f.path);
+    expect(paths).toContain(weird);
+    expect(paths).not.toContain("ird.ts");
   });
 
   it("groups every match in a file under that file, in line order", async () => {
@@ -408,7 +440,7 @@ describe("search", () => {
     it("leaves the flags clear when nothing was capped", async () => {
       const results = await search(root, "const x");
 
-      expect(results.truncated).toEqual({ files: false, matches: false, timedOut: false });
+      expect(results.truncated).toEqual({ files: false, matches: false, output: false, timedOut: false });
       expect(results.files.every((f) => f.matchesTruncated === false)).toBe(true);
     });
 
@@ -434,9 +466,26 @@ describe("search", () => {
       const results = await search(root, "needle");
 
       expect(results.files.length).toBeGreaterThan(0);
-      expect(results.truncated.files).toBe(true);
-      // The proof it came from the cut-short branch and not the file cap.
-      expect(results.files.length).toBeLessThan(SEARCH_LIMITS.files);
+      // `output` is set only by the cut-short branch, so this is the proof the
+      // branch ran — no inference from file counts needed. `files` deliberately
+      // stays false: claiming "more files matched" in a five-file repository
+      // would be a lie the badge repeats to the user.
+      expect(results.truncated.output).toBe(true);
+      expect(results.truncated.files).toBe(false);
+    });
+
+    it("caps the total match count across every file, not just within each one", async () => {
+      // files x matchesPerFile would otherwise allow 2000 matches, which at the
+      // line bound is ~600KB aimed at a phone.
+      const perFile = SEARCH_LIMITS.matchesPerFile;
+      const fileCount = Math.ceil(SEARCH_LIMITS.totalMatches / perFile) + 5;
+      for (let i = 0; i < fileCount; i++) {
+        fs.writeFileSync(path.join(root, `t${i}.ts`), `${Array.from({ length: perFile }, () => "needle").join("\n")}\n`);
+      }
+
+      const results = await search(root, "needle");
+      expect(results.totalMatches).toBeLessThanOrEqual(SEARCH_LIMITS.totalMatches);
+      expect(results.truncated.matches).toBe(true);
     });
 
     it("caps a single enormous matched line, so a minified file cannot blow the payload", async () => {

@@ -19,7 +19,7 @@ function results(over: Partial<SearchResults> = {}): SearchResults {
       },
     ],
     totalMatches: 3,
-    truncated: { files: false, matches: false, timedOut: false },
+    truncated: { files: false, matches: false, output: false, timedOut: false },
     ...over,
   };
 }
@@ -92,7 +92,7 @@ describe("WorkspaceSearch", () => {
   it("names each cap that bit, so a truncated result set is not read as a complete one", () => {
     render(
       <WorkspaceSearch
-        results={results({ truncated: { files: true, matches: true, timedOut: true } })}
+        results={results({ truncated: { files: true, matches: true, output: true, timedOut: true } })}
         loading={false}
         error={undefined}
         onOpenMatch={() => {}}

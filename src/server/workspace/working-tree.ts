@@ -45,6 +45,12 @@ export const SEARCH_LIMITS = {
   matchesPerFile: 20,
   /** Enough to judge relevance, bounded for a phone. */
   files: 100,
+  /**
+   * The payload bound across the whole result set. files × matchesPerFile
+   * would otherwise allow 2000 matches, which at the line bound below is
+   * ~600KB aimed at a phone.
+   */
+  totalMatches: 500,
   /** A minified file's single line can be megabytes; the payload bound that actually matters. */
   lineChars: 300,
   /** git grep over a huge tree is unbounded work, and a client can ask for it. */
@@ -310,9 +316,21 @@ export async function search(root: string, query: string): Promise<SearchResults
     query,
     files: [],
     totalMatches: 0,
-    truncated: { files: false, matches: false, timedOut: false },
+    truncated: { files: false, matches: false, output: false, timedOut: false },
   };
-  if (query === "") return empty;
+  // `git grep -e` splits its pattern on newlines into an OR of several
+  // patterns, and an empty one among them matches *every line of every file* —
+  // verified: a query of a single newline returned all 4 lines of a 4-line
+  // repository. Trimming in the UI masked it, but the command is reachable
+  // directly over the WebSocket, so the guard belongs here.
+  //
+  // Rejected rather than silently searching for part of what was asked:
+  // `git grep` cannot express a multi-line literal at all, so quietly
+  // searching only the first line would answer a different question.
+  if (/[\r\n]/.test(query)) {
+    throw new Error("Search terms cannot span multiple lines");
+  }
+  if (query.trim() === "") return empty;
 
   let stdout: string;
   try {
@@ -345,12 +363,15 @@ export async function search(root: string, query: string): Promise<SearchResults
         ...partial,
         query,
         truncated: {
+          // `files` and `matches` stay exactly as the parser found them. An
+          // earlier version forced `files: true` here on the reasoning that a
+          // cut-off stream means more was out there — true, but the flag says
+          // "more *files* matched", and in a one-file repository that is
+          // simply false. `output` is the honest claim: git was cut off, so
+          // this is partial.
           ...partial.truncated,
+          output: true,
           timedOut: failure.killed === true,
-          // Output cut mid-stream means there was definitively more to find,
-          // even if the file cap happened not to have bitten yet in what
-          // arrived — so this is stated rather than inferred.
-          files: true,
         },
       };
     }
@@ -362,28 +383,45 @@ export async function search(root: string, query: string): Promise<SearchResults
 }
 
 /**
- * Parses `path\0line\0content` records into per-file groups, applying the
- * caps as it goes rather than after — the point of a cap is not to hold the
- * whole result set in memory first.
+ * Parses git grep's `path\0line\0content\n` records into per-file groups,
+ * applying the caps as it goes rather than after — the point of a cap is not
+ * to hold the whole result set in memory first.
+ *
+ * Scans forward rather than splitting on newlines. Splitting first looks
+ * simpler and corrupts any path containing a newline: `we\nird.ts` came back
+ * as `ird.ts`, a path that does not exist and cannot be opened, with the real
+ * hit lost. Locating each field by its own delimiter avoids that — the path
+ * runs to the first NUL whatever it contains, and only the *content* field is
+ * newline-terminated, which is safe because content is always a single line.
  */
 function parseGrepOutput(stdout: string): Omit<SearchResults, "query"> {
   const files: SearchResults["files"] = [];
   const byPath = new Map<string, SearchResults["files"][number]>();
-  const truncated = { files: false, matches: false, timedOut: false };
+  const truncated = { files: false, matches: false, output: false, timedOut: false };
   let totalMatches = 0;
 
-  for (const record of stdout.split("\n")) {
-    if (record === "") continue;
-    // Only the first two separators are structural; content may contain NULs
-    // in principle, and a path may contain anything but NUL.
-    const firstNul = record.indexOf("\0");
-    const secondNul = record.indexOf("\0", firstNul + 1);
-    if (firstNul === -1 || secondNul === -1) continue;
+  let cursor = 0;
+  while (cursor < stdout.length) {
+    const firstNul = stdout.indexOf("\0", cursor);
+    if (firstNul === -1) break;
+    const secondNul = stdout.indexOf("\0", firstNul + 1);
+    if (secondNul === -1) break;
 
-    const filePath = record.slice(0, firstNul);
-    const line = Number.parseInt(record.slice(firstNul + 1, secondNul), 10);
-    if (!Number.isFinite(line)) continue;
-    const text = record.slice(secondNul + 1);
+    // Content is one line by definition, so its terminator is the record's.
+    let recordEnd = stdout.indexOf("\n", secondNul + 1);
+    if (recordEnd === -1) recordEnd = stdout.length;
+
+    const filePath = stdout.slice(cursor, firstNul);
+    const line = Number.parseInt(stdout.slice(firstNul + 1, secondNul), 10);
+    const text = stdout.slice(secondNul + 1, recordEnd);
+    cursor = recordEnd + 1;
+
+    if (!Number.isInteger(line)) continue;
+
+    if (totalMatches >= SEARCH_LIMITS.totalMatches) {
+      truncated.matches = true;
+      break;
+    }
 
     let entry = byPath.get(filePath);
     if (!entry) {

@@ -1054,7 +1054,7 @@ describe("ws-server", () => {
         ? (result.result as {
             files: { path: string; matches: { line: number; text: string }[] }[];
             totalMatches: number;
-            truncated: { files: boolean; matches: boolean; timedOut: boolean };
+            truncated: { files: boolean; matches: boolean; output: boolean; timedOut: boolean };
           })
         : undefined;
 
@@ -1062,7 +1062,7 @@ describe("ws-server", () => {
       expect(byPath.get("src/a.ts")?.matches.map((m) => m.line)).toEqual([1, 3]);
       expect(byPath.get("src/fresh.ts")).toBeDefined();
       expect(results?.totalMatches).toBe(3);
-      expect(results?.truncated).toEqual({ files: false, matches: false, timedOut: false });
+      expect(results?.truncated).toEqual({ files: false, matches: false, output: false, timedOut: false });
     });
 
     it("reports no matches as an empty result rather than a failed command", async () => {
@@ -1077,6 +1077,36 @@ describe("ws-server", () => {
       expect(results?.totalMatches).toBe(0);
     });
 
+    it("searches a promoted Thread's Worktree, not the Project's workspace root", async () => {
+      // Asserted by putting a *different* string in each tree and checking
+      // which one comes back — the previous version grepped for a string that
+      // existed only in an unrelated temp directory, which git could never
+      // have found either way.
+      const threadId = await threadIn(repoDir, ["sw1", "sw2"]);
+      const promoted = await send({ type: "thread.promote-to-worktree", commandId: "sw3", threadId });
+      const { worktreePath } = promoted.ok ? (promoted.result as { worktreePath: string }) : { worktreePath: "" };
+
+      fs.writeFileSync(path.join(repoDir, "which.ts"), "const marker = 'main-workspace';\n");
+      fs.writeFileSync(path.join(worktreePath, "which.ts"), "const marker = 'the-worktree';\n");
+
+      const inWorktree = await send({ type: "thread.search", commandId: "sw4", threadId, query: "the-worktree" });
+      const inMain = await send({ type: "thread.search", commandId: "sw5", threadId, query: "main-workspace" });
+
+      expect((inWorktree.ok ? (inWorktree.result as { totalMatches: number }) : undefined)?.totalMatches).toBe(1);
+      expect((inMain.ok ? (inMain.result as { totalMatches: number }) : undefined)?.totalMatches).toBe(0);
+    });
+
+    it("refuses a multi-line query over the wire, without leaking a server path", async () => {
+      const threadId = await threadIn(repoDir, ["sn1", "sn2"]);
+
+      const result = await send({ type: "thread.search", commandId: "sn3", threadId, query: "\n" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/multiple lines/i);
+        expect(result.error).not.toContain(repoDir);
+      }
+    });
+
     it("never puts an absolute server path in a search result", async () => {
       fs.writeFileSync(path.join(repoDir, "hit.ts"), "needle\n");
       const threadId = await threadIn(repoDir, ["se7", "se8"]);
@@ -1085,6 +1115,12 @@ describe("ws-server", () => {
       const results = result.ok ? (result.result as { files: { path: string }[] }) : undefined;
       expect(results?.files.length).toBeGreaterThan(0);
       for (const file of results?.files ?? []) expect(file.path).not.toContain(repoDir);
+
+      // The error path too, not just the success path — the ticket asks for
+      // "no absolute server path in any result *or error*".
+      const failed = await send({ type: "thread.read-file", commandId: "se10", threadId, path: "no-such-file.ts" });
+      expect(failed.ok).toBe(false);
+      if (!failed.ok) expect(failed.error).not.toContain(repoDir);
     });
 
     it("keeps working on a closed Thread — reviewing what happened must not require it to be open", async () => {
