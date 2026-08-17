@@ -35,6 +35,27 @@ Collapsed from wayfinder map [argusde#1](https://github.com/deanjstone/argusde/i
 - **Chat UI**: a custom chat-style surface rendering ACP session updates directly, not a terminal emulator.
 - **Build/packaging**: electron-builder.
 
+## UI components — shadcn only (locked 2026-08-17)
+
+ArgusDE's UI is built from **real shadcn components**, installed via the CLI — not
+hand-rolled lookalikes. shadcn was initialised properly on 2026-08-17 (`components.json`,
+Radix base, `radix-nova` style, neutral base colour, `@/*` → `src/web`); before that the
+`ui/` directory held hand-written approximations, which is what this rule exists to stop
+recurring.
+
+- **Add components with the CLI**: `pnpm dlx shadcn@latest add <component>`. Never write a
+  primitive by hand that shadcn already ships.
+- **Hand-rolling a component requires the user's explicit approval**, and is only on the
+  table when shadcn genuinely has no equivalent. Ask; don't assume.
+- Composed app-level surfaces (chat view, checkpoint strip, thread list) are ArgusDE's own,
+  but they must be **built out of** shadcn primitives rather than raw elements plus Tailwind.
+- Theme through the CSS variables in `src/web/index.css`, not per-component colour classes.
+  `--primary` is mapped to ArgusDE's violet accent so shadcn components inherit it.
+- The app shell sets `class="dark"` on `<html>` — the token set is dark-only by design.
+- [`shadcn-ui/chatbot-template`](https://github.com/shadcn-ui/chatbot-template) remains the
+  pattern source for chat surfaces (wayfinder map #83). Take components and patterns, not
+  its Next.js/Vercel AI SDK plumbing.
+
 ## Open / not yet resolved
 
 - **Exact provider list beyond Claude Code** — explicitly post-MVP, out of scope until a future multi-provider effort.
