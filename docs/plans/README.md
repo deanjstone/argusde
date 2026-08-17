@@ -24,3 +24,4 @@ Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjst
 
 - [Phase 13: Durable activity](phase-13-durable-activity.md) — spec #93 phase 1. Tool calls recorded as domain events and replayed from history, so reopening a Thread shows what the agent did, not only what it said.
 - [Phase 14: Activity rendering in the timeline](phase-14-activity-timeline-ui.md) — spec #93 phase 2. The visible half: activity cards with truncation and expand, the pre-feature notice, and the chat transcript migrated onto real shadcn primitives and theme tokens.
+- [Phase 15: Branch-backed worktrees](phase-15-branch-backed-worktrees.md) — spec #93 phase 3. A promoted Thread's worktree is created on a real branch, so commits the agent makes in it survive the Thread being closed.

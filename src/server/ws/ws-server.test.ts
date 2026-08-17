@@ -11,6 +11,7 @@ import { EventStore } from "../persistence/event-store.js";
 import { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { AcpSession } from "../../utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../../utility/spawn-agent-process.js";
+import { branchNameFor } from "../worktree/worktree-store.js";
 import { startWsServer, type WsServerHandle } from "./ws-server.js";
 import type { ServerPush } from "../../shared/ws-protocol.js";
 
@@ -342,6 +343,35 @@ describe("ws-server", () => {
     // feature depends on, proven for real rather than assumed.
     const ref = "refs/argusde/checkpoints/" + threadId + "/turn/1";
     expect(() => execFileSync("git", ["rev-parse", ref], { cwd: repoDir })).not.toThrow();
+  }, 20_000);
+
+  it("promotes onto a real branch named for the Thread, so the agent's commits outlive the Thread", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "bb1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "bb2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const promoteResult = await send({ type: "thread.promote-to-worktree", commandId: "bb3", threadId });
+    expect(promoteResult.ok).toBe(true);
+    const { worktreePath } = promoteResult.ok ? (promoteResult.result as { worktreePath: string }) : { worktreePath: "" };
+
+    const branch = branchNameFor(threadId);
+    expect(execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: worktreePath, encoding: "utf8" }).trim()).toBe(branch);
+
+    // A commit the agent could plausibly have made, then a real close —
+    // the sequence that used to lose it.
+    fs.writeFileSync(path.join(worktreePath, "file.txt"), "committed by the agent\n");
+    execFileSync("git", ["add", "-A"], { cwd: worktreePath });
+    execFileSync("git", ["commit", "-m", "agent work"], { cwd: worktreePath });
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktreePath, encoding: "utf8" }).trim();
+
+    const closeResult = await send({ type: "thread.close", commandId: "bb4", threadId });
+    expect(closeResult.ok).toBe(true);
+    expect(fs.existsSync(worktreePath)).toBe(false);
+
+    // Still reachable from the main workspace via the branch — closing a
+    // Thread must not be a destructive act against committed work.
+    expect(execFileSync("git", ["rev-parse", branch], { cwd: repoDir, encoding: "utf8" }).trim()).toBe(sha);
   }, 20_000);
 
   it("refuses to promote a thread a second time", async () => {
