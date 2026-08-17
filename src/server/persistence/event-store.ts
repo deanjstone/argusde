@@ -401,6 +401,24 @@ export class EventStore {
     return (row.maxSequence ?? 0) + 1;
   }
 
+  /**
+   * The next unused Turn number for a Thread, so ThreadRuntime's in-memory
+   * counter can be re-seeded rather than restarting at 1 and colliding with
+   * checkpoints that already exist (argusde#96).
+   *
+   * Sibling of getNextSequence above, and needed for the same reason: a
+   * counter that lives only in a runtime's memory has to be recoverable from
+   * what was persisted, or rebuilding the runtime silently rewinds it.
+   */
+  getNextTurn(threadId: string): number {
+    const row = this.db
+      .prepare("SELECT MAX(turn) AS maxTurn FROM checkpoints WHERE thread_id = ?")
+      .get(threadId) as { maxTurn: number | null };
+    // Turn 0 is the baseline every Thread gets on start(), so a Thread with
+    // only that still has its first real Turn ahead of it.
+    return (row.maxTurn ?? 0) + 1;
+  }
+
   listCheckpoints(threadId: string): CheckpointRecord[] {
     return this.db
       .prepare(
