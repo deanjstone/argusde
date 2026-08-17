@@ -4,6 +4,19 @@ import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
+import { Bubble, BubbleContent } from "./ui/bubble.js";
+import { Item, ItemContent, ItemTitle } from "./ui/item.js";
+import { Marker, MarkerContent } from "./ui/marker.js";
+import { Message, MessageContent } from "./ui/message.js";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "./ui/message-scroller.js";
+import { ActivityCard } from "./activity-card.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView, type DiffRange } from "./diff-view.js";
 import { ModeSwitcher } from "./mode-switcher.js";
@@ -51,7 +64,7 @@ function renderContentBlock(block: ChatContentBlock, key: number) {
       return <img key={key} src={block.uri ?? `data:${block.mimeType};base64,${block.data}`} alt="" className="max-w-full rounded" />;
     case "resource_link":
       return (
-        <a key={key} href={block.uri} className="text-violet-400 underline">
+        <a key={key} href={block.uri} className="text-primary underline">
           {block.name}
         </a>
       );
@@ -62,30 +75,23 @@ function renderContentBlock(block: ChatContentBlock, key: number) {
 
 function TimelineItemView({ item }: { item: TimelineItem }) {
   if (item.type === "message") {
+    const align = item.role === "user" ? "end" : "start";
     return (
-      <div className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}>
-        <div
-          className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-            item.role === "user" ? "bg-violet-600 text-white" : "bg-neutral-900 text-neutral-100"
-          }`}
-        >
-          {item.content.map((block, i) => renderContentBlock(block, i))}
-        </div>
-      </div>
+      <Message align={align}>
+        <MessageContent>
+          {/* The user's own words take the accent (default = primary); the
+              agent's take the neutral surface, so authorship is readable
+              without a label. Both come from the theme's tokens via the
+              variant, not from per-message colour classes. */}
+          <Bubble align={align} variant={item.role === "user" ? "default" : "muted"}>
+            <BubbleContent>{item.content.map((block, i) => renderContentBlock(block, i))}</BubbleContent>
+          </Bubble>
+        </MessageContent>
+      </Message>
     );
   }
 
-  return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-2 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-neutral-200">{item.title ?? item.id}</span>
-        {item.status && <span className="text-xs text-neutral-500">{item.status}</span>}
-      </div>
-      {item.content.length > 0 && (
-        <div className="mt-1 text-neutral-400">{item.content.map((block, i) => renderContentBlock(block, i))}</div>
-      )}
-    </div>
-  );
+  return <ActivityCard item={item} />;
 }
 
 /** Message list + input + permission prompt + connection status, mobile-first. */
@@ -139,12 +145,12 @@ export function ChatView({
 
   return (
     <div
-      className={`flex h-full flex-col border-2 bg-neutral-950 text-neutral-100 ${
-        worktreePath !== null ? "border-amber-500" : "border-transparent"
+      className={`flex h-full flex-col border-2 bg-background text-foreground ${
+        worktreePath !== null ? "border-warning" : "border-transparent"
       }`}
     >
       {state.connectionState !== "connected" && !threadClosed && (
-        <div className="border-b border-neutral-800 px-4 py-2 text-xs text-neutral-400">
+        <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
           <span>{state.connectionState}…</span>
         </div>
       )}
@@ -157,18 +163,18 @@ export function ChatView({
           visible on a closed thread too: the status line is noise there, an
           actual error isn't. */}
       {state.connectionError && (
-        <div className="border-b border-neutral-800 px-4 py-2 text-xs">
-          <span className="text-red-400">{state.connectionError}</span>
+        <div className="border-b border-border px-4 py-2 text-xs">
+          <span className="text-destructive">{state.connectionError}</span>
         </div>
       )}
 
       <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
       {(showLiveWorktreeBadge || canPromote || showCloseButton) && (
-        <div className="flex items-center justify-end gap-2 border-b border-neutral-800 px-3 py-2">
+        <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2">
           {showLiveWorktreeBadge && (
-            <span className="flex items-center gap-1.5 text-xs text-amber-400">
-              <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
+            <span className="flex items-center gap-1.5 text-xs text-warning">
+              <span aria-hidden className="h-2 w-2 rounded-full bg-warning" />
               Running in an isolated worktree
             </span>
           )}
@@ -198,33 +204,79 @@ export function ChatView({
         onChangeRange={onChangeDiffRange}
       />
 
-      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {state.timeline.map((item) => (
-          <TimelineItemView key={item.id} item={item} />
-        ))}
-        {state.agentStatus === "working" && <p className="text-sm text-neutral-500">Claude is working…</p>}
+      {/* `defaultScrollPosition="end"` rather than the library default
+          ("last-anchor", which pins the newest turn to the *top* of the
+          viewport by injecting a tall spacer beneath it). That is a real
+          pattern, but it is not this app's existing behaviour, and on a
+          short Thread it leaves most of the screen deliberately blank —
+          which reads as a broken transcript rather than a design. Scrolling
+          to the actual end preserves what ArgusDE did before this
+          migration, and adds the anchoring it was missing. */}
+      <MessageScrollerProvider defaultScrollPosition="end">
+        {/* Replaces a bare overflow-y-auto div, which had no scroll
+            anchoring at all — a streaming reply used to scroll out from
+            under the reader. The scroller keeps the view pinned to the end
+            while the agent is talking and offers a jump-to-end control the
+            moment you scroll away from it. */}
+        <MessageScroller className="flex-1">
+          <MessageScrollerViewport>
+            <MessageScrollerContent className="gap-3 px-4 py-4" spacerClassName="!h-0 !mt-0">
+              {!state.recordsActivity && (
+                <Marker variant="separator">
+                  <MarkerContent>
+                    This thread predates activity recording — its tool calls were never saved.
+                  </MarkerContent>
+                </Marker>
+              )}
 
-        {state.pendingPermissionRequest && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-            <p className="mb-3 text-sm text-amber-200">{state.pendingPermissionRequest.toolCallTitle ?? "Permission requested"}</p>
-            <div className="flex gap-2">
-              {state.pendingPermissionRequest.options.map((option) => (
-                <Button
-                  key={option.optionId}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRespondPermission(state.pendingPermissionRequest!.requestId, { optionId: option.optionId })}
-                >
-                  {option.name}
-                </Button>
+              {state.timeline.map((item) => (
+                <MessageScrollerItem key={item.id}>
+                  <TimelineItemView item={item} />
+                </MessageScrollerItem>
               ))}
-            </div>
-          </div>
-        )}
-      </div>
 
-      {threadClosed && <p className="border-t border-neutral-800 px-4 pt-2 text-xs text-neutral-500">This thread is closed.</p>}
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-neutral-800 p-3">
+              {state.agentStatus === "working" && (
+                <MessageScrollerItem scrollAnchor>
+                  <p className="text-sm text-muted-foreground">Claude is working…</p>
+                </MessageScrollerItem>
+              )}
+
+              {state.pendingPermissionRequest && (
+                <MessageScrollerItem scrollAnchor>
+                  {/* Deliberately NOT shadcn's `questionnaire`, which spec
+                      #93's component table suggests: that component is a
+                      multi-step form wizard (progress, previous/skip/next/
+                      submit), and an ACP permission request is a one-shot
+                      choice among N options. Built from `item` + `button`
+                      instead — real primitives, real tokens, without
+                      forcing a wizard's semantics onto a prompt. */}
+                  <Item variant="outline" size="sm" className="flex-col items-stretch gap-3 border-warning/40 bg-warning/5">
+                    <ItemTitle className="text-warning">
+                      {state.pendingPermissionRequest.toolCallTitle ?? "Permission requested"}
+                    </ItemTitle>
+                    <ItemContent className="flex flex-row flex-wrap gap-2">
+                      {state.pendingPermissionRequest.options.map((option) => (
+                        <Button
+                          key={option.optionId}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onRespondPermission(state.pendingPermissionRequest!.requestId, { optionId: option.optionId })}
+                        >
+                          {option.name}
+                        </Button>
+                      ))}
+                    </ItemContent>
+                  </Item>
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton />
+        </MessageScroller>
+      </MessageScrollerProvider>
+
+      {threadClosed && <p className="border-t border-border px-4 pt-2 text-xs text-muted-foreground">This thread is closed.</p>}
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-border p-3">
         <Input
           placeholder="Message ArgusDE…"
           value={text}

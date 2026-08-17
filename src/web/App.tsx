@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
-import { WS_PATH, type CheckpointRecord, type DirectoryListing, type ProjectRecord, type ThreadRecord } from "../shared/ws-protocol.js";
+import {
+  WS_PATH,
+  type ActivityRecord,
+  type CheckpointRecord,
+  type DirectoryListing,
+  type ProjectRecord,
+  type ThreadHistoryMessage,
+  type ThreadRecord,
+} from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
@@ -20,12 +28,6 @@ interface ThreadInfo {
   title: string;
   worktreePath: string | null;
   closedAt: string | null;
-}
-
-interface ThreadHistoryMessage {
-  messageId: string;
-  role: "user" | "agent";
-  content: ChatContentBlock[];
 }
 
 const EMPTY_DIFF: DiffState = { text: null, loading: false, error: undefined };
@@ -194,6 +196,8 @@ export function App() {
   function becomeActiveThread(
     info: ThreadInfo,
     messages: ThreadHistoryMessage[],
+    activities: ActivityRecord[],
+    recordsActivity: boolean,
     currentModeId: string | null,
     availableModes: SessionModeSummary[],
     connectionState: ConnectionState,
@@ -204,7 +208,16 @@ export function App() {
     setHasEverHadThread(true);
     writeLastActiveThreadId(info.threadId);
     setChatState((s) =>
-      chatStateReducer(s, { kind: "history-loaded", messages, currentModeId, availableModes, connectionState, connectionError }),
+      chatStateReducer(s, {
+        kind: "history-loaded",
+        messages,
+        activities,
+        recordsActivity,
+        currentModeId,
+        availableModes,
+        connectionState,
+        connectionError,
+      }),
     );
     setDiff(EMPTY_DIFF);
     setActiveTurn(undefined);
@@ -308,6 +321,8 @@ export function App() {
       connectionState: ConnectionState;
       connectionError: string | undefined;
       messages: ThreadHistoryMessage[];
+      activities: ActivityRecord[];
+      recordsActivity: boolean;
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
@@ -319,6 +334,8 @@ export function App() {
         closedAt: history.closedAt,
       },
       history.messages,
+      history.activities,
+      history.recordsActivity,
       history.currentModeId,
       history.availableModes,
       history.connectionState,

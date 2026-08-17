@@ -1,5 +1,12 @@
-import type { AcpSessionEvent, ChatContentBlock, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
-import { appendOrMergeMessage, createMessageIdGenerator, upsertToolCall, type TimelineItem } from "../shared/timeline.js";
+import type { AcpSessionEvent, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
+import type { ActivityRecord, ThreadHistoryMessage } from "../shared/ws-protocol.js";
+import {
+  appendOrMergeMessage,
+  createMessageIdGenerator,
+  mergeHistoryTimeline,
+  upsertToolCall,
+  type TimelineItem,
+} from "../shared/timeline.js";
 
 export type { MessageRole, TimelineMessage, TimelineToolCall, TimelineItem } from "../shared/timeline.js";
 
@@ -21,6 +28,13 @@ export interface ChatState {
   currentModeId: string | undefined;
   /** The mode catalog, learned once from the session-start mode-changed event — empty when the connected agent doesn't advertise modes at all. */
   availableModes: SessionModeSummary[];
+  /**
+   * False only for a Thread created before durable activity existed (spec
+   * #93 phase 1). Defaults to true: a Thread with no history loaded yet is
+   * recording, and an empty timeline must not be explained away as a
+   * limitation unless the server actually said so.
+   */
+  recordsActivity: boolean;
 }
 
 export const initialChatState: ChatState = {
@@ -32,6 +46,7 @@ export const initialChatState: ChatState = {
   apiVersion: undefined,
   currentModeId: undefined,
   availableModes: [],
+  recordsActivity: true,
 };
 
 /**
@@ -66,7 +81,9 @@ export type ChatEvent =
   | { kind: "permission-responded"; requestId: string }
   | {
       kind: "history-loaded";
-      messages: Array<{ messageId: string; role: "user" | "agent"; content: ChatContentBlock[] }>;
+      messages: ThreadHistoryMessage[];
+      activities: ActivityRecord[];
+      recordsActivity: boolean;
       currentModeId: string | null;
       availableModes: SessionModeSummary[];
       connectionState: ConnectionState;
@@ -160,7 +177,8 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
       // merge this thread's history into whatever was already displayed.
       return {
         ...state,
-        timeline: event.messages.map((m) => ({ type: "message", id: m.messageId, role: m.role, content: m.content })),
+        timeline: mergeHistoryTimeline(event.messages, event.activities),
+        recordsActivity: event.recordsActivity,
         currentModeId: event.currentModeId ?? undefined,
         availableModes: event.availableModes,
         connectionState: event.connectionState,

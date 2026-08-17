@@ -16,6 +16,7 @@ describe("chatStateReducer", () => {
       apiVersion: undefined,
       currentModeId: undefined,
       availableModes: [],
+      recordsActivity: true,
     });
   });
 
@@ -234,9 +235,11 @@ describe("chatStateReducer", () => {
       {
         kind: "history-loaded",
         messages: [
-          { messageId: "m1", role: "user", content: [{ type: "text", text: "what's broken?" }] },
-          { messageId: "m2", role: "agent", content: [{ type: "text", text: "the retry handler." }] },
+          { messageId: "m1", role: "user", content: [{ type: "text", text: "what's broken?" }], sequence: 1 },
+          { messageId: "m2", role: "agent", content: [{ type: "text", text: "the retry handler." }], sequence: 2 },
         ],
+        activities: [],
+        recordsActivity: true,
         currentModeId: "plan",
         availableModes: [{ id: "plan", name: "Plan" }],
         connectionState: "connected",
@@ -256,7 +259,7 @@ describe("chatStateReducer", () => {
 
   it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
     const state = reduceAll([
-      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
     ]);
 
     expect(state.connectionState).toBe("connected");
@@ -270,7 +273,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
     ]);
 
     expect(state.currentModeId).toBeUndefined();
@@ -305,5 +308,135 @@ describe("chatStateReducer", () => {
       { kind: "session-event", threadId: "t1", event: { kind: "turn-complete", stopReason: "end_turn" } },
     ]);
     expect(state.agentStatus).toBe("idle");
+  });
+  describe("history-loaded with recorded activity", () => {
+    const activity = (over = {}) => ({
+      threadId: "t1",
+      activityId: "tc-1",
+      sequence: 3,
+      turn: 1,
+      kind: "read",
+      status: "completed" as const,
+      summary: "Read src/index.ts",
+      detail: "file contents",
+      data: [{ type: "text" as const, text: "file contents" }],
+      dataTruncated: false,
+      createdAt: "",
+      ...over,
+    });
+
+    it("merges activities and messages into one timeline ordered by sequence", () => {
+      const state = reduceAll([
+        {
+          kind: "history-loaded",
+          messages: [
+            { messageId: "m1", role: "user", content: [{ type: "text", text: "what's broken?" }], sequence: 1 },
+            { messageId: "m2", role: "agent", content: [{ type: "text", text: "let me look" }], sequence: 2 },
+            { messageId: "m3", role: "agent", content: [{ type: "text", text: "found it" }], sequence: 4 },
+          ],
+          activities: [activity({ activityId: "tc-1", sequence: 3 }), activity({ activityId: "tc-2", sequence: 5, summary: "Edit src/index.ts" })],
+          recordsActivity: true,
+          currentModeId: null,
+          availableModes: [],
+          connectionState: "connected",
+          connectionError: undefined,
+        },
+      ]);
+
+      // One narrative, not two lists — and specifically the order the agent
+      // worked in, with its second reply after the first tool call.
+      expect(state.timeline.map((item) => item.id)).toEqual(["m1", "m2", "tc-1", "m3", "tc-2"]);
+    });
+
+    it("replays an activity as a tool call carrying its title, status and result", () => {
+      const state = reduceAll([
+        {
+          kind: "history-loaded",
+          messages: [],
+          activities: [activity()],
+          recordsActivity: true,
+          currentModeId: null,
+          availableModes: [],
+          connectionState: "connected",
+          connectionError: undefined,
+        },
+      ]);
+
+      // The same shape a live tool call takes, deliberately — one card
+      // renders both paths, so a replayed timeline can't drift from the
+      // live one it is meant to reproduce.
+      expect(state.timeline).toEqual([
+        {
+          type: "tool-call",
+          id: "tc-1",
+          title: "Read src/index.ts",
+          kind: "read",
+          status: "completed",
+          content: [{ type: "text", text: "file contents" }],
+          dataTruncated: false,
+        },
+      ]);
+    });
+
+    it("carries the capture-time truncation flag through to the timeline", () => {
+      const state = reduceAll([
+        {
+          kind: "history-loaded",
+          messages: [],
+          activities: [activity({ dataTruncated: true })],
+          recordsActivity: true,
+          currentModeId: null,
+          availableModes: [],
+          connectionState: "connected",
+          connectionError: undefined,
+        },
+      ]);
+
+      expect(state.timeline[0]).toMatchObject({ type: "tool-call", dataTruncated: true });
+    });
+
+    it("keeps messages recorded before sequencing existed in their original relative order, ahead of anything sequenced", () => {
+      const state = reduceAll([
+        {
+          kind: "history-loaded",
+          messages: [
+            { messageId: "old-1", role: "user", content: [{ type: "text", text: "first" }], sequence: null },
+            { messageId: "old-2", role: "agent", content: [{ type: "text", text: "second" }], sequence: null },
+            { messageId: "new-1", role: "user", content: [{ type: "text", text: "third" }], sequence: 1 },
+          ],
+          activities: [activity({ sequence: 2 })],
+          recordsActivity: true,
+          currentModeId: null,
+          availableModes: [],
+          connectionState: "connected",
+          connectionError: undefined,
+        },
+      ]);
+
+      // Unsequenced messages have no position relative to activities, so
+      // they keep their own order and lead — rather than being given an
+      // invented one.
+      expect(state.timeline.map((item) => item.id)).toEqual(["old-1", "old-2", "new-1", "tc-1"]);
+    });
+
+    it("records whether the Thread was recording activity at all", () => {
+      const notRecording = reduceAll([
+        {
+          kind: "history-loaded",
+          messages: [],
+          activities: [],
+          recordsActivity: false,
+          currentModeId: null,
+          availableModes: [],
+          connectionState: "connected",
+          connectionError: undefined,
+        },
+      ]);
+
+      // An empty timeline means two different things depending on this
+      // flag, which is the whole reason it exists.
+      expect(notRecording.recordsActivity).toBe(false);
+      expect(initialChatState.recordsActivity).toBe(true);
+    });
   });
 });

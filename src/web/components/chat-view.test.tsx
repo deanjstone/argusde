@@ -219,7 +219,12 @@ describe("ChatView", () => {
 
     expect(screen.queryByRole("button", { name: /promote to worktree/i })).not.toBeInTheDocument();
     expect(screen.getByText(/worktree/i)).toBeInTheDocument();
-    expect(container.firstElementChild?.className).toMatch(/border-(amber|emerald|violet)-\d+/);
+    // Was /border-(amber|emerald|violet)-\d+/ — an assertion on the Tailwind
+    // palette literal, which is exactly what spec #93's shadcn migration
+    // replaces. The user-visible behaviour ("a promoted thread is bordered
+    // in a colour the default state doesn't use") is unchanged; only the
+    // spelling of the colour moved onto a theme token.
+    expect(container.firstElementChild?.className).toMatch(/border-warning/);
   });
 
   it("does not claim the worktree is still running once the thread is closed — the worktree was already destroyed by close", () => {
@@ -357,5 +362,23 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText(/message/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
     expect(screen.getByText(/closed/i)).toBeInTheDocument();
+  });
+  describe("pre-feature activity notice", () => {
+    it("says so when the Thread predates activity recording, rather than showing an empty timeline as if nothing happened", () => {
+      render(
+        <ChatView
+          state={{ ...initialChatState, recordsActivity: false }}
+          onSend={() => {}}
+          onRespondPermission={() => {}}
+        />,
+      );
+
+      expect(screen.getByText(/predates activity recording/i)).toBeInTheDocument();
+    });
+
+    it("stays silent for a Thread that is recording — an empty timeline there really does mean nothing happened", () => {
+      render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
+      expect(screen.queryByText(/predates activity recording/i)).not.toBeInTheDocument();
+    });
   });
 });

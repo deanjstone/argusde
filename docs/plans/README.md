@@ -23,3 +23,4 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjstone/argusde/issues/93)), whose own phase numbering starts fresh at 0; files here keep this directory's running count:
 
 - [Phase 13: Durable activity](phase-13-durable-activity.md) — spec #93 phase 1. Tool calls recorded as domain events and replayed from history, so reopening a Thread shows what the agent did, not only what it said.
+- [Phase 14: Activity rendering in the timeline](phase-14-activity-timeline-ui.md) — spec #93 phase 2. The visible half: activity cards with truncation and expand, the pre-feature notice, and the chat transcript migrated onto real shadcn primitives and theme tokens.
