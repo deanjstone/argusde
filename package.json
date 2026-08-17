@@ -11,6 +11,7 @@
   "packageManager": "pnpm@11.10.0",
   "scripts": {
     "dev": "vite --config vite.config.web.ts",
+    "prototype:plan": "vite --config vite.config.web.ts --port 5199 --strictPort",
     "build": "pnpm run typecheck && pnpm run build:web && pnpm run build:connect-screen && tsc -p tsconfig.node.json --outDir dist",
     "build:web": "vite build -c vite.config.web.ts",
     "build:connect-screen": "rm -rf dist/connect-screen && mkdir -p dist && cp -r src/connect-screen dist/connect-screen",

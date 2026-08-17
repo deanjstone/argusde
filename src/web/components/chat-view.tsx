@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
 import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
@@ -37,6 +37,14 @@ export interface ChatViewProps {
   onCloseThread?: () => void;
   closing?: boolean;
   threadClosed?: boolean;
+  /**
+   * PROTOTYPE (argusde#90) — throwaway slots the plan-surface prototype
+   * mounts its variants into, so each variant is judged inside the real
+   * chat chrome instead of an empty page. Delete with the prototype.
+   */
+  planSlotPinned?: ReactNode;
+  planSlotInline?: ReactNode;
+  planSlotComposer?: ReactNode;
 }
 
 function renderContentBlock(block: ChatContentBlock, key: number) {
@@ -111,6 +119,9 @@ export function ChatView({
   onCloseThread,
   closing = false,
   threadClosed = false,
+  planSlotPinned,
+  planSlotInline,
+  planSlotComposer,
 }: ChatViewProps) {
   const [text, setText] = useState("");
   // Promoting relocates the thread's agent session to a fresh worktree —
@@ -185,6 +196,7 @@ export function ChatView({
         </div>
       )}
 
+      {planSlotPinned}
       <CheckpointStrip checkpoints={checkpoints} onSelectTurn={onSelectTurn} onSinceStart={onSinceStart} activeTurn={activeTurn} />
       <DiffView
         diff={diff.text}
@@ -202,6 +214,7 @@ export function ChatView({
         {state.timeline.map((item) => (
           <TimelineItemView key={item.id} item={item} />
         ))}
+        {planSlotInline}
         {state.agentStatus === "working" && <p className="text-sm text-neutral-500">Claude is working…</p>}
 
         {state.pendingPermissionRequest && (
@@ -223,6 +236,7 @@ export function ChatView({
         )}
       </div>
 
+      {planSlotComposer}
       {threadClosed && <p className="border-t border-neutral-800 px-4 pt-2 text-xs text-neutral-500">This thread is closed.</p>}
       <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-neutral-800 p-3">
         <Input
