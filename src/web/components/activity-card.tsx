@@ -1,12 +1,12 @@
 import { useState } from "react";
-import type { ChatContentBlock } from "../../shared/acp-events.js";
 import type { TimelineToolCall } from "../chat-state.js";
+import { flattenBlockText, renderContentBlock } from "./content-block.js";
 import { Badge } from "./ui/badge.js";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible.js";
 import { Item, ItemActions, ItemContent, ItemTitle } from "./ui/item.js";
 
 /**
- * How much of an activity's result the collapsed card shows.
+ * How much of an activity's result text the collapsed card shows.
  *
  * Deliberately shorter than the server's 400-character `detail` bound
  * (see activity-bounds.ts) so a collapsed card stays compact — roughly six
@@ -22,58 +22,6 @@ export const ACTIVITY_PREVIEW_CHARS = 240;
 
 /** Marks a preview as cut short, so a clamped result is never read as a short one. */
 const ELLIPSIS = "…";
-
-/**
- * Flattens a tool call's content into the plain text the collapsed card
- * previews. Non-text blocks contribute a short placeholder rather than
- * nothing, so an activity whose whole result is an image still reads as
- * having produced something.
- */
-function previewText(content: ChatContentBlock[]): string {
-  return content
-    .map((block) => {
-      switch (block.type) {
-        case "text":
-          return block.text;
-        case "image":
-          return `[image ${block.mimeType}]`;
-        case "resource_link":
-          return `[${block.name}]`;
-        default:
-          return "";
-      }
-    })
-    .join("\n")
-    .trim();
-}
-
-function renderContentBlock(block: ChatContentBlock, key: number) {
-  switch (block.type) {
-    case "text":
-      return (
-        <span key={key} className="whitespace-pre-wrap">
-          {block.text}
-        </span>
-      );
-    case "image":
-      return (
-        <img
-          key={key}
-          src={block.uri ?? `data:${block.mimeType};base64,${block.data}`}
-          alt=""
-          className="max-w-full rounded"
-        />
-      );
-    case "resource_link":
-      return (
-        <a key={key} href={block.uri} className="text-primary underline">
-          {block.name}
-        </a>
-      );
-    default:
-      return null;
-  }
-}
 
 /**
  * A failed or rejected call has to be distinguishable at a glance from one
@@ -97,16 +45,20 @@ function statusVariant(status: NonNullable<TimelineToolCall["status"]>) {
  * Takes a TimelineToolCall rather than an ActivityRecord so a single card
  * renders both paths — a replayed activity is merged into the timeline as
  * a tool call precisely so the two can't drift apart.
+ *
+ * Only *text* is ever truncated. Images and resource links render in full
+ * whether the card is collapsed or not, because that is what the card did
+ * before spec #93 phase 2 migrated it, and story 63 asks a migration to
+ * preserve behaviour. Gating them behind the expand control (an earlier
+ * shape of this component) made an image in a short result unreachable:
+ * there was no clamped text, so no trigger appeared.
  */
 export function ActivityCard({ item }: { item: TimelineToolCall }) {
   const [expanded, setExpanded] = useState(false);
-  const text = previewText(item.content);
+  const text = flattenBlockText(item.content);
+  const nonTextBlocks = item.content.filter((block) => block.type !== "text");
   const clamped = text.length > ACTIVITY_PREVIEW_CHARS;
   const preview = clamped ? text.slice(0, ACTIVITY_PREVIEW_CHARS - ELLIPSIS.length) + ELLIPSIS : text;
-  // An image-only result has no preview text but is still worth opening,
-  // so expandability is keyed off having any content at all rather than
-  // off the preview being clamped.
-  const canExpand = clamped || (text.length === 0 && item.content.length > 0);
 
   return (
     <Item variant="outline" size="sm" className="flex-col items-stretch gap-1.5">
@@ -127,25 +79,34 @@ export function ActivityCard({ item }: { item: TimelineToolCall }) {
         </p>
       )}
 
-      {item.content.length > 0 && (
-        <Collapsible open={expanded} onOpenChange={setExpanded}>
-          {!expanded && text.length > 0 && (
-            <ItemContent data-testid="activity-preview" className="text-muted-foreground">
-              {preview}
-            </ItemContent>
-          )}
-          <CollapsibleContent>
-            <ItemContent className="text-muted-foreground">
-              {item.content.map((block, i) => renderContentBlock(block, i))}
-            </ItemContent>
-          </CollapsibleContent>
-          {canExpand && (
+      {nonTextBlocks.length > 0 && (
+        <ItemContent className="text-muted-foreground">
+          {nonTextBlocks.map((block, i) => renderContentBlock(block, i))}
+        </ItemContent>
+      )}
+
+      {text.length > 0 &&
+        (clamped ? (
+          <Collapsible open={expanded} onOpenChange={setExpanded}>
+            {!expanded && (
+              <ItemContent data-testid="activity-preview" className="text-muted-foreground">
+                {preview}
+              </ItemContent>
+            )}
+            <CollapsibleContent>
+              <ItemContent className="text-muted-foreground">
+                <span className="whitespace-pre-wrap">{text}</span>
+              </ItemContent>
+            </CollapsibleContent>
             <CollapsibleTrigger className="mt-1 text-xs text-primary underline underline-offset-2">
               {expanded ? "Show less" : "Show more"}
             </CollapsibleTrigger>
-          )}
-        </Collapsible>
-      )}
+          </Collapsible>
+        ) : (
+          <ItemContent data-testid="activity-preview" className="text-muted-foreground">
+            <span className="whitespace-pre-wrap">{text}</span>
+          </ItemContent>
+        ))}
     </Item>
   );
 }

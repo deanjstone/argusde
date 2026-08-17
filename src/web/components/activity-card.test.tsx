@@ -84,4 +84,51 @@ describe("ActivityCard", () => {
     render(<ActivityCard item={toolCall({ status: undefined })} />);
     expect(screen.queryByTestId("activity-status")).not.toBeInTheDocument();
   });
+  it("renders an image result even when the text beside it is short enough not to clamp", () => {
+    // Regression: expansion used to be the only way to reach non-text
+    // blocks, and it was gated on the text being clamped — so a short
+    // result with an image showed neither the image nor a way to get to
+    // it. The pre-migration card rendered every block unconditionally.
+    render(
+      <ActivityCard
+        item={toolCall({
+          content: [
+            { type: "text", text: "here is the screenshot" },
+            { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("img")).toBeInTheDocument();
+    expect(screen.getByText(/here is the screenshot/)).toBeInTheDocument();
+  });
+
+  it("renders a resource link in the collapsed card, without needing to expand", () => {
+    render(
+      <ActivityCard
+        item={toolCall({ content: [{ type: "resource_link", uri: "file:///tmp/a.ts", name: "a.ts" }] })}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "a.ts" })).toHaveAttribute("href", "file:///tmp/a.ts");
+    expect(screen.queryByRole("button", { name: /show more/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps an image visible alongside clamped text, rather than hiding it behind the expand control", () => {
+    render(
+      <ActivityCard
+        item={toolCall({
+          content: [
+            { type: "text", text: "x".repeat(ACTIVITY_PREVIEW_CHARS * 2) },
+            { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+          ],
+        })}
+      />,
+    );
+
+    // Only the text is a truncation candidate — the image is not.
+    expect(screen.getByRole("img")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show more/i })).toBeInTheDocument();
+  });
 });

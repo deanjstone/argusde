@@ -1,9 +1,11 @@
 import { useState } from "react";
-import type { ChatContentBlock, PermissionOutcome } from "../../shared/acp-events.js";
+import type { PermissionOutcome } from "../../shared/acp-events.js";
 import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
+import { renderContentBlock } from "./content-block.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
+import { Badge } from "./ui/badge.js";
 import { Bubble, BubbleContent } from "./ui/bubble.js";
 import { Item, ItemContent, ItemTitle } from "./ui/item.js";
 import { Marker, MarkerContent } from "./ui/marker.js";
@@ -50,27 +52,6 @@ export interface ChatViewProps {
   onCloseThread?: () => void;
   closing?: boolean;
   threadClosed?: boolean;
-}
-
-function renderContentBlock(block: ChatContentBlock, key: number) {
-  switch (block.type) {
-    case "text":
-      return (
-        <span key={key} className="whitespace-pre-wrap">
-          {block.text}
-        </span>
-      );
-    case "image":
-      return <img key={key} src={block.uri ?? `data:${block.mimeType};base64,${block.data}`} alt="" className="max-w-full rounded" />;
-    case "resource_link":
-      return (
-        <a key={key} href={block.uri} className="text-primary underline">
-          {block.name}
-        </a>
-      );
-    default:
-      return null;
-  }
 }
 
 function TimelineItemView({ item }: { item: TimelineItem }) {
@@ -173,10 +154,10 @@ export function ChatView({
       {(showLiveWorktreeBadge || canPromote || showCloseButton) && (
         <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2">
           {showLiveWorktreeBadge && (
-            <span className="flex items-center gap-1.5 text-xs text-warning">
-              <span aria-hidden className="h-2 w-2 rounded-full bg-warning" />
+            <Badge variant="outline" className="gap-1.5 border-warning/40 text-warning">
+              <span aria-hidden className="size-2 rounded-full bg-warning" />
               Running in an isolated worktree
-            </span>
+            </Badge>
           )}
           {worktreePath === null && canPromote && (
             <Button variant="outline" size="sm" aria-label="Promote to worktree" onClick={onPromoteToWorktree} disabled={promoting}>
@@ -204,14 +185,15 @@ export function ChatView({
         onChangeRange={onChangeDiffRange}
       />
 
-      {/* `defaultScrollPosition="end"` rather than the library default
-          ("last-anchor", which pins the newest turn to the *top* of the
-          viewport by injecting a tall spacer beneath it). That is a real
-          pattern, but it is not this app's existing behaviour, and on a
-          short Thread it leaves most of the screen deliberately blank —
-          which reads as a broken transcript rather than a design. Scrolling
-          to the actual end preserves what ArgusDE did before this
-          migration, and adds the anchoring it was missing. */}
+      {/* Scroll to the actual end, rather than the library default
+          "last-anchor" — which pins the newest turn to the *top* of the
+          viewport. That is a real pattern (Claude.ai does it) but not this
+          app's, and on a short Thread it leaves most of the screen blank
+          while clipping the top of the conversation.
+          `defaultScrollPosition` alone is not enough: the spacer that makes
+          last-anchor work is injected unconditionally, so "end" would land
+          at the bottom of it. Killing the spacer is what actually fixes it —
+          see spacerClassName below. */}
       <MessageScrollerProvider defaultScrollPosition="end">
         {/* Replaces a bare overflow-y-auto div, which had no scroll
             anchoring at all — a streaming reply used to scroll out from
