@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import { cn } from "../lib/utils.js";
 import type { FilePreview as FilePreviewData, SyntaxKind } from "../../shared/ws-protocol.js";
 import { Badge } from "./ui/badge.js";
 import { Empty, EmptyDescription, EmptyTitle } from "./ui/empty.js";
@@ -7,6 +9,14 @@ export interface FilePreviewProps {
   preview: FilePreviewData | null;
   loading: boolean;
   error: string | undefined;
+  /**
+   * 1-based line to mark and scroll to — set when the file was opened from a
+   * search result (story 19: a result has to lead somewhere).
+   *
+   * A prop rather than state on purpose: the preview stays a rendering
+   * component with no notion of where the request came from.
+   */
+  highlightLine?: number;
 }
 
 /**
@@ -43,7 +53,20 @@ function formatBytes(bytes: number): string {
  * theme tokens. Not a stylistic preference — see CONTENT_SECURITY_POLICY in
  * server/http/static-server.ts.
  */
-export function FilePreview({ preview, loading, error }: FilePreviewProps) {
+export function FilePreview({ preview, loading, error, highlightLine }: FilePreviewProps) {
+  const highlighted = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    // Centred rather than merely scrolled into view: a match pinned to the top
+    // or bottom edge shows no surrounding code, which is the whole reason for
+    // opening it from a search result.
+    //
+    // Called optionally because scrolling is a nicety and its absence must not
+    // throw — jsdom has no scrollIntoView at all, and an unhandled TypeError
+    // from a convenience would be a poor trade.
+    highlighted.current?.scrollIntoView?.({ block: "center" });
+  }, [highlightLine, preview?.path]);
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
@@ -116,8 +139,15 @@ export function FilePreview({ preview, loading, error }: FilePreviewProps) {
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="w-max min-w-full py-2 font-mono text-xs leading-relaxed">
           <code data-testid="preview-code">
-            {Array.from({ length: lineCount }, (_, i) => (
-              <span key={i} className="flex">
+            {Array.from({ length: lineCount }, (_, i) => {
+              const isMatch = highlightLine === i + 1;
+              return (
+              <span
+                key={i}
+                ref={isMatch ? highlighted : undefined}
+                data-testid={isMatch ? "preview-highlighted-line" : undefined}
+                className={cn("flex", isMatch && "bg-primary/15")}
+              >
                 {/* Fixed-width gutter with tabular digits, so the code column
                     doesn't shift as the line count crosses a power of ten. */}
                 <span aria-hidden className="sticky left-0 shrink-0 select-none bg-background px-3 text-right tabular-nums text-muted-foreground">
@@ -133,7 +163,8 @@ export function FilePreview({ preview, loading, error }: FilePreviewProps) {
                     : preview.plainLines?.[i]}
                 </span>
               </span>
-            ))}
+              );
+            })}
           </code>
         </pre>
       </div>

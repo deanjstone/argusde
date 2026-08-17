@@ -485,6 +485,55 @@ async function main() {
       record("US-15.3", "skip", "no plainly readable file in the audit fixture's working tree");
     }
 
+    try {
+      // ---- US-16: workspace search (spec #93 phase 5) ----
+      // At mobile width the Files tab is master-detail: an open file takes the
+      // whole screen and the tree — which holds the search field — is hidden.
+      // So return to the tree first, which is the same thing a user does, via
+      // the control story 15 requires to exist.
+      await page.getByRole("button", { name: /← Files/ }).click().catch(() => undefined);
+      await page.waitForTimeout(200);
+
+      const searchField = page.getByLabel(/search the working tree/i);
+      if (await searchField.count()) {
+        // A term the audit fixture's own working tree genuinely contains.
+        await searchField.fill("audit", { timeout: 10000 });
+        await page.getByRole("button", { name: "Search" }).click();
+        const gotResults = await page
+          .waitForSelector('[data-testid="search-results"], [data-testid="search-no-matches"]', { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const hasHits = (await page.locator('[data-testid="search-results"]').count()) > 0;
+        record("US-16.1", gotResults ? "pass" : "fail", gotResults ? `search settled (matches: ${hasHits})` : "search never settled within 20s");
+        await scanA11y(page, "US-16.1");
+        await shot(page, "US-16.1-search-results");
+
+        if (hasHits) {
+          // Story 19: a result has to lead somewhere.
+          const firstMatch = page.locator('[data-testid="search-results"] button').first();
+          await firstMatch.click();
+          const opened = await page
+            .waitForSelector('[data-testid="preview-highlighted-line"]', { timeout: 15000 })
+            .then(() => true)
+            .catch(() => false);
+          record("US-16.2", opened ? "pass" : "fail", opened ? "result opened the file at its matching line" : "result did not open at a marked line");
+          await shot(page, "US-16.2-search-match-opened");
+          if (VIEWPORT !== "desktop") await page.getByRole("button", { name: /← Files/ }).click().catch(() => undefined);
+        } else {
+          record("US-16.2", "skip", "no matches in the audit fixture, so there was no result to open");
+        }
+
+        await checkNoHorizontalScroll(page, "US-16.3");
+        await page.getByRole("button", { name: /clear search/i }).click().catch(() => undefined);
+      } else {
+        record("US-16.1", "fail", "no search field on the Files tab");
+      }
+    } catch (error) {
+      // Recorded rather than thrown: this is an operational tool, and letting
+      // one story abort the pass loses every story after it.
+      record("US-16.1", "fail", `workspace search story threw: ${error.message.split("\n")[0]}`);
+    }
+
     // ---- US-9: settings tab ----
     await page.getByRole("button", { name: "Settings" }).click();
     await page.waitForTimeout(300);

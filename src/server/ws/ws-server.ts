@@ -10,7 +10,11 @@ import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
-import { listDirectory as listWorkingTreeDirectory, readFile as readWorkingTreeFile } from "../workspace/working-tree.js";
+import {
+  listDirectory as listWorkingTreeDirectory,
+  readFile as readWorkingTreeFile,
+  search as searchWorkingTree,
+} from "../workspace/working-tree.js";
 import {
   API_VERSION,
   ClientCommandSchema,
@@ -414,6 +418,8 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         return listWorkingTreeDirectory(resolveThreadCwd(command.threadId), command.path ?? "");
       case "thread.read-file":
         return readWorkingTreeFile(resolveThreadCwd(command.threadId), command.path);
+      case "thread.search":
+        return searchWorkingTree(resolveThreadCwd(command.threadId), command.query);
       case "fs.list-directory": {
         const target = command.path ?? os.homedir();
         const dirents = await fs.readdir(target, { withFileTypes: true });

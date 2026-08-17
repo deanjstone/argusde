@@ -9,6 +9,7 @@ import {
   type ThreadHistoryMessage,
   type FilePreview as FilePreviewData,
   type ThreadRecord,
+  type SearchResults,
   type WorkingTreeListing,
 } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
@@ -255,6 +256,11 @@ export function App() {
   const readWorkingTreeFile = (path: string) => {
     const { client, threadId } = requireThreadClient();
     return client.sendCommand<FilePreviewData>({ type: "thread.read-file", threadId, path });
+  };
+
+  const searchWorkingTree = (query: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<SearchResults>({ type: "thread.search", threadId, query });
   };
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
@@ -722,7 +728,12 @@ export function App() {
             </div>
           ))}
         {tab === "files" && (
-          <FileBrowser threadId={thread?.threadId} listDirectory={listWorkingTreeDirectory} readFile={readWorkingTreeFile} />
+          <FileBrowser
+            threadId={thread?.threadId}
+            listDirectory={listWorkingTreeDirectory}
+            readFile={readWorkingTreeFile}
+            search={searchWorkingTree}
+          />
         )}
         {tab === "threads" &&
           (selectedProjectId === null ? (

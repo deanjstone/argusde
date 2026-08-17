@@ -1040,6 +1040,53 @@ describe("ws-server", () => {
       expect(text).not.toContain("main workspace");
     });
 
+    it("searches the working tree over the wire, grouped by file", async () => {
+      fs.mkdirSync(path.join(repoDir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(repoDir, "src", "a.ts"), "const needle = 1;\nother\nneedle again\n");
+      // Untracked and uncommitted — the file you search for when reviewing
+      // agent work, and invisible to a default `git grep`.
+      fs.writeFileSync(path.join(repoDir, "src", "fresh.ts"), "needle in a new file\n");
+      const threadId = await threadIn(repoDir, ["se1", "se2"]);
+
+      const result = await send({ type: "thread.search", commandId: "se3", threadId, query: "needle" });
+      expect(result.ok).toBe(true);
+      const results = result.ok
+        ? (result.result as {
+            files: { path: string; matches: { line: number; text: string }[] }[];
+            totalMatches: number;
+            truncated: { files: boolean; matches: boolean; timedOut: boolean };
+          })
+        : undefined;
+
+      const byPath = new Map(results?.files.map((f) => [f.path, f]) ?? []);
+      expect(byPath.get("src/a.ts")?.matches.map((m) => m.line)).toEqual([1, 3]);
+      expect(byPath.get("src/fresh.ts")).toBeDefined();
+      expect(results?.totalMatches).toBe(3);
+      expect(results?.truncated).toEqual({ files: false, matches: false, timedOut: false });
+    });
+
+    it("reports no matches as an empty result rather than a failed command", async () => {
+      // git grep exits 1 for no matches, which execFile treats as an error —
+      // if that leaked, every empty search would look like a broken one.
+      const threadId = await threadIn(repoDir, ["se4", "se5"]);
+
+      const result = await send({ type: "thread.search", commandId: "se6", threadId, query: "nothing-matches-this" });
+      expect(result.ok).toBe(true);
+      const results = result.ok ? (result.result as { files: unknown[]; totalMatches: number }) : undefined;
+      expect(results?.files).toEqual([]);
+      expect(results?.totalMatches).toBe(0);
+    });
+
+    it("never puts an absolute server path in a search result", async () => {
+      fs.writeFileSync(path.join(repoDir, "hit.ts"), "needle\n");
+      const threadId = await threadIn(repoDir, ["se7", "se8"]);
+
+      const result = await send({ type: "thread.search", commandId: "se9", threadId, query: "needle" });
+      const results = result.ok ? (result.result as { files: { path: string }[] }) : undefined;
+      expect(results?.files.length).toBeGreaterThan(0);
+      for (const file of results?.files ?? []) expect(file.path).not.toContain(repoDir);
+    });
+
     it("keeps working on a closed Thread — reviewing what happened must not require it to be open", async () => {
       const threadId = await threadIn(repoDir, ["wt14", "wt15"]);
       await send({ type: "thread.close", commandId: "wt16", threadId });

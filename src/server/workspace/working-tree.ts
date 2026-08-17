@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
-import type { FilePreview, WorkingTreeListing } from "../../shared/ws-protocol.js";
+import { promisify } from "node:util";
+import type { FilePreview, SearchResults, WorkingTreeListing } from "../../shared/ws-protocol.js";
 import { languageFor, tokenise } from "./highlight.js";
 
 /**
@@ -31,6 +33,23 @@ const TOKENISE_MAX_BYTES = 64 * 1024;
  * there would be worse than useless.
  */
 const PREVIEW_MAX_BYTES = 256 * 1024;
+
+/**
+ * Bounds on what one search can return, each reported to the client when it
+ * bites (spec #93: "Results are capped and the cap is reported"). A silently
+ * truncated result set reads as a complete one, which is worse than a slow
+ * search.
+ */
+export const SEARCH_LIMITS = {
+  /** A file with 400 hits tells you nothing a file with 20 doesn't. */
+  matchesPerFile: 20,
+  /** Enough to judge relevance, bounded for a phone. */
+  files: 100,
+  /** A minified file's single line can be megabytes; the payload bound that actually matters. */
+  lineChars: 300,
+  /** git grep over a huge tree is unbounded work, and a client can ask for it. */
+  timeoutMs: 10_000,
+} as const;
 
 /** git's own heuristic: a NUL in the first few KiB means binary. Cheap, and wrong rarely enough that git ships it. */
 const BINARY_SNIFF_BYTES = 8 * 1024;
@@ -256,4 +275,117 @@ async function looksBinary(absolute: string): Promise<boolean> {
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Searches the Thread's working tree for a literal string.
+ *
+ * Shells out to **`git grep`** rather than adding a dependency or walking the
+ * tree by hand — spec #93's "the repository's own tooling so ignore rules come
+ * for free". git specifically, not ripgrep: git is already a hard requirement
+ * of this app (worktrees, checkpoint refs, revert), whereas ripgrep is a
+ * separate binary with no guarantee of being on *the server*, which is the
+ * machine that matters.
+ *
+ * Every flag here was verified against real repositories, and three of them
+ * are load-bearing rather than tidy:
+ *
+ * - **`--untracked`**: `git grep` searches *tracked files only* by default, so
+ *   a file the agent just created and hasn't committed would be invisible —
+ *   precisely the file you search for when reviewing its work. Ignore rules
+ *   still apply, so `node_modules/` stays out either way.
+ * - **`--null`**: the default `path:line:content` is genuinely ambiguous for a
+ *   filename containing a colon. This yields `path\0line\0content`.
+ * - **`-I`**: without it a binary file yields `Binary file x.bin matches` — no
+ *   line number, nothing the parser can do with it.
+ *
+ * `-F -i` make matching literal and case-insensitive: story 17 asks to search
+ * "for a string", so a regex is a different feature, and case-insensitive is
+ * the more useful default for finding code the agent mentioned. `-e` carries
+ * the query so one beginning with `-` is a query and not a flag.
+ */
+export async function search(root: string, query: string): Promise<SearchResults> {
+  const realRoot = fsSync.realpathSync(root);
+  const empty: SearchResults = {
+    query,
+    files: [],
+    totalMatches: 0,
+    truncated: { files: false, matches: false, timedOut: false },
+  };
+  if (query === "") return empty;
+
+  let stdout: string;
+  try {
+    ({ stdout } = await promisify(execFile)(
+      "git",
+      ["grep", "--line-number", "--fixed-strings", "--ignore-case", "-I", "--untracked", "--null", "-e", query],
+      { cwd: realRoot, timeout: SEARCH_LIMITS.timeoutMs, maxBuffer: 32 * 1024 * 1024 },
+    ));
+  } catch (error) {
+    const failure = error as { code?: number; killed?: boolean; stdout?: string };
+    // Exit 1 is git grep's "no matches" — not a failure, and the single most
+    // important thing to get right here (story 21). Anything ≥2 is real.
+    if (failure.code === 1) return empty;
+    // A timeout kills the process, so whatever it had already written is still
+    // a useful partial answer — returned flagged rather than thrown away.
+    if (failure.killed) {
+      return { ...parseGrepOutput(failure.stdout ?? ""), query, truncated: { ...parseGrepOutput(failure.stdout ?? "").truncated, timedOut: true } };
+    }
+    throw new Error(`Search failed in this Thread's working tree`);
+  }
+
+  return { ...parseGrepOutput(stdout), query };
+}
+
+/**
+ * Parses `path\0line\0content` records into per-file groups, applying the
+ * caps as it goes rather than after — the point of a cap is not to hold the
+ * whole result set in memory first.
+ */
+function parseGrepOutput(stdout: string): Omit<SearchResults, "query"> {
+  const files: SearchResults["files"] = [];
+  const byPath = new Map<string, SearchResults["files"][number]>();
+  const truncated = { files: false, matches: false, timedOut: false };
+  let totalMatches = 0;
+
+  for (const record of stdout.split("\n")) {
+    if (record === "") continue;
+    // Only the first two separators are structural; content may contain NULs
+    // in principle, and a path may contain anything but NUL.
+    const firstNul = record.indexOf("\0");
+    const secondNul = record.indexOf("\0", firstNul + 1);
+    if (firstNul === -1 || secondNul === -1) continue;
+
+    const filePath = record.slice(0, firstNul);
+    const line = Number.parseInt(record.slice(firstNul + 1, secondNul), 10);
+    if (!Number.isFinite(line)) continue;
+    const text = record.slice(secondNul + 1);
+
+    let entry = byPath.get(filePath);
+    if (!entry) {
+      if (files.length >= SEARCH_LIMITS.files) {
+        truncated.files = true;
+        continue;
+      }
+      entry = { path: filePath, matches: [], matchesTruncated: false };
+      byPath.set(filePath, entry);
+      files.push(entry);
+    }
+
+    if (entry.matches.length >= SEARCH_LIMITS.matchesPerFile) {
+      entry.matchesTruncated = true;
+      truncated.matches = true;
+      continue;
+    }
+
+    entry.matches.push({
+      line,
+      // A single minified line can be megabytes — bounded here, since the
+      // whole point of searching from a phone is that the payload is small.
+      text: text.length > SEARCH_LIMITS.lineChars ? text.slice(0, SEARCH_LIMITS.lineChars) : text,
+    });
+    totalMatches++;
+  }
+
+  return { files, totalMatches, truncated };
 }
