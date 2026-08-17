@@ -1,0 +1,828 @@
+<title>Plan Surface, Four Ways</title>
+<style>
+  :root {
+    --bg: #f5f4f8;
+    --surface: #ffffff;
+    --surface-2: #ecebf1;
+    --border: #dedbe6;
+    --ink: #1b1826;
+    --muted: #6a6579;
+    --accent: #6d4bd8;
+    --accent-ink: #ffffff;
+    --accent-soft: #ece7fb;
+    --good: #12805c;
+    --warn: #9a6200;
+    --shadow: 0 1px 2px rgba(27, 24, 38, .06), 0 12px 32px rgba(27, 24, 38, .10);
+
+    /* The app's own world — committed dark in both harness themes, because
+       these frames are screenshots of a dark product, not page furniture. */
+    --app-bg: #0a0a0a;
+    --app-surface: #171717;
+    --app-surface-2: rgba(23, 23, 23, .6);
+    --app-border: #262626;
+    --app-ink: #f5f5f5;
+    --app-muted: #a3a3a3;
+    --app-faint: #6b6b6b;
+    --app-violet: #8b5cf6;
+    --app-violet-ink: #c4b5fd;
+    --app-emerald: #34d399;
+    --app-amber: #f59e0b;
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #100f16;
+      --surface: #191823;
+      --surface-2: #22202d;
+      --border: #2e2b3b;
+      --ink: #eceaf3;
+      --muted: #9c97ab;
+      --accent: #a78bfa;
+      --accent-ink: #17131f;
+      --accent-soft: #241f38;
+      --good: #4ade80;
+      --warn: #fbbf24;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 16px 40px rgba(0, 0, 0, .45);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #100f16;
+    --surface: #191823;
+    --surface-2: #22202d;
+    --border: #2e2b3b;
+    --ink: #eceaf3;
+    --muted: #9c97ab;
+    --accent: #a78bfa;
+    --accent-ink: #17131f;
+    --accent-soft: #241f38;
+    --good: #4ade80;
+    --warn: #fbbf24;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 16px 40px rgba(0, 0, 0, .45);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: clamp(24px, 5vw, 56px) clamp(16px, 4vw, 40px) 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .eyebrow {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    margin: 8px 0 0;
+    font-size: clamp(28px, 4.4vw, 44px);
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    font-weight: 640;
+    text-wrap: balance;
+  }
+
+  .lede {
+    margin: 14px 0 0;
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 16.5px;
+  }
+
+  .lede code, .prov code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* ---- controls ------------------------------------------------------ */
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    position: sticky;
+    top: 8px;
+    z-index: 20;
+  }
+
+  /* Sticky is a desktop affordance only — on a phone the bar wraps to three
+     rows and would sit on top of the very frame being judged. */
+  @media (max-width: 820px) { .controls { position: static; } }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 12px 7px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--ink);
+    border-radius: 999px;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .chip:hover { background: var(--surface-2); }
+  .chip .k {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+  .chip[aria-pressed="true"] .k { color: var(--accent-ink); opacity: .75; }
+
+  .spacer { flex: 1 1 24px; }
+
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px;
+    background: var(--surface-2);
+  }
+  .stepper button {
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1;
+    padding: 7px 11px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .stepper button:hover:not(:disabled) { background: var(--surface); }
+  .stepper button:disabled { opacity: .35; cursor: default; }
+  .stepper .read {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 0 8px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .toggle {
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .toggle:hover { background: var(--surface-2); }
+  .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  :where(button, a, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  /* ---- stage --------------------------------------------------------- */
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 390px) minmax(0, 1fr);
+    gap: clamp(20px, 4vw, 44px);
+    align-items: start;
+  }
+  @media (max-width: 820px) { .stage { grid-template-columns: minmax(0, 1fr); justify-items: center; } }
+
+  .deviceWrap { display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%; }
+
+  .device {
+    width: 100%;
+    max-width: 390px;
+    height: min(74vh, 720px);
+    min-height: 520px;
+    border-radius: 26px;
+    padding: 8px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+  }
+
+  .screen {
+    height: 100%;
+    border-radius: 19px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--app-bg);
+    color: var(--app-ink);
+    font-size: 14px;
+    line-height: 1.45;
+    border: 2px solid var(--app-amber); /* worktree-live border, as in the app */
+  }
+
+  .caption {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .04em;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  /* ---- app chrome (inside the screen) -------------------------------- */
+
+  .rowline { border-bottom: 1px solid var(--app-border); }
+  .modebar { display: flex; justify-content: flex-end; padding: 8px 10px; }
+  .modebar span {
+    border: 1px solid var(--app-border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--app-ink);
+  }
+  .wtbar {
+    display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+    padding: 7px 10px; font-size: 11.5px; color: var(--app-amber);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--app-amber); }
+
+  .ckstrip { display: flex; gap: 6px; align-items: center; padding: 7px 10px; overflow-x: auto; }
+  .ck {
+    flex: 0 0 auto;
+    border: 1px solid var(--app-border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--app-muted);
+  }
+  .ck.live { color: var(--app-ink); }
+  .ck.right { margin-left: auto; }
+
+  .transcript {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) { .transcript { scroll-behavior: auto; } }
+
+  .bubble { max-width: 85%; border-radius: 16px; padding: 9px 13px; font-size: 13.5px; }
+  .bubble.user { align-self: flex-end; background: var(--app-violet); color: #fff; }
+  .bubble.agent { align-self: flex-start; background: var(--app-surface); }
+
+  .tool {
+    border: 1px solid var(--app-border);
+    background: var(--app-surface-2);
+    border-radius: 9px;
+    padding: 8px 11px;
+    font-size: 13px;
+  }
+  .tool .head { display: flex; justify-content: space-between; gap: 8px; }
+  .tool .head b { font-weight: 560; color: #e5e5e5; }
+  .tool .head em { font-style: normal; font-size: 11.5px; color: var(--app-faint); }
+  .tool .body { margin-top: 3px; font-family: var(--mono); font-size: 11.5px; color: var(--app-muted); }
+
+  .working { font-size: 13px; color: var(--app-faint); }
+
+  .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--app-border); }
+  .composer .fake-input {
+    flex: 1;
+    border: 1px solid var(--app-border);
+    border-radius: 9px;
+    padding: 8px 11px;
+    font-size: 13px;
+    color: var(--app-faint);
+  }
+  .composer .send {
+    width: 34px; height: 34px; flex: 0 0 auto;
+    border-radius: 9px;
+    background: var(--app-violet);
+    color: #fff;
+    display: grid; place-items: center;
+  }
+
+  .tabs { display: grid; border-top: 1px solid var(--app-border); }
+  .tabs.n3 { grid-template-columns: repeat(3, 1fr); }
+  .tabs.n4 { grid-template-columns: repeat(4, 1fr); }
+  .tabs button {
+    font: inherit; font-size: 13px; font-weight: 520;
+    padding: 10px 2px;
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--app-faint);
+  }
+  .tabs button[aria-current="page"] { color: var(--app-violet-ink); }
+  .tabs .badge {
+    margin-left: 5px;
+    border-radius: 999px;
+    background: rgba(139, 92, 246, .22);
+    color: var(--app-violet-ink);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 1px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- plan surface pieces ------------------------------------------ */
+
+  .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .steps li { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; font-size: 13px; }
+  .steps .g { flex: 0 0 12px; text-align: center; font-size: 11px; line-height: 1.6; }
+  .steps .done .g { color: var(--app-emerald); }
+  .steps .now .g { color: var(--app-violet-ink); }
+  .steps .todo .g { color: #5a5a5a; }
+  .steps .done .t { color: #737373; text-decoration: line-through; text-decoration-color: #3f3f3f; }
+  .steps .now .t { color: var(--app-ink); }
+  .steps .todo .t { color: var(--app-muted); }
+
+  .planCard {
+    border: 1px solid var(--app-border);
+    background: var(--app-surface-2);
+    border-radius: 12px;
+    padding: 11px;
+  }
+  .planCard .head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 7px;
+    font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--app-muted);
+    font-family: var(--mono);
+  }
+  .planCard .head em { font-style: normal; letter-spacing: 0; text-transform: none; color: var(--app-faint); font-size: 11.5px; }
+  .planCard .foot { margin: 8px 0 0; font-size: 11px; color: #5f5f5f; }
+
+  .planStrip { border-bottom: 1px solid var(--app-border); }
+  .planStrip .bar {
+    width: 100%;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    background: transparent; border: 0; cursor: pointer;
+    color: inherit; font: inherit; text-align: left;
+  }
+  .planStrip .bar:hover { background: var(--app-surface); }
+  .planStrip .caret { font-size: 11px; color: var(--app-faint); transition: transform .15s ease; }
+  .planStrip[data-open="true"] .caret { transform: rotate(90deg); }
+  .planStrip .pill {
+    flex: 0 0 auto;
+    border: 1px solid rgba(139, 92, 246, .45);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--app-violet-ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .planStrip .cur { font-size: 12px; color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .planStrip .list { padding: 0 10px 9px 10px; }
+
+  .planPillRow { padding: 8px 10px; border-top: 1px solid var(--app-border); }
+  .planPill {
+    width: 100%;
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
+    border-radius: 999px;
+    padding: 6px 12px;
+    cursor: pointer; color: inherit; font: inherit; text-align: left;
+  }
+  .planPill:hover { background: #1f1f1f; }
+  .planPill .n { font-family: var(--mono); font-size: 11px; color: var(--app-violet-ink); font-variant-numeric: tabular-nums; }
+  .planPill .cur { flex: 1; min-width: 0; font-size: 11.5px; color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .meter { display: block; width: 64px; flex: 0 0 auto; height: 4px; border-radius: 999px; background: #2b2b2b; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--app-violet); }
+
+  .sheetWrap { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; z-index: 5; }
+  .scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .62); border: 0; cursor: pointer; }
+  .sheet {
+    position: relative;
+    max-height: 70%;
+    overflow-y: auto;
+    background: var(--app-bg);
+    border-top: 1px solid var(--app-border);
+    border-radius: 18px 18px 0 0;
+    padding: 12px 14px 18px;
+  }
+  .sheet .grab { width: 38px; height: 4px; border-radius: 999px; background: #454545; margin: 0 auto 10px; }
+  .sheet .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .sheet .head h2 { margin: 0; font-size: 14px; font-weight: 560; }
+  .sheet .head em { font-style: normal; font-size: 11.5px; color: var(--app-faint); }
+
+  .planScreen { flex: 1; overflow-y: auto; padding: 14px; }
+  .planScreen .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .planScreen h2 { margin: 0; font-size: 14px; font-weight: 560; }
+  .planScreen .pct { font-size: 11.5px; color: var(--app-faint); font-variant-numeric: tabular-nums; }
+  .planScreen .meter { width: 100%; margin: 7px 0 16px; }
+  .planScreen h3 {
+    margin: 0 0 5px;
+    font-family: var(--mono);
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--app-faint);
+  }
+  .planScreen section + section { margin-top: 16px; }
+
+  /* ---- notes --------------------------------------------------------- */
+
+  .notes { display: flex; flex-direction: column; gap: 18px; max-width: 62ch; }
+
+  .notes .key {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .1em;
+    color: var(--accent);
+  }
+  .notes h2 { margin: 4px 0 0; font-size: clamp(21px, 2.6vw, 27px); letter-spacing: -.015em; font-weight: 620; text-wrap: balance; }
+  .notes .thesis { margin: 10px 0 0; color: var(--muted); }
+
+  .ledger { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 560px) { .ledger { grid-template-columns: 1fr 1fr; } }
+
+  .ledger div {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 13px 15px;
+  }
+  .ledger h3 {
+    margin: 0 0 7px;
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  }
+  .ledger .buys h3 { color: var(--good); }
+  .ledger .costs h3 { color: var(--warn); }
+  .ledger ul { margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 6px; }
+  .ledger li { font-size: 14.5px; }
+
+  .phone-note {
+    border-left: 2px solid var(--accent);
+    padding: 2px 0 2px 14px;
+    color: var(--ink);
+    font-size: 15px;
+  }
+  .phone-note b { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 3px; font-weight: 600; }
+
+  /* ---- compare ------------------------------------------------------- */
+
+  .compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px; }
+  .miniWrap { display: flex; flex-direction: column; gap: 9px; }
+  .miniHead { display: flex; align-items: baseline; gap: 8px; min-height: 3.1em; }
+  .miniHead .k { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--accent); }
+  .miniHead .n { font-size: 14.5px; font-weight: 560; }
+  .miniClip {
+    height: 448px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    padding: 6px;
+  }
+  .miniClip .device { transform: scale(.64); transform-origin: top left; width: 156.25%; height: 156.25%; border: 0; box-shadow: none; background: none; padding: 0; min-height: 0; }
+
+  /* ---- footer -------------------------------------------------------- */
+
+  .prov {
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .prov a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .prov p { margin: 0; }
+
+  [hidden] { display: none !important; }
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">argusde#90 · prototype · four candidates</p>
+    <h1>What shape does the plan surface take?</h1>
+    <p class="lede">
+      Plan entries already reach the reducer and are thrown away at <code>chat-state.ts:122</code>. Wiring them up is trivial;
+      deciding where they live is not. Four shapes, each rendered inside the real chat chrome — mode switcher, worktree badge,
+      checkpoint strip, composer, bottom tabs — so density is honest. Everything below is live: switch shapes, expand them,
+      and advance the agent through its plan.
+    </p>
+  </header>
+
+  <section class="controls" aria-label="Prototype controls">
+    <div class="chips" role="group" aria-label="Plan surface variant">
+      <button class="chip" data-variant="A" aria-pressed="true"><span class="k">A</span>Inline card</button>
+      <button class="chip" data-variant="B" aria-pressed="false"><span class="k">B</span>Pinned strip</button>
+      <button class="chip" data-variant="C" aria-pressed="false"><span class="k">C</span>Bottom sheet</button>
+      <button class="chip" data-variant="D" aria-pressed="false"><span class="k">D</span>Plan tab</button>
+    </div>
+    <span class="spacer"></span>
+    <div class="stepper">
+      <button id="back" aria-label="Agent finishes one step fewer">◀</button>
+      <span class="read" id="stepRead">step 2 of 5</span>
+      <button id="fwd" aria-label="Agent completes the current step">▶</button>
+    </div>
+    <button class="toggle" id="cmp" aria-pressed="false">Compare all four</button>
+  </section>
+
+  <div class="stage" id="stage">
+    <div class="deviceWrap">
+      <div class="device"><div class="screen" id="screen"></div></div>
+      <p class="caption" id="caption"></p>
+    </div>
+    <aside class="notes" id="notes"></aside>
+  </div>
+
+  <div class="compare" id="compare" hidden></div>
+
+  <footer class="prov">
+    <p>Throwaway code on <code>prototype/plan-surface-90</code> — nothing merges until a shape wins.</p>
+    <p><a href="https://github.com/deanjstone/argusde/issues/90">argusde#90</a></p>
+  </footer>
+</div>
+
+<script>
+  const PLAN = [
+    "Read chat-state.ts and find where plan events are discarded",
+    "Add a plan case to the reducer and store the latest entries",
+    "Render the plan surface in ChatView and wire it to the reducer state",
+    "Cover the reducer case and the surface with tests",
+    "Check the surface against the mobile viewport and the axe pass",
+  ];
+
+  const VARIANTS = {
+    A: {
+      name: "Inline card in the transcript",
+      thesis: "The plan is a message like any other. It lands where it arrived, updates in place while the turn runs, and scrolls away into history behind the next one.",
+      buys: ["Zero new chrome — the densest screen in the app gains nothing permanent", "Honest history: you can scroll back and see what the plan was three turns ago", "Revisions read as revisions, stacked in order"],
+      costs: ["Gone the moment the agent says anything after it", "On a phone a five-step plan is most of a screen", "Answers “what was the plan”, never “where are we now”"],
+      phone: "Fine, but it competes with the transcript for the same scarce vertical space, and loses it as soon as output resumes.",
+    },
+    B: {
+      name: "Collapsible pinned strip",
+      thesis: "Shaped like the checkpoint strip it sits above: one line by default — progress plus the step being worked — tapped open into the full checklist.",
+      buys: ["Always visible: answers “where are we now” without a tap", "One line costs ~34px, which the app already spends on checkpoints", "Precedent exists in-repo; nothing new to learn"],
+      costs: ["A third stacked strip above the transcript starts to feel like a toolbar", "Expanded, it eats half the screen and pushes chat down", "No history — only ever the latest plan"],
+      phone: "The strongest of the four collapsed. Expanded it needs a height cap or the transcript disappears.",
+    },
+    C: {
+      name: "Composer pill into a bottom sheet",
+      thesis: "The chat chrome stays untouched. A progress pill sits just above the composer, right where your thumb already is, and pulls up a sheet with the full plan.",
+      buys: ["Cheapest resting state of the four — one pill, no new bars", "Full plan gets a whole comfortable screen when you ask for it", "Native phone gesture; the thumb is already there"],
+      costs: ["Detail always costs a tap", "A sheet over the composer blocks typing while it's open", "Two components (pill and sheet) to build and keep in sync"],
+      phone: "Designed for the phone first — and the one shape that doesn't fight the transcript for height.",
+    },
+    D: {
+      name: "Dedicated Plan tab",
+      thesis: "The plan gets equal billing with Chat and Threads: its own tab, a badge for progress, and a full screen grouped into Now, Next and Done.",
+      buys: ["Chat stays completely clean", "Room to group and, later, to make steps tappable", "The badge still reports progress from anywhere in the app"],
+      costs: ["Invisible exactly when it matters — while you're watching the agent work", "A fourth tab for something that only exists during a turn", "Costs a full context switch away from the transcript"],
+      phone: "Roomiest plan view, worst peripheral awareness: you have to leave the conversation to check on it.",
+    },
+  };
+
+  const state = { variant: "A", step: 2, open: false, tab: "chat" };
+
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  const stepsAt = (step) => PLAN.map((content, i) => ({
+    content,
+    status: i < step ? "done" : i === step ? "now" : "todo",
+  }));
+
+  const current = (step) => PLAN[Math.min(step, PLAN.length - 1)];
+
+  const GLYPH = { done: "✓", now: "▸", todo: "○" };
+
+  function stepList(step) {
+    return '<ul class="steps">' + stepsAt(step).map((s) =>
+      '<li class="' + s.status + '"><span class="g" aria-hidden="true">' + GLYPH[s.status] + '</span><span class="t">' + esc(s.content) + '</span></li>'
+    ).join("") + "</ul>";
+  }
+
+  function meter(step) {
+    return '<span class="meter"><i style="width:' + (step / PLAN.length) * 100 + '%"></i></span>';
+  }
+
+  /* Variant fragments -------------------------------------------------- */
+
+  const inlineCard = (step) => '' +
+    '<div class="planCard">' +
+      '<div class="head"><span>Plan</span><em>' + step + '/' + PLAN.length + ' done</em></div>' +
+      stepList(step) +
+      '<p class="foot">Updated as the agent works · scrolls with the transcript</p>' +
+    '</div>';
+
+  const pinnedStrip = (step, open, live) => '' +
+    '<div class="planStrip" data-open="' + open + '">' +
+      '<button class="bar" data-act="toggle"' + (live ? "" : " tabindex=\"-1\"") + ' aria-expanded="' + open + '">' +
+        '<span class="caret" aria-hidden="true">▸</span>' +
+        '<span class="pill">Plan ' + step + '/' + PLAN.length + '</span>' +
+        '<span class="cur">' + esc(current(step)) + '</span>' +
+      '</button>' +
+      (open ? '<div class="list">' + stepList(step) + "</div>" : "") +
+    "</div>";
+
+  const composerPill = (step, live) => '' +
+    '<div class="planPillRow">' +
+      '<button class="planPill" data-act="toggle"' + (live ? "" : " tabindex=\"-1\"") + '>' +
+        '<span class="n">' + step + "/" + PLAN.length + "</span>" +
+        meter(step) +
+        '<span class="cur">' + esc(current(step)) + "</span>" +
+        '<span aria-hidden="true" style="color:var(--app-faint);font-size:11px">⌃</span>' +
+      "</button>" +
+    "</div>";
+
+  const sheet = (step) => '' +
+    '<div class="sheetWrap">' +
+      '<button class="scrim" data-act="toggle" aria-label="Close plan"></button>' +
+      '<div class="sheet">' +
+        '<div class="grab" aria-hidden="true"></div>' +
+        '<div class="head"><h2>Plan</h2><em>' + step + "/" + PLAN.length + " done</em></div>" +
+        stepList(step) +
+      "</div>" +
+    "</div>";
+
+  function planScreen(step) {
+    const rows = stepsAt(step);
+    const group = (title, filter) => {
+      const items = rows.filter(filter);
+      if (!items.length) return "";
+      return "<section><h3>" + title + '</h3><ul class="steps">' + items.map((s) =>
+        '<li class="' + s.status + '"><span class="g" aria-hidden="true">' + GLYPH[s.status] + '</span><span class="t">' + esc(s.content) + "</span></li>"
+      ).join("") + "</ul></section>";
+    };
+    return '<div class="planScreen">' +
+      '<div class="top"><h2>Plan</h2><span class="pct">' + step + "/" + PLAN.length + " done</span></div>" +
+      '<span class="meter">' + '<i style="width:' + (step / PLAN.length) * 100 + '%"></i>' + "</span>" +
+      group("Now", (s) => s.status === "now") +
+      group("Next", (s) => s.status === "todo") +
+      group("Done", (s) => s.status === "done") +
+      "</div>";
+  }
+
+  /* Screen ------------------------------------------------------------- */
+
+  function screenHtml(v, step, open, tab, live) {
+    const showPlanTab = v === "D" && tab === "plan";
+    const body = showPlanTab ? planScreen(step) : '' +
+      '<div class="modebar rowline"><span>Always ask ⌄</span></div>' +
+      '<div class="wtbar rowline"><span class="dot" aria-hidden="true"></span>Running in an isolated worktree</div>' +
+      (v === "B" ? pinnedStrip(step, open, live) : "") +
+      '<div class="ckstrip rowline">' +
+        '<span class="ck">Start</span><span class="ck live">Turn 1</span><span class="ck live">Turn 2</span>' +
+        '<span class="ck right">Since start</span>' +
+      "</div>" +
+      '<div class="transcript" id="transcript">' +
+        '<div class="bubble user">Surface the agent’s plan in the chat view — plan entries already reach the reducer.</div>' +
+        '<div class="bubble agent">I’ll start by reading the reducer to see exactly where plan entries are dropped, then decide where the surface hangs off ChatView.</div>' +
+        '<div class="tool"><div class="head"><b>Read src/web/chat-state.ts</b><em>completed</em></div><div class="body">case "plan": return state;  // line 122</div></div>' +
+        '<div class="bubble agent">Confirmed — the entries arrive fully typed and are thrown away. Adding a latestPlan field to ChatState now.</div>' +
+        '<div class="tool"><div class="head"><b>Edit src/web/chat-state.ts</b><em>in_progress</em></div><div class="body">+  latestPlan: PlanEntrySummary[];</div></div>' +
+        (v === "A" ? inlineCard(step) : "") +
+        '<div class="working">Claude is working…</div>' +
+      "</div>" +
+      (v === "C" ? composerPill(step, live) : "") +
+      '<div class="composer"><div class="fake-input">Message ArgusDE…</div><div class="send" aria-hidden="true">→</div></div>';
+
+    const tabs = v === "D"
+      ? '<nav class="tabs n4">' +
+          '<button' + (tab === "chat" ? ' aria-current="page"' : "") + ' data-act="tab" data-tab="chat"' + (live ? "" : ' tabindex="-1"') + ">Chat</button>" +
+          '<button' + (tab === "plan" ? ' aria-current="page"' : "") + ' data-act="tab" data-tab="plan"' + (live ? "" : ' tabindex="-1"') + '>Plan<span class="badge">' + step + "/" + PLAN.length + "</span></button>" +
+          "<button>Threads</button><button>Settings</button>" +
+        "</nav>"
+      : '<nav class="tabs n3"><button aria-current="page">Chat</button><button>Threads</button><button>Settings</button></nav>';
+
+    return body + (v === "C" && open ? sheet(step) : "") + tabs;
+  }
+
+  /* Notes -------------------------------------------------------------- */
+
+  function notesHtml(v) {
+    const d = VARIANTS[v];
+    return '<div><span class="key">Variant ' + v + '</span><h2>' + d.name + "</h2>" +
+      '<p class="thesis">' + d.thesis + "</p></div>" +
+      '<div class="ledger">' +
+        '<div class="buys"><h3>What it buys</h3><ul>' + d.buys.map((x) => "<li>" + x + "</li>").join("") + "</ul></div>" +
+        '<div class="costs"><h3>What it costs</h3><ul>' + d.costs.map((x) => "<li>" + x + "</li>").join("") + "</ul></div>" +
+      "</div>" +
+      '<p class="phone-note"><b>On a phone</b>' + d.phone + "</p>";
+  }
+
+  /* Render ------------------------------------------------------------- */
+
+  const screen = document.getElementById("screen");
+  const notes = document.getElementById("notes");
+  const caption = document.getElementById("caption");
+  const compare = document.getElementById("compare");
+  const stepRead = document.getElementById("stepRead");
+
+  function render() {
+    screen.innerHTML = screenHtml(state.variant, state.step, state.open, state.tab, true);
+    notes.innerHTML = notesHtml(state.variant);
+    caption.textContent = "390 × 844 · " + state.step + "/" + PLAN.length + " steps done · now: " + current(state.step);
+    stepRead.textContent = "step " + state.step + " of " + PLAN.length;
+    document.getElementById("back").disabled = state.step === 0;
+    document.getElementById("fwd").disabled = state.step === PLAN.length;
+    document.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.variant === state.variant)));
+
+    const t = document.getElementById("transcript");
+    if (t) t.scrollTop = t.scrollHeight;
+
+    if (!compare.hidden) renderCompare();
+  }
+
+  function renderCompare() {
+    compare.innerHTML = Object.keys(VARIANTS).map((v) => {
+      const open = v === "B" || v === "C"; // show each at its most revealing state
+      const tab = v === "D" ? "plan" : "chat";
+      return '<div class="miniWrap">' +
+        '<div class="miniHead"><span class="k">' + v + '</span><span class="n">' + VARIANTS[v].name + "</span></div>" +
+        '<div class="miniClip"><div class="device"><div class="screen">' + screenHtml(v, state.step, open, tab, false) + "</div></div></div>" +
+        "</div>";
+    }).join("");
+    compare.querySelectorAll(".transcript").forEach((t) => { t.scrollTop = t.scrollHeight; });
+  }
+
+  document.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      state.variant = chip.dataset.variant;
+      state.open = false;
+      state.tab = "chat";
+      render();
+    });
+  });
+
+  document.getElementById("fwd").addEventListener("click", () => { state.step = Math.min(state.step + 1, PLAN.length); render(); });
+  document.getElementById("back").addEventListener("click", () => { state.step = Math.max(state.step - 1, 0); render(); });
+
+  document.getElementById("cmp").addEventListener("click", (e) => {
+    const on = compare.hidden;
+    compare.hidden = !on;
+    document.getElementById("stage").hidden = on;
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+    e.currentTarget.textContent = on ? "Back to one at a time" : "Compare all four";
+    if (on) renderCompare();
+  });
+
+  screen.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-act]");
+    if (!el) return;
+    if (el.dataset.act === "toggle") state.open = !state.open;
+    if (el.dataset.act === "tab") state.tab = el.dataset.tab;
+    render();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const keys = Object.keys(VARIANTS);
+    const i = keys.indexOf(state.variant);
+    state.variant = keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length];
+    state.open = false;
+    state.tab = "chat";
+    render();
+  });
+
+  render();
+</script>
