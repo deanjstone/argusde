@@ -49,6 +49,20 @@ Caps are applied while parsing rather than afterwards — the point of a cap is 
 - **jsdom has no `scrollIntoView`.** The highlight effect threw an unhandled `TypeError` in the component tests. Called optionally now: scrolling is a nicety, and an unhandled error from a convenience is a poor trade.
 - **On mobile, search is inside the collapsible tree pane.** With a file open, the Files tab is master-detail and the tree — which holds the search field — is hidden, so the audit's search story crashed on an invisible field. That is correct product behaviour (you return to the list to search, as in any master-detail app, via the control story 15 already requires), so the fix was in the audit's flow. It also revealed that **one throwing story aborted the entire audit pass**, losing every story after it — the block is now fail-soft, since the audit is an operational tool.
 
+## A third thing found by probing Node rather than reading its docs
+
+The `catch` in `search` originally handled two cases: exit code 1, and `killed`. Checking what `execFile` actually reports turned up **three** distinct shapes:
+
+| Cause | What Node reports |
+|---|---|
+| no matches | `code: 1` (a *number*) |
+| timeout | `killed: true`, `signal: SIGTERM`, `code: null` |
+| output over `maxBuffer` | `code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"` (a *string*), `killed: undefined` |
+
+So a search whose output exceeded 32MB fell through to the generic `Search failed` — discarding results git had already produced, and telling the user nothing they could act on. Both cut-short cases now return their partial output flagged. The string-vs-number code also justifies the strict `=== 1` compare, which would otherwise look like fussiness.
+
+That branch has a test, and the test was made to *prove* it: `truncated.files` is normally set by the file cap, which the parser only trips once it has seen 100 files — so "flagged truncated while returning fewer files than the cap" is reachable only through the cut-short branch. Confirmed red against the un-fixed code (with exactly that unhelpful `Search failed`) before being kept.
+
 ## Files
 
 - `src/server/workspace/working-tree.ts` — `search`, `SEARCH_LIMITS`, the grep-output parser
@@ -62,7 +76,7 @@ Caps are applied while parsing rather than afterwards — the point of a cap is 
 
 ## Verification
 
-- `pnpm typecheck` clean; full suite **445/445 across 32 files**, up from 410/410 across 31.
+- `pnpm typecheck` clean; full suite **446/446 across 32 files**, up from 410/410 across 31.
 - **Audit harness both viewports: 121 pass / 0 fail (desktop), 109 pass / 0 fail (mobile)**, with four new US-16 baselines. Zero axe violations, no horizontal scroll at 390px.
 - **Driven in a real browser at 390×844**, which is where the uncommitted-file case was actually proved:
 

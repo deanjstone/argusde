@@ -322,15 +322,39 @@ export async function search(root: string, query: string): Promise<SearchResults
       { cwd: realRoot, timeout: SEARCH_LIMITS.timeoutMs, maxBuffer: 32 * 1024 * 1024 },
     ));
   } catch (error) {
-    const failure = error as { code?: number; killed?: boolean; stdout?: string };
+    // Three distinct shapes, verified against Node rather than guessed at:
+    //   exit 1                             -> code: 1        (numeric)
+    //   timeout                            -> killed: true, signal: SIGTERM, code: null
+    //   output over maxBuffer              -> code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: undefined
+    // All three carry whatever git had already written on `stdout`.
+    const failure = error as { code?: number | string; killed?: boolean; stdout?: string };
+
     // Exit 1 is git grep's "no matches" — not a failure, and the single most
-    // important thing to get right here (story 21). Anything ≥2 is real.
+    // important thing to get right here (story 21). Anything ≥2 is real. The
+    // strict compare matters: the maxBuffer code is a string, not a number.
     if (failure.code === 1) return empty;
-    // A timeout kills the process, so whatever it had already written is still
-    // a useful partial answer — returned flagged rather than thrown away.
-    if (failure.killed) {
-      return { ...parseGrepOutput(failure.stdout ?? ""), query, truncated: { ...parseGrepOutput(failure.stdout ?? "").truncated, timedOut: true } };
+
+    // Both the timeout and the maxBuffer overflow cut git off mid-stream, and
+    // both leave real results behind. Returning those flagged beats discarding
+    // them — a partial answer to "where is this string" is still an answer,
+    // whereas "Search failed" tells the user nothing they can act on.
+    const cutShort = failure.killed === true || failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+    if (cutShort) {
+      const partial = parseGrepOutput(failure.stdout ?? "");
+      return {
+        ...partial,
+        query,
+        truncated: {
+          ...partial.truncated,
+          timedOut: failure.killed === true,
+          // Output cut mid-stream means there was definitively more to find,
+          // even if the file cap happened not to have bitten yet in what
+          // arrived — so this is stated rather than inferred.
+          files: true,
+        },
+      };
     }
+
     throw new Error(`Search failed in this Thread's working tree`);
   }
 

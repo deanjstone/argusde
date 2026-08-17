@@ -412,6 +412,33 @@ describe("search", () => {
       expect(results.files.every((f) => f.matchesTruncated === false)).toBe(true);
     });
 
+    it("returns partial results flagged rather than failing when git is cut off mid-stream", async () => {
+      // A timeout and a maxBuffer overflow both kill git with real results
+      // already written. Discarding those would turn "here is some of it" into
+      // "Search failed", which tells the user nothing they can act on.
+      //
+      // Provoked via the buffer bound rather than the clock, because that is
+      // deterministic — no dependence on how fast the machine is.
+      //
+      // Deliberately only a handful of files, each enormous: that makes the
+      // assertion below precise. `truncated.files` is otherwise set by the
+      // file cap, which the parser only trips once it has *seen* 100 files —
+      // so "flagged truncated while returning fewer than the cap" is reachable
+      // only through the cut-short branch, and this test would be vacuous
+      // without it.
+      const fatLine = `${"needle ".repeat(150)}\n`;
+      for (let i = 0; i < 5; i++) {
+        fs.writeFileSync(path.join(root, `bulk${i}.ts`), fatLine.repeat(9000));
+      }
+
+      const results = await search(root, "needle");
+
+      expect(results.files.length).toBeGreaterThan(0);
+      expect(results.truncated.files).toBe(true);
+      // The proof it came from the cut-short branch and not the file cap.
+      expect(results.files.length).toBeLessThan(SEARCH_LIMITS.files);
+    });
+
     it("caps a single enormous matched line, so a minified file cannot blow the payload", async () => {
       fs.writeFileSync(path.join(root, "src", "min.ts"), `needle${"x".repeat(5000)}\n`);
 
