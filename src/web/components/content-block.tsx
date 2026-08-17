@@ -35,7 +35,7 @@ export function renderContentBlock(block: ChatContentBlock, key: number) {
       );
     case "resource_link":
       return (
-        <a key={key} href={block.uri} className="text-primary underline">
+        <a key={key} href={block.uri} className="text-primary-bright underline">
           {block.name}
         </a>
       );

@@ -7,7 +7,9 @@ import {
   type DirectoryListing,
   type ProjectRecord,
   type ThreadHistoryMessage,
+  type FilePreview as FilePreviewData,
   type ThreadRecord,
+  type WorkingTreeListing,
 } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
@@ -16,6 +18,7 @@ import { ChatView, type DiffState } from "./components/chat-view.js";
 import { TabBar, type Tab } from "./components/tab-bar.js";
 import { ProjectPicker } from "./components/project-picker.js";
 import { ThreadList } from "./components/thread-list.js";
+import { FileBrowser } from "./components/file-browser.js";
 
 interface SetupState {
   submitting: boolean;
@@ -225,6 +228,34 @@ export function App() {
     setTab("chat");
     void refreshCheckpoints(info.threadId);
   }
+
+  /**
+   * Working-tree reads for the Files tab. Thread-scoped, so the server
+   * decides which tree is meant (the Worktree when promoted, the Project's
+   * workspace root otherwise) and every path stays relative to it — the
+   * client never holds an absolute server path.
+   */
+  /**
+   * The shared "there is a live client and an active Thread" guard. Returned
+   * rather than spread into the command, so each call site still builds a
+   * literal the protocol's discriminated union can check — a spread would
+   * widen the type and lose that.
+   */
+  function requireThreadClient() {
+    const client = clientRef.current;
+    if (!client || !thread) throw new Error("Not connected");
+    return { client, threadId: thread.threadId };
+  }
+
+  const listWorkingTreeDirectory = (path: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<WorkingTreeListing>({ type: "thread.list-directory", threadId, path });
+  };
+
+  const readWorkingTreeFile = (path: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<FilePreviewData>({ type: "thread.read-file", threadId, path });
+  };
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
     const client = clientRef.current;
@@ -690,6 +721,9 @@ export function App() {
               No thread selected — pick one from the Threads tab.
             </div>
           ))}
+        {tab === "files" && (
+          <FileBrowser threadId={thread?.threadId} listDirectory={listWorkingTreeDirectory} readFile={readWorkingTreeFile} />
+        )}
         {tab === "threads" &&
           (selectedProjectId === null ? (
             <ProjectPicker

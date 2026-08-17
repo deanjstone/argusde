@@ -935,6 +935,120 @@ describe("ws-server", () => {
     expect(history?.activities).toEqual([]);
   }, 20_000);
 
+  describe("working-tree reads", () => {
+    async function threadIn(dir: string, ids: [string, string]) {
+      const projectResult = await send({ type: "project.create", commandId: ids[0], workspaceRoot: dir, title: "P" });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: ids[1], projectId, title: "T" });
+      return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    }
+
+    it("lists the Thread's working tree, files and dotfiles included", async () => {
+      fs.mkdirSync(path.join(repoDir, "src"));
+      fs.writeFileSync(path.join(repoDir, "src", "index.ts"), "const x = 1;\n");
+      fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
+      const threadId = await threadIn(repoDir, ["wt1", "wt2"]);
+
+      const result = await send({ type: "thread.list-directory", commandId: "wt3", threadId });
+      expect(result.ok).toBe(true);
+      const listing = result.ok ? (result.result as { path: string; parentPath: string | null; entries: { name: string; kind: string }[] }) : undefined;
+
+      // Unlike fs.list-directory (which picks a Project root and is
+      // deliberately directories-only), this is a file browser.
+      expect(listing?.path).toBe("");
+      expect(listing?.parentPath).toBeNull();
+      expect(listing?.entries.map((e) => e.name)).toContain(".gitignore");
+      expect(listing?.entries.find((e) => e.name === "src")?.kind).toBe("directory");
+      expect(listing?.entries.find((e) => e.name === "file.txt")?.kind).toBe("file");
+    });
+
+    it("reads a file back tokenised, over the wire", async () => {
+      fs.writeFileSync(path.join(repoDir, "app.ts"), "const answer = 42;\n");
+      const threadId = await threadIn(repoDir, ["wt4", "wt5"]);
+
+      const result = await send({ type: "thread.read-file", commandId: "wt6", threadId, path: "app.ts" });
+      expect(result.ok).toBe(true);
+      const preview = result.ok
+        ? (result.result as { kind: string; language: string | null; lines: { content: string; kind: string }[][] | null })
+        : undefined;
+
+      expect(preview?.kind).toBe("text");
+      expect(preview?.language).toBe("typescript");
+      // Tokens carry the text *and* a semantic kind — the client maps kinds
+      // onto theme tokens, so a payload of undifferentiated "plain" would
+      // render as an unhighlighted file while every other assertion passed.
+      expect(preview?.lines?.[0]?.map((t) => t.content).join("")).toBe("const answer = 42;");
+      expect(preview?.lines?.[0]?.map((t) => t.kind)).toContain("keyword");
+      expect(new Set(preview?.lines?.[0]?.map((t) => t.kind)).size).toBeGreaterThan(1);
+    });
+
+    /**
+     * Containment over the wire, not only at the module.
+     *
+     * Spec #93 names the WebSocket seam as the primary one for every
+     * server-side read in this spec, and this is the security-relevant
+     * behaviour — a client sends a crafted `path` and must not be able to
+     * read outside the Thread's tree. Exercised through the same socket a
+     * real client uses, so a handler that forgot to route through
+     * working-tree.ts would be caught here even with the module's own tests
+     * green. The exhaustive variants live in working-tree.test.ts.
+     */
+    it("refuses every shape of escape from the working tree, over the wire", async () => {
+      const threadId = await threadIn(repoDir, ["wt7", "wt8"]);
+      fs.mkdirSync(path.join(repoDir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(repoDir, "src", "in.ts"), "ok\n");
+      // A symlink out of the tree: no ".." anywhere, every segment inside the
+      // root, so a purely lexical check would let this through.
+      fs.symlinkSync(os.tmpdir(), path.join(repoDir, "escape-hatch"));
+
+      const attempts = [
+        "../../etc/passwd",
+        "src/../../../etc/passwd",
+        "/etc/passwd",
+        "escape-hatch",
+        `../${path.basename(repoDir)}-evil/gotcha.txt`,
+      ];
+
+      for (const [i, attempt] of attempts.entries()) {
+        const read = await send({ type: "thread.read-file", commandId: `wtx${i}`, threadId, path: attempt });
+        expect(read.ok, `read ${attempt}`).toBe(false);
+        const list = await send({ type: "thread.list-directory", commandId: `wtl${i}`, threadId, path: attempt });
+        expect(list.ok, `list ${attempt}`).toBe(false);
+        // Never teaches the client where the tree lives on the server — it
+        // only ever sees relative paths, so a refusal must not turn into a
+        // probe for the filesystem layout.
+        if (!read.ok) expect(read.error).not.toContain(repoDir);
+      }
+    });
+
+    it("reads from a promoted Thread's Worktree, not the Project's workspace root", async () => {
+      // Story 11: the browser is rooted at the Thread's *own* working tree.
+      // Asserted by putting different content in each and checking which
+      // comes back, rather than by inspecting a path.
+      const threadId = await threadIn(repoDir, ["wt10", "wt11"]);
+      const promoted = await send({ type: "thread.promote-to-worktree", commandId: "wt12", threadId });
+      expect(promoted.ok).toBe(true);
+      const { worktreePath } = promoted.ok ? (promoted.result as { worktreePath: string }) : { worktreePath: "" };
+
+      fs.writeFileSync(path.join(repoDir, "file.txt"), "main workspace\n");
+      fs.writeFileSync(path.join(worktreePath, "file.txt"), "the worktree\n");
+
+      const result = await send({ type: "thread.read-file", commandId: "wt13", threadId, path: "file.txt" });
+      const preview = result.ok ? (result.result as { plainLines: string[] | null; lines: { content: string }[][] | null }) : undefined;
+      const text = preview?.plainLines?.join("\n") ?? preview?.lines?.map((l) => l.map((t) => t.content).join("")).join("\n") ?? "";
+      expect(text).toContain("the worktree");
+      expect(text).not.toContain("main workspace");
+    });
+
+    it("keeps working on a closed Thread — reviewing what happened must not require it to be open", async () => {
+      const threadId = await threadIn(repoDir, ["wt14", "wt15"]);
+      await send({ type: "thread.close", commandId: "wt16", threadId });
+
+      const result = await send({ type: "thread.list-directory", commandId: "wt17", threadId });
+      expect(result.ok).toBe(true);
+    });
+  });
+
   it("fs.list-directory lists a real directory's subdirectories, excluding dotfiles and plain files", async () => {
     fs.mkdirSync(path.join(repoDir, "subdir-a"));
     fs.mkdirSync(path.join(repoDir, "subdir-b"));

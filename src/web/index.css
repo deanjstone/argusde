@@ -43,8 +43,18 @@ body,
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-primary-bright: var(--primary-bright);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-syntax-comment: var(--syntax-comment);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-constant: var(--syntax-constant);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-function: var(--syntax-function);
+  --color-syntax-type: var(--syntax-type);
+  --color-syntax-variable: var(--syntax-variable);
+  --color-syntax-punctuation: var(--syntax-punctuation);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -79,6 +89,12 @@ body,
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.541 0.281 293.009);
   --primary-foreground: oklch(0.985 0 0);
+  /* The accent, light enough to be *text*. --primary is a surface colour: it
+     has to stay dark so near-white --primary-foreground reads on top of it,
+     which leaves it at 3.35:1 as a foreground on the dark app background —
+     below WCAG AA. Anything rendering the accent as text (the active tab, a
+     link, an expand control) uses this instead. Same hue. */
+  --primary-bright: oklch(0.541 0.281 293.009);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -92,6 +108,23 @@ body,
      leaving amber-* literals in a migrated surface. */
   --warning: oklch(0.72 0.16 68);
   --warning-foreground: oklch(0.22 0.05 68);
+  /* Syntax colours live here rather than arriving with the payload — the
+     server sends a token's *kind* and these decide how it looks. See
+     CONTENT_SECURITY_POLICY in src/server/http/static-server.ts for why a
+     per-token colour is not an option. */
+  --syntax-comment: oklch(0.55 0.02 260);
+  --syntax-string: oklch(0.55 0.15 150);
+  /* number and constant share a hue on purpose — `42`, `true` and `null` are
+     all literals, and every editor theme worth copying colours them alike. */
+  --syntax-number: oklch(0.58 0.16 40);
+  --syntax-constant: oklch(0.58 0.16 40);
+  --syntax-keyword: oklch(0.55 0.22 350);
+  --syntax-function: oklch(0.55 0.16 265);
+  --syntax-type: oklch(0.58 0.13 200);
+  --syntax-variable: oklch(0.42 0.02 260);
+  /* Distinct from comment: punctuation is structure, not prose, so it recedes
+     without also reading as a comment. */
+  --syntax-punctuation: oklch(0.48 0.01 260);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -129,6 +162,9 @@ body,
      contrast and keeps the accent looking like it always did. */
   --primary: oklch(0.541 0.281 293.009);
   --primary-foreground: oklch(0.985 0 0);
+  /* 7.3:1 on the dark background, still 5.6:1 on a muted card. This is the
+     block the app actually runs in — the shell sets class="dark". */
+  --primary-bright: oklch(0.75 0.16 293);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -138,6 +174,15 @@ body,
   --destructive: oklch(0.704 0.191 22.216);
   --warning: oklch(0.79 0.15 74);
   --warning-foreground: oklch(0.22 0.05 68);
+  --syntax-comment: oklch(0.62 0.02 260);
+  --syntax-string: oklch(0.78 0.13 150);
+  --syntax-number: oklch(0.8 0.13 55);
+  --syntax-constant: oklch(0.8 0.13 55);
+  --syntax-keyword: oklch(0.75 0.18 350);
+  --syntax-function: oklch(0.79 0.14 275);
+  --syntax-type: oklch(0.82 0.11 200);
+  --syntax-variable: oklch(0.9 0.01 260);
+  --syntax-punctuation: oklch(0.72 0.01 260);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);

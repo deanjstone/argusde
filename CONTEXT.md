@@ -10,6 +10,8 @@ Vocabulary adopted for the T3-Code-parity uplift (see wayfinder map: ArgusDE →
 
 **Worktree** — a git worktree used as an isolated workspace for a Thread. A Thread with a worktree runs there instead of in the Project's main working tree; a Thread without one runs in the main working tree directly. Created on a real branch, `argusde/thread-<threadId>`, since spec #93 phase 3 — the branch outlives the Worktree, so closing a Thread never discards commits the agent made in it. Worktrees promoted before that change are on a detached HEAD and have no branch; nothing rewrites them, so the branch a Worktree is on must be read from git rather than derived from the Thread id.
 
+**Working tree** — the directory a Thread's agent actually operates in: its Worktree when it has one, the Project's `workspaceRoot` otherwise. User-facing since spec #93 phase 4, which made it browsable and readable in-app. Every working-tree command is Thread-scoped and every path in one is *relative to the working tree*, so a client never holds — or can ask for — an absolute server path.
+
 ## Thread timeline
 
 **Turn** — one user-to-assistant work cycle inside a Thread: starts at user input, ends when follow-up work (e.g. checkpointing) settles.

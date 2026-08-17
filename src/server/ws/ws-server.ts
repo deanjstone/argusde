@@ -10,6 +10,7 @@ import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
+import { listDirectory as listWorkingTreeDirectory, readFile as readWorkingTreeFile } from "../workspace/working-tree.js";
 import {
   API_VERSION,
   ClientCommandSchema,
@@ -400,6 +401,19 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           recordsActivity: thread.recordsActivity,
         };
       }
+      /**
+       * Working-tree reads (spec #93 phase 4). Both are read-only history
+       * queries, so plain requireThread via resolveThreadCwd — reading a
+       * closed Thread's files has to keep working, same as its transcript.
+       *
+       * Neither handler does any path work of its own: resolution and
+       * containment belong to workspace/working-tree.ts, once, so a future
+       * command can't get it subtly differently.
+       */
+      case "thread.list-directory":
+        return listWorkingTreeDirectory(resolveThreadCwd(command.threadId), command.path ?? "");
+      case "thread.read-file":
+        return readWorkingTreeFile(resolveThreadCwd(command.threadId), command.path);
       case "fs.list-directory": {
         const target = command.path ?? os.homedir();
         const dirents = await fs.readdir(target, { withFileTypes: true });

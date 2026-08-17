@@ -54,6 +54,15 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.list"), commandId: z.string(), projectId: z.string() }),
   z.object({ type: z.literal("thread.get-history"), commandId: z.string(), threadId: z.string() }),
   z.object({ type: z.literal("fs.list-directory"), commandId: z.string(), path: z.string().optional() }),
+  /**
+   * Working-tree reads (spec #93 phase 4). Thread-scoped, not
+   * Project-scoped, so the *server* resolves which working tree is meant
+   * (the Worktree when the Thread is promoted, the Project's workspace root
+   * otherwise) rather than the client passing a path it guessed. `path` is
+   * always relative to that root; omit it for the root itself.
+   */
+  z.object({ type: z.literal("thread.list-directory"), commandId: z.string(), threadId: z.string(), path: z.string().optional() }),
+  z.object({ type: z.literal("thread.read-file"), commandId: z.string(), threadId: z.string(), path: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -157,6 +166,74 @@ export interface DirectoryListing {
   /** null only at the filesystem root. */
   parentPath: string | null;
   entries: { name: string; path: string }[];
+}
+
+/**
+ * One directory inside a Thread's working tree. Distinct from
+ * DirectoryListing above, which browses the *server's* filesystem to pick a
+ * Project root and is deliberately directories-only: this one is a file
+ * browser, so it carries files and dotfiles too, and every path is relative
+ * to the working tree so nothing outside it is ever named on the wire.
+ */
+export interface WorkingTreeListing {
+  /** Relative to the working tree; "" is the root. */
+  path: string;
+  /** null at the root — browsing can never walk out of the tree. */
+  parentPath: string | null;
+  entries: { name: string; path: string; kind: "file" | "directory" }[];
+}
+
+/**
+ * What a syntax token *is*, rather than what colour it should be.
+ *
+ * The server sends kinds and the stylesheet decides colours: a per-token
+ * colour would need an inline style attribute, which the UI's CSP blocks (see
+ * CONTENT_SECURITY_POLICY in server/http/static-server.ts), and colour belongs
+ * in the theme's CSS variables rather than a payload (CLAUDE.md). Bucketed
+ * from TextMate scopes — see server/workspace/highlight.ts.
+ */
+export type SyntaxKind =
+  | "plain"
+  | "comment"
+  | "string"
+  | "number"
+  | "constant"
+  | "keyword"
+  | "function"
+  | "type"
+  | "variable"
+  | "punctuation";
+
+export interface SyntaxToken {
+  content: string;
+  kind: SyntaxKind;
+}
+
+export type SyntaxLine = SyntaxToken[];
+
+/**
+ * One file, ready to render.
+ *
+ * `lines` and `plainLines` are separate nullable fields rather than a
+ * discriminated union so a client can render whichever it was given without
+ * unwrapping a variant; `kind` says what to expect, and a text file always
+ * has exactly one of the two.
+ */
+export interface FilePreview {
+  /** Relative to the working tree. */
+  path: string;
+  /**
+   * `binary` — a NUL byte in the first 8 KiB, so rendering it would be
+   * noise. `too-large` — past the preview cap; opening a build artefact by
+   * accident has to be recoverable rather than a hang.
+   */
+  kind: "text" | "binary" | "too-large";
+  byteLength: number;
+  /** null when no language could be resolved, or when tokenising was skipped or failed — in which case `plainLines` is populated. */
+  language: string | null;
+  lines: SyntaxLine[] | null;
+  /** Set instead of `lines` for a text file too big to tokenise, or one whose language isn't known. */
+  plainLines: string[] | null;
 }
 
 export type CommandResult =

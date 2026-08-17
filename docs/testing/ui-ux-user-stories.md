@@ -228,3 +228,19 @@ A future automated run (or manual QA pass) should report results keyed by story 
 are diffable across runs, not just narrated in prose. Findings that require a fix
 follow this repo's standard convention: a dedicated branch + PR for anything fixed
 immediately, or a filed GitHub issue (tagged with the story ID) for anything deferred.
+
+## US-15: Working tree — browsing and preview
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 4, which made the
+Thread's working tree readable in-app.
+
+- **US-15.1** — With a Thread active, the Files tab lists that Thread's working tree — the
+  Worktree when it has one, the Project's workspace root otherwise — including files and
+  dotfiles, not just directories.
+- **US-15.2** — `.git` never appears in the browser. It is machinery rather than content, and
+  it sorts first alphabetically, so a regression puts loose objects at the top of the tree.
+- **US-15.3** — Opening a text file renders its contents with syntax highlighting, resolved
+  server-side and coloured from the theme's tokens.
+- **US-15.4** — The bottom tab bar stays reachable in both the tree and the preview state, and
+  at mobile width there is an explicit control back to the tree from an open file.
+- **US-15.5** — Neither state introduces horizontal page scroll at mobile width.
