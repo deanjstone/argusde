@@ -23,6 +23,22 @@ const DEFAULT_MIME_TYPE = "application/octet-stream";
 // `location.host`); the build has no inline scripts/styles (Vite emits
 // linked <script>/<link> tags only), so neither directive needs
 // 'unsafe-inline'.
+//
+// **What `style-src 'self'` costs the UI, stated here once.** It blocks inline
+// `<style>` elements *and* inline `style` attributes, which rules out three
+// things the web code would otherwise reach for, and which cost real time to
+// rediscover (spec #93 phase 4):
+//
+//   1. shadcn/Radix's `scroll-area`, which injects a `<style>` element on
+//      mount. Blocking it broke the whole app, since first-run renders the
+//      directory browser. Use plain `overflow-y-auto` containers.
+//   2. Per-token `style={{ color }}` for syntax highlighting. The server sends
+//      a token's semantic *kind* and the stylesheet owns the colours.
+//   3. Any computed `style={{ … }}` at all, e.g. a runtime grid-column count.
+//
+// This is not weakened to make styling easier: the server renders agent output
+// and is reachable over Tailscale. Code that trips over it cites this comment
+// rather than restating the reasoning.
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'";
 

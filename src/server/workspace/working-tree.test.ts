@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -230,6 +231,73 @@ describe("readFile", () => {
 
       expect(preview.kind).toBe("text");
       expect(preview.byteLength).toBe(0);
+    });
+  });
+  describe("defects an adversarial review found", () => {
+    it("emits root-relative paths even when the root itself is a symlink", async () => {
+      // Measured against the *presented* root, a symlinked workspace path
+      // (/tmp is one on macOS) made every emitted path "..'"'"'-prefixed and
+      // parentPath at the root ".." instead of null — the module breaking its
+      // own promise and handing back paths it would then refuse.
+      const presented = path.join(outside, "presented");
+      fs.symlinkSync(root, presented);
+
+      const listing = await listDirectory(presented, "");
+      expect(listing.path).toBe("");
+      expect(listing.parentPath).toBeNull();
+      expect(listing.entries.map((e) => e.path)).toEqual(expect.arrayContaining(["src", "README.md"]));
+      for (const entry of listing.entries) expect(entry.path).not.toContain("..");
+    });
+
+    it("refuses a FIFO rather than blocking a filesystem thread on it forever", async () => {
+      // Opening a FIFO never returns. Four of these starve libuv's whole
+      // threadpool, taking every filesystem operation the server can make
+      // with them — so the kind check has to happen before anything opens it.
+      execFileSync("mkfifo", [path.join(root, "pipe")]);
+
+      await expect(readFile(root, "pipe")).rejects.toThrow(/not a regular file/i);
+    });
+
+    it("refuses a directory handed to readFile, rather than failing obscurely", async () => {
+      await expect(readFile(root, "src")).rejects.toThrow(/not a regular file/i);
+    });
+
+    it("refuses to read inside .git, not merely to list it", async () => {
+      // Half-hiding it was incoherent, and .git/config routinely holds a
+      // remote URL with a credential in it.
+      fs.mkdirSync(path.join(root, ".git"));
+      fs.writeFileSync(path.join(root, ".git", "config"), "url = https://x:token@example.com/r.git\n");
+
+      await expect(readFile(root, ".git/config")).rejects.toThrow(/outside/i);
+      await expect(listDirectory(root, ".git")).rejects.toThrow(/outside/i);
+    });
+
+    it("still reads other dotfiles — .git is machinery, they are content", async () => {
+      expect((await readFile(root, ".gitignore")).kind).toBe("text");
+    });
+
+    it("resolves what it validated, so a link swapped after the check cannot redirect the read", async () => {
+      // The lexical path was previously returned, so the caller opened
+      // something the containment check had never seen. Returning the
+      // resolved path closes that: the value handed back no longer traverses
+      // the link at all.
+      fs.symlinkSync(path.join(root, "src"), path.join(root, "link"));
+      const resolved = resolveWithin(root, "link/index.ts");
+
+      expect(resolved).toBe(path.join(root, "src", "index.ts"));
+      expect(resolved).not.toContain("link");
+    });
+
+    it("does not leak an absolute server path when a file simply is not there", async () => {
+      // Node's fs errors carry the path they failed on, and the WS server
+      // relays error.message verbatim — so a plain ENOENT was handing back
+      // the server's filesystem layout.
+      await expect(readFile(root, "nope.ts")).rejects.toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining(root) }),
+      );
+      await expect(listDirectory(root, "nope")).rejects.toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining(root) }),
+      );
     });
   });
 });

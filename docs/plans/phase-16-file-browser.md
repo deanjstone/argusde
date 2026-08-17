@@ -40,6 +40,43 @@ The CSP is a deliberate control on an app that renders agent output and is reach
 
 The CSP also **exposed a latent contrast bug across three components**. `text-primary` measures **3.35:1** on the app background — below WCAG AA — because phase 14 deliberately darkened `--primary` so near-white text would read *on top of* it. A surface colour and a text colour pull in opposite directions and cannot be the same token. Added `--primary-bright` (same hue, 7.3:1 on the background and 5.6:1 on a muted card) and used it for all three text uses: the active tab, the activity card's expand control, and resource links. The audit caught it on nine stories.
 
+## What review changed
+
+Two reviews ran: one adversarial security pass on the containment boundary, one spec + standards pass. Between them they found **one critical defect, four real security defects, and a vacuous test.** All fixed.
+
+### Critical: `--primary-bright` was never defined
+
+The token was mapped in `@theme inline` and **never assigned** — my edit had silently failed to match its anchor. `text-primary-bright` was therefore invalid-at-computed-value-time, so the colour fell back to inherited near-white and the violet accent was simply gone from the active tab, the activity card's expand control, and resource links.
+
+**The axe pass was green *because of* the bug** — inherited near-white has plenty of contrast. A clean check hiding a defect, exactly the failure this project has a memory note about. The re-verification now asserts the computed colour in a real browser (`oklch(0.75 0.16 293)`) and that the custom property is non-empty, not merely that axe is happy. Every edit script in this phase's later passes asserts its anchors matched.
+
+### Four security defects, all found empirically
+
+The security pass ran the full battery — `..` variants, encoded forms, mixed separators, absolute and Windows-style paths, symlink chains to depth 41, null bytes, prefix-sibling directories — and **containment held against all of them**. What it did find:
+
+1. **A symlinked root leaked the real path and broke the module's own invariant.** `toRelative` measured against the *presented* root rather than the real one, so with a symlinked workspace path (`/tmp` is one on macOS) every emitted path came back `..`-prefixed, `parentPath` at the root was `".."` instead of `null`, and the real directory name was disclosed — the module handing clients paths its own check would then refuse.
+2. **A FIFO in the working tree parked a libuv threadpool thread forever.** `looksBinary` opened the path *before* any kind check, and `open()` on a FIFO never returns. Four such requests starve every filesystem operation the server can make. Now only regular files are read, checked before anything opens them; directories and devices get a clean refusal too.
+3. **`.git` hiding was listing-only.** `.git/config` was readable, and it routinely holds a remote URL with a credential in it. Half-hiding it was incoherent — either it's in the browsable tree or it isn't — so reads inside it are refused now. Other dotfiles stay readable deliberately: `.env` is the user's own file in their own repository, and the client *is* that user.
+4. **The lexical path was returned, not the validated one** — so a symlink swapped between check and read redirected the read, demonstrated deterministically. The agent is a concurrent writer in this exact tree, so it isn't hypothetical. `resolveWithin` now returns the resolved path. That doesn't make the sequence atomic (only `openat`/`O_NOFOLLOW` would) but it removes the check-one-path-then-read-another gap.
+
+Plus **fs errors were leaking absolute server paths**: `ws-server` relays `error.message` verbatim, so a plain `ENOENT` handed back the server's filesystem layout. Restated with only the relative path the client already sent.
+
+### What the security pass established that is *not* a bug
+
+**The working tree root is client-controlled, by design.** `project.create` takes an arbitrary `workspaceRoot`, and `fs.list-directory` exists specifically to browse the server's filesystem to pick one. So story 16's control is **per-Thread confinement, not a filesystem sandbox**: it stops a crafted `path` escaping the Thread's tree, and it does not — cannot — stop the user pointing a Project at `/`. That is coherent for a single-user app where the client is the user, but it should be said plainly rather than left for someone to mistake later.
+
+**Windows is unverified.** Alternate data streams, `\\?\` and UNC prefixes, reserved device names (`CON`/`NUL`), 8.3 short names, and `path.win32.relative`'s case-insensitivity all deserve a check on Windows and none are testable on Linux. Low priority given [#99](https://github.com/deanjstone/argusde/issues/99) — Windows is becoming a rarely-booted fallback.
+
+### From the spec/standards pass
+
+- **The Done-when audit item genuinely was not met.** No audit story opened the Files tab; the "106/0" was entirely pre-existing stories. Added **US-15.1–15.5** to the harness and to `docs/testing/ui-ux-user-stories.md`, covering the listing, `.git` being hidden, the preview rendering, the tab bar surviving both states with a back control at mobile width, and no horizontal scroll.
+- **Containment is now tested over the wire too**, which is where #93 says the primary seam is. Five escape shapes, both commands, plus the no-absolute-path-in-errors assertion.
+- **A vacuous test**: the one over-the-wire token assertion checked `t.color !== null`, always true for `{content, kind}` — it was testing the abandoned hex design. It now asserts a `keyword` kind is present and that more than one kind came back, so an all-`plain` payload fails.
+- **`readFile` blanked a language it had actually resolved** when tokenising failed, telling the UI "unknown language" when the truth was "known language, grammar didn't load".
+- **`ui/scroll-area.tsx` deleted.** Installed by the CLI, then documented as unusable under the CSP — leaving it invited phases 5 and 6 to import something that breaks the whole app.
+- **The CSP rationale was restated at six sites.** One canonical statement now lives next to `CONTENT_SECURITY_POLICY` in `static-server.ts`, spelling out all three things it rules out; the other five cross-reference it.
+- Also: `tokenise`'s catch now logs rather than swallowing silently; the duplicated load/error/finally triad in `file-browser.tsx` and the repeated client guard in `App.tsx` are extracted; `--syntax-punctuation` no longer duplicates `--syntax-comment`; a test name that mentioned colours the server no longer sends is corrected.
+
 ## Files
 
 - `src/server/workspace/working-tree.ts` (new) — resolution, containment, listing, reading, size bands
@@ -51,12 +88,15 @@ The CSP also **exposed a latent contrast bug across three components**. `text-pr
 - `src/web/index.css` — syntax colour tokens, `--primary-bright`
 - `scripts/ui-ux-audit/run.mjs` — US-13.4 derives the tab order from the DOM instead of hardcoding it
 - `CONTEXT.md` — **Working tree** glossary entry
+- `src/server/http/static-server.ts` — the canonical statement of what `style-src 'self'` rules out for UI code
+- `docs/testing/ui-ux-user-stories.md` — US-15
 
 ## Verification
 
 - `pnpm typecheck` clean, both projects.
-- Full suite green under `xvfb-run`: **401/401 across 31 files**, up from 350/350 across 28.
-- **Audit harness both viewports: 106 pass / 0 fail (desktop), 94 pass / 0 fail (mobile).** Zero axe violations, no horizontal scroll at 390px, zero console errors. Two baselines re-recorded for the directory-browser migration.
+- Full suite green under `xvfb-run`: **408/408 across 31 files**, up from 350/350 across 28.
+- **Audit harness both viewports: 115 pass / 0 fail (desktop), 103 pass / 0 fail (mobile)**, including the five new US-15 Files-tab stories. Zero axe violations, no horizontal scroll at 390px, zero console errors. Four baselines newly recorded for the Files tab; two re-recorded for the directory-browser migration.
+- **The accent token verified as actually rendering**, not merely as axe-clean — see the critical finding below for why that distinction earned its own check.
 - **Driven in a real browser at 390×844** against a running server, which is where three of this phase's findings came from:
 
 ```

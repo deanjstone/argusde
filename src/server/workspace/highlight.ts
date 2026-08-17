@@ -19,18 +19,11 @@ import type { SyntaxKind, SyntaxLine } from "../../shared/ws-protocol.js";
  * TOKENISE_MAX_BYTES in working-tree.ts) rather than applied to any file at
  * any size.
  *
- * **Tokens carry a semantic kind, not a colour.** Two reasons, and the first
- * is not negotiable:
- *
- * 1. The web UI is served under `style-src 'self'` (static-server.ts), which
- *    blocks inline `style` attributes — so per-token hex colours could not be
- *    applied at all without weakening a deliberate security control on an app
- *    that renders agent output over Tailscale.
- * 2. It is what CLAUDE.md asks for anyway: "Theme through the CSS variables
- *    in src/web/index.css, not per-component colour classes." A colour baked
- *    into the payload is the same mistake one layer further out.
- *
- * A short kind also costs far less on the wire than a hex string per token.
+ * **Tokens carry a semantic kind, not a colour.** Not negotiable: the inline
+ * style attribute a per-token colour needs is blocked by the UI's CSP (see
+ * CONTENT_SECURITY_POLICY in server/http/static-server.ts). It is also what
+ * CLAUDE.md asks for — a colour baked into the payload is the same mistake one
+ * layer further out — and a short kind costs far less on the wire.
  */
 
 /**
@@ -149,8 +142,8 @@ function kindForScope(scope: string): SyntaxKind {
  * A language that fails to load degrades to untokenised lines rather than
  * failing the read — a preview without colour is useful, and a grammar
  * problem in one of 346 languages must not turn "open this file" into an
- * error. Deliberately not a silent catch: the fallback *is* the handling,
- * and the caller can tell because it gets null back.
+ * error. The fallback is the handling, and it is not silent: the failure is
+ * logged, and the caller can tell because it gets null back.
  */
 export async function tokenise(source: string, language: string): Promise<SyntaxLine[] | null> {
   const highlighter = await getHighlighter();
@@ -173,7 +166,12 @@ export async function tokenise(source: string, language: string): Promise<Syntax
         return { content: token.content, kind: kindForScope(mostSpecific) };
       }),
     );
-  } catch {
+  } catch (error) {
+    // Logged rather than swallowed: the null return is a deliberate,
+    // user-visible fallback (the file still opens, badged "not highlighted"),
+    // but a grammar that consistently fails is a real problem in one of 346
+    // languages and would otherwise be invisible to whoever runs the server.
+    console.warn(`argusde: could not highlight as ${language}:`, error instanceof Error ? error.message : error);
     return null;
   }
 }

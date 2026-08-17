@@ -22,7 +22,7 @@ function preview(over: Partial<FilePreviewData> = {}): FilePreviewData {
 }
 
 describe("FilePreview", () => {
-  it("renders the file's tokens with the colours the server resolved", () => {
+  it("renders the file's tokens as theme-token classes, one per syntax kind", () => {
     render(<FilePreview preview={preview()} loading={false} error={undefined} />);
 
     expect(screen.getByTestId("preview-code")).toHaveTextContent("const x = 1;");

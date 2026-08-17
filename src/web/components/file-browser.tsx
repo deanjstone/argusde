@@ -70,30 +70,32 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
-  async function navigate(path: string) {
-    setLoadingListing(true);
-    setListingError(undefined);
+  /**
+   * The load/settle/report triad both round trips share. A failed read has to
+   * surface where it was triggered rather than leaving a stale pane sitting
+   * there — spec #93 story 68 — so the failure path clears the result as well
+   * as setting the message.
+   */
+  async function load<T>(
+    fetch: () => Promise<T>,
+    setResult: (value: T | null) => void,
+    setError: (message: string | undefined) => void,
+    setLoading: (loading: boolean) => void,
+  ) {
+    setLoading(true);
+    setError(undefined);
     try {
-      setListing(await listDirectory(path));
+      setResult(await fetch());
     } catch (error) {
-      setListingError(error instanceof Error ? error.message : String(error));
+      setResult(null);
+      setError(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoadingListing(false);
+      setLoading(false);
     }
   }
 
-  async function open(path: string) {
-    setLoadingPreview(true);
-    setPreviewError(undefined);
-    try {
-      setPreview(await readFile(path));
-    } catch (error) {
-      setPreview(null);
-      setPreviewError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setLoadingPreview(false);
-    }
-  }
+  const navigate = (path: string) => load(() => listDirectory(path), setListing, setListingError, setLoadingListing);
+  const open = (path: string) => load(() => readFile(path), setPreview, setPreviewError, setLoadingPreview);
 
   if (threadId === undefined) {
     return (
@@ -160,9 +162,8 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Plain overflow, not shadcn's `scroll-area` — Radix's injects an
-            inline <style> element that this app's `style-src 'self'` CSP
-            blocks. */}
+        {/* Plain overflow, not shadcn's `scroll-area` — see
+            CONTENT_SECURITY_POLICY in server/http/static-server.ts. */}
         <div
           className={cn(
             "min-h-0 flex-1 overflow-y-auto border-border md:flex-none md:basis-1/3 md:max-w-xs md:border-e",

@@ -186,11 +186,11 @@ export interface WorkingTreeListing {
 /**
  * What a syntax token *is*, rather than what colour it should be.
  *
- * The server sends kinds and the stylesheet decides colours, for two reasons:
- * the web UI is served under `style-src 'self'`, which blocks the inline
- * style attributes a per-token colour would need; and colour belongs in the
- * theme's CSS variables, not in a payload (CLAUDE.md). Bucketed from
- * TextMate scopes — see server/workspace/highlight.ts.
+ * The server sends kinds and the stylesheet decides colours: a per-token
+ * colour would need an inline style attribute, which the UI's CSP blocks (see
+ * CONTENT_SECURITY_POLICY in server/http/static-server.ts), and colour belongs
+ * in the theme's CSS variables rather than a payload (CLAUDE.md). Bucketed
+ * from TextMate scopes — see server/workspace/highlight.ts.
  */
 export type SyntaxKind =
   | "plain"

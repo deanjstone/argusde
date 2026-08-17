@@ -235,17 +235,27 @@ export function App() {
    * workspace root otherwise) and every path stays relative to it — the
    * client never holds an absolute server path.
    */
-  async function listWorkingTreeDirectory(path: string): Promise<WorkingTreeListing> {
+  /**
+   * The shared "there is a live client and an active Thread" guard. Returned
+   * rather than spread into the command, so each call site still builds a
+   * literal the protocol's discriminated union can check — a spread would
+   * widen the type and lose that.
+   */
+  function requireThreadClient() {
     const client = clientRef.current;
     if (!client || !thread) throw new Error("Not connected");
-    return client.sendCommand<WorkingTreeListing>({ type: "thread.list-directory", threadId: thread.threadId, path });
+    return { client, threadId: thread.threadId };
   }
 
-  async function readWorkingTreeFile(path: string): Promise<FilePreviewData> {
-    const client = clientRef.current;
-    if (!client || !thread) throw new Error("Not connected");
-    return client.sendCommand<FilePreviewData>({ type: "thread.read-file", threadId: thread.threadId, path });
-  }
+  const listWorkingTreeDirectory = (path: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<WorkingTreeListing>({ type: "thread.list-directory", threadId, path });
+  };
+
+  const readWorkingTreeFile = (path: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<FilePreviewData>({ type: "thread.read-file", threadId, path });
+  };
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
     const client = clientRef.current;

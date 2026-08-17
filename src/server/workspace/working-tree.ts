@@ -44,7 +44,24 @@ const BINARY_SNIFF_BYTES = 8 * 1024;
  * ArgusDE's own checkpoint refs, and listing it first (which alphabetically
  * it is) invites browsing thousands of loose objects to no purpose.
  */
-const HIDDEN_ENTRIES = new Set([".git"]);
+const HIDDEN_ENTRY = ".git";
+
+/**
+ * True for anything at or under `.git`.
+ *
+ * Hiding `.git` from listings but still serving reads inside it was
+ * incoherent — either it's part of the browsable tree or it isn't — and the
+ * incoherence had teeth: `.git/config` routinely holds a remote URL with a
+ * credential in it. Refused outright now.
+ *
+ * Other dotfiles stay readable on purpose. `.env` included: it is the user's
+ * own file in their own repository, this is a single-user app, and the client
+ * is that same user. `.git` is different because it is machinery rather than
+ * content.
+ */
+function isGitInternal(relativePath: string): boolean {
+  return relativePath === HIDDEN_ENTRY || relativePath.startsWith(`${HIDDEN_ENTRY}/`);
+}
 
 /**
  * Resolves a client-supplied relative path against the working tree, or
@@ -66,34 +83,55 @@ const HIDDEN_ENTRIES = new Set([".git"]);
  *   what exists outside the tree.
  */
 export function resolveWithin(root: string, relativePath: string): string {
+  if (isGitInternal(relativePath.split(path.sep).join("/"))) {
+    throw new Error(`Path is outside this Thread's working tree: ${relativePath}`);
+  }
   const realRoot = fsSync.realpathSync(root);
   // path.resolve on the joined path collapses "..", and an absolute
   // relativePath would override the root entirely — which is why the
   // containment check below is what decides, not this line.
   const target = path.resolve(realRoot, relativePath);
 
-  // realpath needs the path to exist. When it doesn't, fall back to checking
-  // the nearest ancestor that does: a symlink can only redirect a segment
-  // that is actually there, so this still catches escape via link while
-  // letting a plain "no such file" surface from the caller's own read.
-  const resolved = realpathOfNearestExisting(target);
+  // realpath needs the path to exist. When it doesn't, resolve the nearest
+  // ancestor that does and re-attach the missing tail: a symlink can only
+  // redirect a segment that is actually there, so this still catches escape
+  // via link while letting a plain "no such file" surface from the read.
+  const resolved = resolveExistingPrefix(target);
 
   if (!isInside(realRoot, resolved)) {
     throw new Error(`Path is outside this Thread's working tree: ${relativePath}`);
   }
-  return target;
+
+  // The *resolved* path is returned, not the lexical one. Handing back the
+  // lexical path meant the caller opened something the check had never
+  // actually validated: swap a symlink between the two and the read follows
+  // the new target. The window is microseconds, but the agent is a concurrent
+  // writer in this very tree, so it is not hypothetical. This does not make
+  // the sequence atomic — only openat/O_NOFOLLOW would — but it removes the
+  // check-one-path-then-read-another gap entirely.
+  return resolved;
 }
 
-function realpathOfNearestExisting(target: string): string {
+/**
+ * Realpaths as much of `target` as exists and re-attaches the rest verbatim.
+ *
+ * Resolving only the existing ancestor and *discarding* the tail would let a
+ * path escape by pointing at a link that doesn't exist yet, since the
+ * containment check would then be judging the ancestor rather than the path
+ * actually asked for.
+ */
+function resolveExistingPrefix(target: string): string {
+  const missing: string[] = [];
   let candidate = target;
   for (;;) {
     try {
-      return fsSync.realpathSync(candidate);
+      return path.join(fsSync.realpathSync(candidate), ...missing.reverse());
     } catch {
       const parent = path.dirname(candidate);
       // At the filesystem root nothing further can be resolved; hand back
       // what we have and let the containment check reject it.
       if (parent === candidate) return target;
+      missing.push(path.basename(candidate));
       candidate = parent;
     }
   }
@@ -105,21 +143,50 @@ function isInside(root: string, candidate: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-/** Root-relative, so nothing outside the tree is ever named on the wire. Empty string is the root itself. */
+/**
+ * Root-relative, so nothing outside the tree is ever named on the wire. Empty
+ * string is the root itself.
+ *
+ * Takes the *real* root deliberately. Measured against the presented root, a
+ * symlinked workspace path (`/tmp` is one on macOS) made every emitted path
+ * `..`-prefixed and `parentPath` at the root `".."` instead of null — so the
+ * module broke its own promise, disclosed the real directory name, and handed
+ * clients paths its own containment check would then refuse.
+ */
 function toRelative(root: string, absolute: string): string {
-  return path.relative(root, absolute).split(path.sep).join("/");
+  return path.relative(fsSync.realpathSync(root), absolute).split(path.sep).join("/");
+}
+
+/**
+ * Node's fs errors carry the absolute path they failed on, and ws-server
+ * relays `error.message` to the client verbatim — which would hand back the
+ * server's filesystem layout via a simple ENOENT. Restated with only the
+ * relative path the client already sent.
+ */
+async function statOrFail(absolute: string, relativePath: string) {
+  try {
+    return await fs.stat(absolute);
+  } catch {
+    throw new Error(`No such file in this Thread's working tree: ${relativePath}`);
+  }
 }
 
 export async function listDirectory(root: string, relativePath: string): Promise<WorkingTreeListing> {
   const absolute = resolveWithin(root, relativePath);
-  const dirents = await fs.readdir(absolute, { withFileTypes: true });
+  let dirents;
+  try {
+    dirents = await fs.readdir(absolute, { withFileTypes: true });
+  } catch {
+    // Same reasoning as statOrFail: no absolute path escapes to the client.
+    throw new Error(`Cannot list that path in this Thread's working tree: ${relativePath}`);
+  }
 
   // Directories first, then files, alphabetical within each — the ordering
   // that makes a tree scannable. Dotfiles are included, unlike the
   // project-root picker: .github/, .gitignore and .env.example are all
   // things you open when reviewing what the agent did.
   const entries = dirents
-    .filter((dirent) => !HIDDEN_ENTRIES.has(dirent.name))
+    .filter((dirent) => dirent.name !== HIDDEN_ENTRY)
     .map((dirent) => ({
       name: dirent.name,
       path: toRelative(root, path.join(absolute, dirent.name)),
@@ -139,8 +206,18 @@ export async function listDirectory(root: string, relativePath: string): Promise
 
 export async function readFile(root: string, relativePath: string): Promise<FilePreview> {
   const absolute = resolveWithin(root, relativePath);
-  const { size } = await fs.stat(absolute);
+  const stats = await statOrFail(absolute, relativePath);
   const here = toRelative(root, absolute);
+
+  // Regular files only, and checked *before* anything opens the path. A FIFO
+  // in the working tree parks a libuv threadpool thread forever on open() —
+  // four such requests starve every filesystem operation the server can make.
+  // Directories and devices land here too, which is the right answer for them.
+  if (!stats.isFile()) {
+    throw new Error(`Not a regular file: ${relativePath}`);
+  }
+
+  const { size } = stats;
 
   // Binary is checked before size, so a 300 MiB archive reads as "binary"
   // rather than the less useful "too large" — the user learns what it is,
@@ -161,8 +238,12 @@ export async function readFile(root: string, relativePath: string): Promise<File
   }
 
   const lines = await tokenise(source, language);
+  // The language stays reported even when tokenising failed: it *was*
+  // resolved, and blanking it would tell the UI "unknown language" when the
+  // truth is "known language, grammar didn't load". The client distinguishes
+  // the two by `lines` being null, and says "not highlighted" on its own.
   return lines === null
-    ? { path: here, kind: "text", byteLength: size, language: null, lines: null, plainLines: source.split("\n") }
+    ? { path: here, kind: "text", byteLength: size, language, lines: null, plainLines: source.split("\n") }
     : { path: here, kind: "text", byteLength: size, language, lines, plainLines: null };
 }
 

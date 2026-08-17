@@ -446,6 +446,45 @@ async function main() {
     // ---- US-4.3: connection banner on a mid-use agent drop ----
 
 
+    // ---- US-15: the Files tab reads the Thread's working tree (spec #93 phase 4) ----
+    await page.getByRole("button", { name: "Files" }).click();
+    await page.waitForTimeout(600);
+
+    const treeEntries = (await page.locator('[data-slot="item-title"]').allTextContents()).map((t) => t.trim());
+    record(
+      "US-15.1",
+      treeEntries.length > 0 ? "pass" : "fail",
+      treeEntries.length > 0 ? `working tree listed: ${treeEntries.join(", ")}` : "Files tab listed nothing for an active Thread",
+    );
+    // .git is machinery, not content — it lists first alphabetically, so a
+    // regression here puts loose objects at the top of the browser.
+    record("US-15.2", treeEntries.includes(".git/") ? "fail" : "pass", ".git hidden from the working-tree browser");
+    await scanA11y(page, "US-15.1");
+    await shot(page, "US-15.1-file-browser");
+
+    const readable = treeEntries.find((name) => name.endsWith(".txt") || name.endsWith(".md"));
+    if (readable) {
+      await page.getByRole("button", { name: readable }).click();
+      await page.waitForSelector('[data-testid="preview-code"]', { timeout: 15000 }).catch(() => undefined);
+      const previewShown = await page.locator('[data-testid="preview-code"]').count();
+      record("US-15.3", previewShown ? "pass" : "fail", previewShown ? `previewed ${readable}` : `opening ${readable} rendered no preview`);
+      await scanA11y(page, "US-15.3");
+      await shot(page, "US-15.3-file-preview");
+
+      // Story 15: on a phone the file takes the screen, so there has to be a
+      // way back to the tree — and the tab bar must survive both states.
+      const backCount = await page.getByRole("button", { name: /← Files/ }).count();
+      const tabBarVisible = await page.getByRole("button", { name: "Settings" }).isVisible();
+      record(
+        "US-15.4",
+        tabBarVisible && (VIEWPORT === "desktop" || backCount > 0) ? "pass" : "fail",
+        `tab bar visible: ${tabBarVisible}, back-to-tree control: ${backCount > 0} (${VIEWPORT})`,
+      );
+      await checkNoHorizontalScroll(page, "US-15.5");
+    } else {
+      record("US-15.3", "skip", "no plainly readable file in the audit fixture's working tree");
+    }
+
     // ---- US-9: settings tab ----
     await page.getByRole("button", { name: "Settings" }).click();
     await page.waitForTimeout(300);

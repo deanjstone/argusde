@@ -40,9 +40,8 @@ function formatBytes(bytes: number): string {
  * in this bundle.
  *
  * Tokens arrive carrying a *kind*, not a colour, and this maps kinds onto
- * theme tokens. That is not a stylistic preference: the UI is served under
- * `style-src 'self'`, so the inline style attributes a per-token colour would
- * need are blocked outright — and colour belongs in the theme regardless.
+ * theme tokens. Not a stylistic preference — see CONTENT_SECURITY_POLICY in
+ * server/http/static-server.ts.
  */
 export function FilePreview({ preview, loading, error }: FilePreviewProps) {
   if (loading) {
@@ -112,10 +111,8 @@ export function FilePreview({ preview, loading, error }: FilePreviewProps) {
         )}
       </div>
 
-      {/* A plain overflow container, not shadcn's `scroll-area`: Radix's
-          version injects an inline <style> element, which this app's
-          `style-src 'self'` CSP blocks outright. See the plan doc — the
-          registry component is unusable here without weakening that policy. */}
+      {/* Plain overflow, not shadcn's `scroll-area` — see
+          CONTENT_SECURITY_POLICY in server/http/static-server.ts. */}
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="w-max min-w-full py-2 font-mono text-xs leading-relaxed">
           <code data-testid="preview-code">
