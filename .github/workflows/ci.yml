@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only: this workflow only needs the checkout. Nothing here publishes,
+# comments, or writes to the repo.
+permissions:
+  contents: read
+
+# A superseded push has nothing useful left to say — cancel it rather than
+# paying for a full Electron + Playwright run twice.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Pinned rather than ubuntu-latest, because the apt package names below are
+    # release-specific (libasound2t64 on 24.04 is libasound2 on 22.04) — a
+    # silent runner bump would break the install step, not the tests.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No version argument: package.json's `packageManager` pin
+      # (pnpm@11.10.0) is the single source of truth, so this can't drift from
+      # what runs locally.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Pinned to the major the project is developed on rather than read
+          # from engines (">=22.0.0"), which a resolver would happily satisfy
+          # with Node 24 — CI drifting a major ahead of local is how a green
+          # run stops meaning anything.
+          node-version: 22
+          # Caches pnpm's content-addressable *store*, not node_modules — so
+          # better-sqlite3 and electron still run their real install scripts
+          # (pnpm-workspace.yaml's allowBuilds) rather than being restored
+          # half-built.
+          cache: pnpm
+
+      # Everything Electron needs to open a window, plus Xvfb to give it a
+      # display. Installed explicitly rather than assumed present in the
+      # runner image: when DISPLAY is unset the Electron specs fail with a hook
+      # timeout that reads exactly like flake, which has already cost one
+      # misdiagnosis (argusde#92).
+      - name: Install Electron's runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            xvfb \
+            libgtk-3-0t64 \
+            libnotify4 \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            libatspi2.0-0t64 \
+            libsecret-1-0 \
+            libgbm1 \
+            libasound2t64 \
+            xdg-utils
+
+      - run: pnpm install --frozen-lockfile
+
+      # The web and audit specs drive a real Chromium through Playwright, which
+      # is not the same browser Electron bundles.
+      - name: Install Playwright's Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # `pnpm test` is the entire gate: its `pretest` hook chains typecheck of
+      # both tsconfigs, the web build, the connect-screen copy and the Node
+      # build before vitest ever starts. Deliberately the same command a
+      # developer runs locally — a CI-only variant could pass while `pnpm test`
+      # failed. (.npmrc pins enable-pre-post-scripts so that chain can't be
+      # silently dropped by a pnpm default change.)
+      - name: Typecheck, build, and test
+        run: xvfb-run -a pnpm test
