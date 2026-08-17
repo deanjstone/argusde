@@ -244,3 +244,15 @@ Thread's working tree readable in-app.
 - **US-15.4** — The bottom tab bar stays reachable in both the tree and the preview state, and
   at mobile width there is an explicit control back to the tree from an open file.
 - **US-15.5** — Neither state introduces horizontal page scroll at mobile width.
+
+## US-16: Working tree — search
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 5.
+
+- **US-16.1** — Searching the Thread's working tree settles into either grouped results or an
+  explicit "no matches" state, never an indefinite spinner. The two must be distinguishable —
+  a search that found nothing has to say so.
+- **US-16.2** — Clicking a result opens that file in the preview with the matching line marked,
+  so a result leads somewhere rather than merely reporting a location.
+- **US-16.3** — Neither the results list nor an opened match introduces horizontal page scroll
+  at mobile width.

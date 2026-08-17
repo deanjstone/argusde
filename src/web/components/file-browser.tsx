@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useState } from "react";
 import { cn } from "../lib/utils.js";
-import type { FilePreview as FilePreviewData, WorkingTreeListing } from "../../shared/ws-protocol.js";
+import type { FilePreview as FilePreviewData, SearchResults, WorkingTreeListing } from "../../shared/ws-protocol.js";
 import { FilePreview } from "./file-preview.js";
+import { WorkspaceSearch } from "./workspace-search.js";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,6 +13,7 @@ import {
 } from "./ui/breadcrumb.js";
 import { Button } from "./ui/button.js";
 import { Empty, EmptyDescription, EmptyTitle } from "./ui/empty.js";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "./ui/input-group.js";
 import { Item, ItemContent, ItemTitle } from "./ui/item.js";
 import { Spinner } from "./ui/spinner.js";
 
@@ -20,6 +22,7 @@ export interface FileBrowserProps {
   threadId: string | undefined;
   listDirectory: (path: string) => Promise<WorkingTreeListing>;
   readFile: (path: string) => Promise<FilePreviewData>;
+  search: (query: string) => Promise<SearchResults>;
 }
 
 /**
@@ -45,7 +48,7 @@ function crumbsFor(relativePath: string): { label: string; path: string }[] {
  * decision (every command here is Thread-scoped), so this component never
  * handles an absolute path and cannot be pointed outside the tree.
  */
-export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserProps) {
+export function FileBrowser({ threadId, listDirectory, readFile, search }: FileBrowserProps) {
   const [listing, setListing] = useState<WorkingTreeListing | null>(null);
   const [listingError, setListingError] = useState<string | undefined>(undefined);
   const [loadingListing, setLoadingListing] = useState(false);
@@ -53,6 +56,14 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
   const [preview, setPreview] = useState<FilePreviewData | null>(null);
   const [previewError, setPreviewError] = useState<string | undefined>(undefined);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  // Set only when a file was opened from a search result, so the preview can
+  // mark and scroll to the matching line (story 19).
+  const [highlightLine, setHighlightLine] = useState<number | undefined>(undefined);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResults | null>(null);
+  const [searchError, setSearchError] = useState<string | undefined>(undefined);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     if (threadId === undefined) {
@@ -64,6 +75,12 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
     // preview from another Thread's tree would be actively misleading.
     setPreview(null);
     setPreviewError(undefined);
+    setHighlightLine(undefined);
+    // Results belong to the tree they were found in — carrying them across a
+    // Thread switch would offer paths from a different working tree.
+    setQuery("");
+    setResults(null);
+    setSearchError(undefined);
     void navigate("");
     // Keyed on threadId alone: navigation within a Thread is user-driven, not
     // a prop change.
@@ -95,7 +112,23 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
   }
 
   const navigate = (path: string) => load(() => listDirectory(path), setListing, setListingError, setLoadingListing);
-  const open = (path: string) => load(() => readFile(path), setPreview, setPreviewError, setLoadingPreview);
+
+  async function open(path: string, line?: number) {
+    setHighlightLine(line);
+    await load(() => readFile(path), setPreview, setPreviewError, setLoadingPreview);
+  }
+
+  async function runSearch() {
+    const trimmed = query.trim();
+    if (trimmed === "") {
+      // Clearing the field returns to browsing rather than searching for
+      // nothing — the tree is still mounted underneath.
+      setResults(null);
+      setSearchError(undefined);
+      return;
+    }
+    await load(() => search(trimmed), setResults, setSearchError, setSearching);
+  }
 
   if (threadId === undefined) {
     return (
@@ -170,7 +203,52 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
             showingFile && "hidden md:block",
           )}
         >
-          <div className="flex flex-col gap-1 p-2">
+          <form
+            className="p-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runSearch();
+            }}
+          >
+            <InputGroup>
+              <InputGroupInput
+                placeholder="Search this working tree…"
+                aria-label="Search the working tree"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <InputGroupAddon align="inline-end">
+                {results !== null && (
+                  <InputGroupButton
+                    type="button"
+                    aria-label="Clear search"
+                    onClick={() => {
+                      setQuery("");
+                      setResults(null);
+                      setSearchError(undefined);
+                    }}
+                  >
+                    Clear
+                  </InputGroupButton>
+                )}
+                <InputGroupButton type="submit">Search</InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
+          </form>
+
+          {/* Results replace the listing while a search is active; clearing the
+              field returns to browsing. One pane, because search and browse are
+              two ways at the same tree rather than two places. */}
+          {(searching || results !== null || searchError !== undefined) && (
+            <WorkspaceSearch
+              results={results}
+              loading={searching}
+              error={searchError}
+              onOpenMatch={(path, line) => void open(path, line)}
+            />
+          )}
+
+          <div className={cn("flex flex-col gap-1 p-2", (searching || results !== null || searchError !== undefined) && "hidden")}>
             {loadingListing && (
               <div className="flex justify-center py-4">
                 <Spinner />
@@ -211,7 +289,7 @@ export function FileBrowser({ threadId, listDirectory, readFile }: FileBrowserPr
         </div>
 
         <div className={cn("flex min-h-0 flex-1 flex-col", !showingFile && "hidden md:flex")}>
-          <FilePreview preview={preview} loading={loadingPreview} error={previewError} />
+          <FilePreview preview={preview} loading={loadingPreview} error={previewError} highlightLine={highlightLine} />
         </div>
       </div>
     </div>

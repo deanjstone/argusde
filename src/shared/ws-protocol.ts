@@ -63,6 +63,7 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
    */
   z.object({ type: z.literal("thread.list-directory"), commandId: z.string(), threadId: z.string(), path: z.string().optional() }),
   z.object({ type: z.literal("thread.read-file"), commandId: z.string(), threadId: z.string(), path: z.string() }),
+  z.object({ type: z.literal("thread.search"), commandId: z.string(), threadId: z.string(), query: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -234,6 +235,37 @@ export interface FilePreview {
   lines: SyntaxLine[] | null;
   /** Set instead of `lines` for a text file too big to tokenise, or one whose language isn't known. */
   plainLines: string[] | null;
+}
+
+/**
+ * One search's results, grouped by file (story 18) with every cap that bit
+ * reported (spec #93) — a silently truncated result set reads as a complete
+ * one. Paths are relative to the working tree, like every other
+ * working-tree response.
+ */
+export interface SearchResults {
+  query: string;
+  files: {
+    path: string;
+    matches: { line: number; text: string }[];
+    /** This file had more matches than the per-file cap allows. */
+    matchesTruncated: boolean;
+  }[];
+  totalMatches: number;
+  truncated: {
+    /** More files matched than the file cap allows. */
+    files: boolean;
+    /** Matches were capped — within a file, or across the whole result set. */
+    matches: boolean;
+    /**
+     * git was cut off mid-stream (its output exceeded what the server will
+     * buffer, or it ran out of time), so these results are partial for a
+     * reason no per-file or per-result cap describes.
+     */
+    output: boolean;
+    /** The specific reason for `output`: the search hit its wall-clock bound. */
+    timedOut: boolean;
+  };
 }
 
 export type CommandResult =

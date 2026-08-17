@@ -1040,6 +1040,89 @@ describe("ws-server", () => {
       expect(text).not.toContain("main workspace");
     });
 
+    it("searches the working tree over the wire, grouped by file", async () => {
+      fs.mkdirSync(path.join(repoDir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(repoDir, "src", "a.ts"), "const needle = 1;\nother\nneedle again\n");
+      // Untracked and uncommitted — the file you search for when reviewing
+      // agent work, and invisible to a default `git grep`.
+      fs.writeFileSync(path.join(repoDir, "src", "fresh.ts"), "needle in a new file\n");
+      const threadId = await threadIn(repoDir, ["se1", "se2"]);
+
+      const result = await send({ type: "thread.search", commandId: "se3", threadId, query: "needle" });
+      expect(result.ok).toBe(true);
+      const results = result.ok
+        ? (result.result as {
+            files: { path: string; matches: { line: number; text: string }[] }[];
+            totalMatches: number;
+            truncated: { files: boolean; matches: boolean; output: boolean; timedOut: boolean };
+          })
+        : undefined;
+
+      const byPath = new Map(results?.files.map((f) => [f.path, f]) ?? []);
+      expect(byPath.get("src/a.ts")?.matches.map((m) => m.line)).toEqual([1, 3]);
+      expect(byPath.get("src/fresh.ts")).toBeDefined();
+      expect(results?.totalMatches).toBe(3);
+      expect(results?.truncated).toEqual({ files: false, matches: false, output: false, timedOut: false });
+    });
+
+    it("reports no matches as an empty result rather than a failed command", async () => {
+      // git grep exits 1 for no matches, which execFile treats as an error —
+      // if that leaked, every empty search would look like a broken one.
+      const threadId = await threadIn(repoDir, ["se4", "se5"]);
+
+      const result = await send({ type: "thread.search", commandId: "se6", threadId, query: "nothing-matches-this" });
+      expect(result.ok).toBe(true);
+      const results = result.ok ? (result.result as { files: unknown[]; totalMatches: number }) : undefined;
+      expect(results?.files).toEqual([]);
+      expect(results?.totalMatches).toBe(0);
+    });
+
+    it("searches a promoted Thread's Worktree, not the Project's workspace root", async () => {
+      // Asserted by putting a *different* string in each tree and checking
+      // which one comes back — the previous version grepped for a string that
+      // existed only in an unrelated temp directory, which git could never
+      // have found either way.
+      const threadId = await threadIn(repoDir, ["sw1", "sw2"]);
+      const promoted = await send({ type: "thread.promote-to-worktree", commandId: "sw3", threadId });
+      const { worktreePath } = promoted.ok ? (promoted.result as { worktreePath: string }) : { worktreePath: "" };
+
+      fs.writeFileSync(path.join(repoDir, "which.ts"), "const marker = 'main-workspace';\n");
+      fs.writeFileSync(path.join(worktreePath, "which.ts"), "const marker = 'the-worktree';\n");
+
+      const inWorktree = await send({ type: "thread.search", commandId: "sw4", threadId, query: "the-worktree" });
+      const inMain = await send({ type: "thread.search", commandId: "sw5", threadId, query: "main-workspace" });
+
+      expect((inWorktree.ok ? (inWorktree.result as { totalMatches: number }) : undefined)?.totalMatches).toBe(1);
+      expect((inMain.ok ? (inMain.result as { totalMatches: number }) : undefined)?.totalMatches).toBe(0);
+    });
+
+    it("refuses a multi-line query over the wire, without leaking a server path", async () => {
+      const threadId = await threadIn(repoDir, ["sn1", "sn2"]);
+
+      const result = await send({ type: "thread.search", commandId: "sn3", threadId, query: "\n" });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/multiple lines/i);
+        expect(result.error).not.toContain(repoDir);
+      }
+    });
+
+    it("never puts an absolute server path in a search result", async () => {
+      fs.writeFileSync(path.join(repoDir, "hit.ts"), "needle\n");
+      const threadId = await threadIn(repoDir, ["se7", "se8"]);
+
+      const result = await send({ type: "thread.search", commandId: "se9", threadId, query: "needle" });
+      const results = result.ok ? (result.result as { files: { path: string }[] }) : undefined;
+      expect(results?.files.length).toBeGreaterThan(0);
+      for (const file of results?.files ?? []) expect(file.path).not.toContain(repoDir);
+
+      // The error path too, not just the success path — the ticket asks for
+      // "no absolute server path in any result *or error*".
+      const failed = await send({ type: "thread.read-file", commandId: "se10", threadId, path: "no-such-file.ts" });
+      expect(failed.ok).toBe(false);
+      if (!failed.ok) expect(failed.error).not.toContain(repoDir);
+    });
+
     it("keeps working on a closed Thread — reviewing what happened must not require it to be open", async () => {
       const threadId = await threadIn(repoDir, ["wt14", "wt15"]);
       await send({ type: "thread.close", commandId: "wt16", threadId });

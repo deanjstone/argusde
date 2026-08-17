@@ -3,13 +3,18 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listDirectory, readFile, resolveWithin } from "./working-tree.js";
+import { listDirectory, readFile, resolveWithin, search, SEARCH_LIMITS } from "./working-tree.js";
 
 let root: string;
 let outside: string;
 
 beforeEach(() => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "argusde-wt-root-")));
+  // A real repository, because every working tree that reaches these functions
+  // is one: Thread creation captures a baseline checkpoint and fails with "not
+  // a git repository" otherwise, so a non-git Project root cannot exist. search
+  // relies on that (it shells out to git grep).
+  execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: root });
   outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "argusde-wt-outside-")));
   fs.writeFileSync(path.join(outside, "secret.txt"), "not yours\n");
   fs.mkdirSync(path.join(root, "src"));
@@ -120,8 +125,9 @@ describe("listDirectory", () => {
 
   it("hides .git, the one dotfile that is machinery rather than content", async () => {
     // Alphabetically it lists first, so without this the browser opens on
-    // an invitation to page through loose objects and checkpoint refs.
-    fs.mkdirSync(path.join(root, ".git"));
+    // an invitation to page through loose objects and checkpoint refs. The
+    // setup's `git init` already created it — no need to fake one.
+    expect(fs.existsSync(path.join(root, ".git"))).toBe(true);
     expect((await listDirectory(root, "")).entries.map((e) => e.name)).not.toContain(".git");
   });
 
@@ -265,7 +271,7 @@ describe("readFile", () => {
     it("refuses to read inside .git, not merely to list it", async () => {
       // Half-hiding it was incoherent, and .git/config routinely holds a
       // remote URL with a credential in it.
-      fs.mkdirSync(path.join(root, ".git"));
+      fs.mkdirSync(path.join(root, ".git"), { recursive: true });
       fs.writeFileSync(path.join(root, ".git", "config"), "url = https://x:token@example.com/r.git\n");
 
       await expect(readFile(root, ".git/config")).rejects.toThrow(/outside/i);
@@ -300,4 +306,210 @@ describe("readFile", () => {
       );
     });
   });
+describe("search", () => {
+  it("finds a match and reports the file, line number and line text", async () => {
+    const results = await search(root, "const x");
+
+    expect(results.files).toEqual([
+      { path: "src/index.ts", matches: [{ line: 1, text: "const x = 1;" }], matchesTruncated: false },
+    ]);
+    expect(results.totalMatches).toBe(1);
+  });
+
+  it("finds a match in an untracked, uncommitted file — the file you search for when reviewing agent work", async () => {
+    // git grep searches TRACKED files only by default, so without --untracked
+    // a file the agent just created is invisible. Verified against real git
+    // before relying on it.
+    fs.writeFileSync(path.join(root, "src", "brand-new.ts"), "const needle = 1;\n");
+
+    const paths = (await search(root, "needle")).files.map((f) => f.path);
+    expect(paths).toContain("src/brand-new.ts");
+  });
+
+  it("respects the repository's ignore rules without reimplementing them", async () => {
+    fs.mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    fs.writeFileSync(path.join(root, "node_modules", "pkg", "index.js"), "const needle = 1;\n");
+    fs.writeFileSync(path.join(root, ".gitignore"), "node_modules\n");
+
+    const paths = (await search(root, "needle")).files.map((f) => f.path);
+    expect(paths).not.toContain("node_modules/pkg/index.js");
+  });
+
+  it("returns an empty result for no matches, not an error", async () => {
+    // git grep exits 1 when nothing matches, and execFile rejects on any
+    // non-zero exit — so 1 has to be told apart from a real failure or every
+    // empty search surfaces as one.
+    const results = await search(root, "definitely-not-in-this-repository");
+
+    expect(results.files).toEqual([]);
+    expect(results.totalMatches).toBe(0);
+  });
+
+  it("matches literally, so regex metacharacters find themselves", async () => {
+    fs.writeFileSync(path.join(root, "src", "regex.ts"), "const pattern = a.*b;\n");
+
+    expect((await search(root, "a.*b")).totalMatches).toBe(1);
+    // Were the query treated as a regex, ".*" would match the other files too.
+    expect((await search(root, "a.*b")).files.map((f) => f.path)).toEqual(["src/regex.ts"]);
+  });
+
+  it("matches case-insensitively", async () => {
+    expect((await search(root, "CONST X")).totalMatches).toBe(1);
+  });
+
+  it("parses a filename containing a colon", async () => {
+    // The default `path:line:content` output is ambiguous for such a name;
+    // --null is what makes it parseable at all.
+    fs.writeFileSync(path.join(root, "weird:name.ts"), "const needle = 1;\n");
+
+    expect((await search(root, "needle")).files.map((f) => f.path)).toContain("weird:name.ts");
+  });
+
+  it("skips binary files instead of emitting an unparseable match line", async () => {
+    // Without -I, git grep emits "Binary file X matches" — no line number, and
+    // nothing the parser can do with it.
+    fs.writeFileSync(path.join(root, "blob.bin"), Buffer.from("needle\u0000binary\n", "binary"));
+
+    const paths = (await search(root, "needle")).files.map((f) => f.path);
+    expect(paths).not.toContain("blob.bin");
+  });
+
+  it("treats a query that looks like a flag as a query, and finds it", async () => {
+    // Asserting "no matches" alone proved nothing — every wrong behaviour also
+    // returns nothing. This puts the text in a file, so the only way to pass is
+    // to have actually searched for it.
+    fs.writeFileSync(path.join(root, "src", "flags.ts"), "// pass --untracked to git grep\n");
+
+    const results = await search(root, "--untracked");
+    expect(results.files.map((f) => f.path)).toEqual(["src/flags.ts"]);
+  });
+
+  it("refuses a query spanning multiple lines rather than searching for something else", async () => {
+    // `git grep -e` splits its pattern on newlines into an OR of patterns, and
+    // an empty one among them matches EVERY line of EVERY file — verified: a
+    // newline-only query returned all 4 lines of a 4-line repository. Reachable
+    // straight over the WebSocket, since the UI's trim() only masks it.
+    await expect(search(root, "\n")).rejects.toThrow(/multiple lines/i);
+    await expect(search(root, "const x\n")).rejects.toThrow(/multiple lines/i);
+    await expect(search(root, "a\r\nb")).rejects.toThrow(/multiple lines/i);
+  });
+
+  it("returns nothing for a whitespace-only query instead of matching everything", async () => {
+    await expect(search(root, "   ")).resolves.toMatchObject({ totalMatches: 0, files: [] });
+  });
+
+  it("parses a filename containing a newline without corrupting the path", async () => {
+    // Splitting records on newline before locating the fields returned
+    // "ird.ts" for a file called "we\nird.ts" — a path that does not exist,
+    // cannot be opened, and silently replaced the real hit.
+    const weird = "we\nird.ts";
+    fs.writeFileSync(path.join(root, weird), "const needle = 1;\n");
+
+    const paths = (await search(root, "needle")).files.map((f) => f.path);
+    expect(paths).toContain(weird);
+    expect(paths).not.toContain("ird.ts");
+  });
+
+  it("groups every match in a file under that file, in line order", async () => {
+    fs.writeFileSync(path.join(root, "src", "many.ts"), "needle\nother\nneedle\nneedle\n");
+
+    const file = (await search(root, "needle")).files.find((f) => f.path === "src/many.ts");
+    expect(file?.matches.map((m) => m.line)).toEqual([1, 3, 4]);
+  });
+
+  describe("caps, each reported rather than silently applied", () => {
+    it("caps matches within one file and says it did", async () => {
+      const lines = Array.from({ length: SEARCH_LIMITS.matchesPerFile + 10 }, () => "needle");
+      fs.writeFileSync(path.join(root, "src", "dense.ts"), `${lines.join("\n")}\n`);
+
+      const file = (await search(root, "needle")).files.find((f) => f.path === "src/dense.ts");
+      expect(file?.matches).toHaveLength(SEARCH_LIMITS.matchesPerFile);
+      expect(file?.matchesTruncated).toBe(true);
+    });
+
+    it("caps the number of files and says it did", async () => {
+      for (let i = 0; i < SEARCH_LIMITS.files + 5; i++) {
+        fs.writeFileSync(path.join(root, `f${i}.ts`), "needle\n");
+      }
+
+      const results = await search(root, "needle");
+      expect(results.files).toHaveLength(SEARCH_LIMITS.files);
+      expect(results.truncated.files).toBe(true);
+    });
+
+    it("leaves the flags clear when nothing was capped", async () => {
+      const results = await search(root, "const x");
+
+      expect(results.truncated).toEqual({ files: false, matches: false, output: false, timedOut: false });
+      expect(results.files.every((f) => f.matchesTruncated === false)).toBe(true);
+    });
+
+    it("returns partial results flagged rather than failing when git is cut off mid-stream", async () => {
+      // A timeout and a maxBuffer overflow both kill git with real results
+      // already written. Discarding those would turn "here is some of it" into
+      // "Search failed", which tells the user nothing they can act on.
+      //
+      // Provoked via the buffer bound rather than the clock, because that is
+      // deterministic — no dependence on how fast the machine is.
+      //
+      // Deliberately only a handful of files, each enormous: that makes the
+      // assertion below precise. `truncated.files` is otherwise set by the
+      // file cap, which the parser only trips once it has *seen* 100 files —
+      // so "flagged truncated while returning fewer than the cap" is reachable
+      // only through the cut-short branch, and this test would be vacuous
+      // without it.
+      const fatLine = `${"needle ".repeat(150)}\n`;
+      for (let i = 0; i < 5; i++) {
+        fs.writeFileSync(path.join(root, `bulk${i}.ts`), fatLine.repeat(9000));
+      }
+
+      const results = await search(root, "needle");
+
+      expect(results.files.length).toBeGreaterThan(0);
+      // `output` is set only by the cut-short branch, so this is the proof the
+      // branch ran — no inference from file counts needed. `files` deliberately
+      // stays false: claiming "more files matched" in a five-file repository
+      // would be a lie the badge repeats to the user.
+      expect(results.truncated.output).toBe(true);
+      expect(results.truncated.files).toBe(false);
+    });
+
+    it("caps the total match count across every file, not just within each one", async () => {
+      // files x matchesPerFile would otherwise allow 2000 matches, which at the
+      // line bound is ~600KB aimed at a phone.
+      const perFile = SEARCH_LIMITS.matchesPerFile;
+      const fileCount = Math.ceil(SEARCH_LIMITS.totalMatches / perFile) + 5;
+      for (let i = 0; i < fileCount; i++) {
+        fs.writeFileSync(path.join(root, `t${i}.ts`), `${Array.from({ length: perFile }, () => "needle").join("\n")}\n`);
+      }
+
+      const results = await search(root, "needle");
+      expect(results.totalMatches).toBeLessThanOrEqual(SEARCH_LIMITS.totalMatches);
+      expect(results.truncated.matches).toBe(true);
+    });
+
+    it("caps a single enormous matched line, so a minified file cannot blow the payload", async () => {
+      fs.writeFileSync(path.join(root, "src", "min.ts"), `needle${"x".repeat(5000)}\n`);
+
+      const file = (await search(root, "needle")).files.find((f) => f.path === "src/min.ts");
+      expect(file?.matches[0]?.text.length).toBeLessThanOrEqual(SEARCH_LIMITS.lineChars);
+    });
+  });
+
+  it("searches the Thread's own working tree, never outside it", async () => {
+    fs.writeFileSync(path.join(outside, "secret.txt"), "needle in the outside world\n");
+
+    const paths = (await search(root, "needle in the outside world")).files.map((f) => f.path);
+    expect(paths).toEqual([]);
+  });
+
+  it("does not leak an absolute server path in any result path", async () => {
+    fs.writeFileSync(path.join(root, "src", "hit.ts"), "needle\n");
+
+    for (const file of (await search(root, "needle")).files) {
+      expect(file.path).not.toContain(root);
+      expect(path.isAbsolute(file.path)).toBe(false);
+    }
+  });
+});
 });
