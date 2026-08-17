@@ -98,7 +98,7 @@ export function ActivityCard({ item }: { item: TimelineToolCall }) {
                 <span className="whitespace-pre-wrap">{text}</span>
               </ItemContent>
             </CollapsibleContent>
-            <CollapsibleTrigger className="mt-1 text-xs text-primary underline underline-offset-2">
+            <CollapsibleTrigger className="mt-1 text-xs text-primary-bright underline underline-offset-2">
               {expanded ? "Show less" : "Show more"}
             </CollapsibleTrigger>
           </Collapsible>

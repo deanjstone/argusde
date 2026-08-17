@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DirectoryListing } from "../../shared/ws-protocol.js";
 import { Button } from "./ui/button.js";
+import { Item, ItemContent, ItemTitle } from "./ui/item.js";
 
 export interface DirectoryBrowserProps {
   /** Lists a directory's subdirectories — omit path to list the server's default (home) directory. */
@@ -38,7 +39,7 @@ export function DirectoryBrowser({ listDirectory, onSelect }: DirectoryBrowserPr
   }, []);
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-900 p-2">
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-2">
       <div className="flex items-center gap-2">
         <Button
           type="button"
@@ -49,25 +50,26 @@ export function DirectoryBrowser({ listDirectory, onSelect }: DirectoryBrowserPr
         >
           Up
         </Button>
-        <p className="min-w-0 flex-1 truncate text-xs text-neutral-400">{listing?.path ?? ""}</p>
+        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{listing?.path ?? ""}</p>
       </div>
 
-      {loading && <p className="py-4 text-center text-sm text-neutral-500">Loading…</p>}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {loading && <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       {!loading && !error && listing && (
-        <div className="max-h-48 space-y-1 overflow-y-auto">
-          {listing.entries.length === 0 && <p className="py-2 text-center text-sm text-neutral-500">No subfolders here.</p>}
-          {listing.entries.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              onClick={() => navigate(entry.path)}
-              className="block w-full rounded-lg bg-neutral-800 px-3 py-2 text-left text-sm hover:bg-neutral-700"
-            >
-              {entry.name}
-            </button>
-          ))}
+        <div className="max-h-48 overflow-y-auto">
+          <div className="flex flex-col gap-1">
+            {listing.entries.length === 0 && <p className="py-2 text-center text-sm text-muted-foreground">No subfolders here.</p>}
+            {listing.entries.map((entry) => (
+              <Item key={entry.path} asChild variant="muted" size="xs" className="cursor-pointer hover:bg-muted">
+                <button type="button" onClick={() => navigate(entry.path)}>
+                  <ItemContent>
+                    <ItemTitle>{entry.name}</ItemTitle>
+                  </ItemContent>
+                </button>
+              </Item>
+            ))}
+          </div>
         </div>
       )}
 

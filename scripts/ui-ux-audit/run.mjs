@@ -530,15 +530,23 @@ async function main() {
     const activeTag = await page.evaluate(() => document.activeElement?.tagName);
     record("US-13.3", activeTag ? "pass" : "fail", `first Tab focused a <${activeTag}> element`);
 
-    // ---- US-13.4: focus order through the tab bar is logical (Chat -> Threads -> Settings) ----
-    const chatTabBtn = page.getByRole("button", { name: "Chat" });
-    await chatTabBtn.focus();
-    await page.keyboard.press("Tab");
-    const afterChatTag = await page.evaluate(() => document.activeElement?.textContent?.trim());
-    await page.keyboard.press("Tab");
-    const afterThreadsTag = await page.evaluate(() => document.activeElement?.textContent?.trim());
-    const focusOrderLogical = afterChatTag === "Threads" && afterThreadsTag === "Settings";
-    record("US-13.4", focusOrderLogical ? "pass" : "fail", `tab-bar focus order: Chat -> ${afterChatTag} -> ${afterThreadsTag} (expected Threads -> Settings)`);
+    // ---- US-13.4: focus order through the tab bar follows the tab bar ----
+    // Derived from the rendered tabs rather than hardcoded, so adding a tab
+    // (Files arrived with spec #93 phase 4) doesn't read as a regression.
+    const tabLabels = (await page.locator("nav button").allTextContents()).map((t) => t.trim()).filter(Boolean);
+    await page.getByRole("button", { name: tabLabels[0] }).focus();
+    const focused = [];
+    for (let i = 1; i < tabLabels.length; i++) {
+      await page.keyboard.press("Tab");
+      focused.push(await page.evaluate(() => document.activeElement?.textContent?.trim()));
+    }
+    const expected = tabLabels.slice(1);
+    const focusOrderLogical = focused.join(" -> ") === expected.join(" -> ");
+    record(
+      "US-13.4",
+      focusOrderLogical ? "pass" : "fail",
+      `tab-bar focus order after ${tabLabels[0]}: ${focused.join(" -> ")} (expected ${expected.join(" -> ")})`,
+    );
 
     // ---- US-8: closing a non-promoted Thread ----
     const closeBtn = page.getByRole("button", { name: /^close thread$/i });

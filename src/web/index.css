@@ -43,8 +43,18 @@ body,
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-primary-bright: var(--primary-bright);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-syntax-comment: var(--syntax-comment);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-constant: var(--syntax-constant);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-function: var(--syntax-function);
+  --color-syntax-type: var(--syntax-type);
+  --color-syntax-variable: var(--syntax-variable);
+  --color-syntax-punctuation: var(--syntax-punctuation);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -92,6 +102,19 @@ body,
      leaving amber-* literals in a migrated surface. */
   --warning: oklch(0.72 0.16 68);
   --warning-foreground: oklch(0.22 0.05 68);
+  /* Syntax colours live here rather than arriving with the payload: the UI is
+     served under `style-src 'self'`, which blocks the inline styles a
+     per-token colour would need, and colour belongs in the theme either way.
+     The server sends a token's *kind*; these decide how it looks. */
+  --syntax-comment: oklch(0.55 0.02 260);
+  --syntax-string: oklch(0.55 0.15 150);
+  --syntax-number: oklch(0.58 0.16 40);
+  --syntax-constant: oklch(0.58 0.16 40);
+  --syntax-keyword: oklch(0.55 0.22 350);
+  --syntax-function: oklch(0.55 0.16 265);
+  --syntax-type: oklch(0.58 0.13 200);
+  --syntax-variable: oklch(0.42 0.02 260);
+  --syntax-punctuation: oklch(0.55 0.02 260);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -138,6 +161,15 @@ body,
   --destructive: oklch(0.704 0.191 22.216);
   --warning: oklch(0.79 0.15 74);
   --warning-foreground: oklch(0.22 0.05 68);
+  --syntax-comment: oklch(0.62 0.02 260);
+  --syntax-string: oklch(0.78 0.13 150);
+  --syntax-number: oklch(0.8 0.13 55);
+  --syntax-constant: oklch(0.8 0.13 55);
+  --syntax-keyword: oklch(0.75 0.18 350);
+  --syntax-function: oklch(0.79 0.14 275);
+  --syntax-type: oklch(0.82 0.11 200);
+  --syntax-variable: oklch(0.9 0.01 260);
+  --syntax-punctuation: oklch(0.68 0.02 260);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
