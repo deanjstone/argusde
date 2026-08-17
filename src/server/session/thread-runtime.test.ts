@@ -596,3 +596,35 @@ describe("ThreadRuntime durable activity", () => {
     expect(sequences).toEqual([6, 8]);
   }, 20_000);
 });
+
+describe("ThreadRuntime turn numbering across a rebuilt runtime (argusde#96)", () => {
+  it("continues the turn counter instead of restarting at 1 and colliding", async () => {
+    const first = runtimeWithSteps([{ type: "message", text: "one" }], () => {});
+    await first.start();
+    await first.sendMessage("first turn");
+    await first.dispose();
+    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1]);
+
+    // A second runtime over the same Thread — what worktree promotion does,
+    // and what lazily rebuilding a runtime after a restart would do. Before
+    // this fix its first turn-complete threw "UNIQUE constraint failed:
+    // checkpoints.thread_id, checkpoints.turn".
+    const second = runtimeWithSteps([{ type: "message", text: "two" }], () => {});
+    await second.start();
+    await second.sendMessage("second turn");
+    await second.dispose();
+
+    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1, 2]);
+  }, 20_000);
+
+  it("starts a Thread with no checkpoints at turn 1, not 2", async () => {
+    // The seed reads MAX(turn), and every Thread gets a turn-0 baseline on
+    // start() — so an off-by-one here would silently skip Turn 1 forever.
+    const runtime = runtimeWithSteps([{ type: "message", text: "hi" }], () => {});
+    await runtime.start();
+    await runtime.sendMessage("first");
+    await runtime.dispose();
+
+    expect(eventStore.listCheckpoints("thread-1").map((c) => c.turn)).toEqual([0, 1]);
+  }, 20_000);
+});

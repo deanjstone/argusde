@@ -48,7 +48,13 @@ function mergeContent(existing: ChatContentBlock[], next: ChatContentBlock): Cha
  */
 export class ThreadRuntime {
   private readonly options: ThreadRuntimeOptions;
-  private nextTurn = 1;
+  // Seeded from persisted checkpoints, not reset to 1 (argusde#96). A second
+  // runtime over a Thread that already has history would otherwise hand out
+  // turn numbers that are already taken and fail on the checkpoints primary
+  // key at its first turn-complete. Worktree promotion is the only path that
+  // rebuilds a runtime today and it only runs before the first message, which
+  // is why this stayed latent rather than being noticed in use.
+  private nextTurn: number;
   private pendingAgentMessages = new Map<string, { content: ChatContentBlock[]; sequence: number }>();
   private pendingAgentMessageOrder: string[] = [];
   private anonymousMessageCounter = 0;
@@ -99,6 +105,7 @@ export class ThreadRuntime {
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
+    this.nextTurn = options.eventStore.getNextTurn(options.threadId);
     this.nextSequence = options.eventStore.getNextSequence(options.threadId);
     options.session.on("event", (event) => this.handleEvent(event));
   }
