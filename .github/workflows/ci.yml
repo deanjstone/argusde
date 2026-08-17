@@ -77,7 +77,7 @@ jobs:
       # both tsconfigs, the web build, the connect-screen copy and the Node
       # build before vitest ever starts. Deliberately the same command a
       # developer runs locally — a CI-only variant could pass while `pnpm test`
-      # failed. (.npmrc pins enable-pre-post-scripts so that chain can't be
-      # silently dropped by a pnpm default change.)
+      # failed. (pnpm-workspace.yaml pins enablePrePostScripts so that chain
+      # can't be silently dropped by a pnpm default change.)
       - name: Typecheck, build, and test
         run: xvfb-run -a pnpm test
