@@ -31,6 +31,36 @@ const app = agent({ name: "smoke-fake-agent" })
         });
       }
 
+      // A tool call and its later update — the two notifications durable
+      // activity is projected from (spec #93 phase 1). Kept as separate
+      // steps rather than one combined "tool call with a result" so a test
+      // can interleave prose between them and prove the recorded ordering
+      // matches what actually streamed.
+      if (step.type === "tool-call") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: step.toolCallId,
+            title: step.title,
+            kind: step.kind,
+            status: step.status ?? "pending",
+          },
+        });
+      }
+
+      if (step.type === "tool-call-update") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: step.toolCallId,
+            status: step.status,
+            content: step.content,
+          },
+        });
+      }
+
       // Asks the client for permission and waits for the real answer, so a
       // caller can drive the prompt's full round trip — not just its
       // appearance. The real claude-agent-acp only does this when its

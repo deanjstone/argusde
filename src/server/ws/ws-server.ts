@@ -360,7 +360,13 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         const messages = eventStore
           .listEventsForThread(command.threadId)
           .filter((e): e is Extract<DomainEvent, { kind: "thread.message-recorded" }> => e.kind === "thread.message-recorded")
-          .map((e) => ({ messageId: e.messageId, role: e.role, content: e.content }));
+          .map((e) => ({ messageId: e.messageId, role: e.role, content: e.content, sequence: e.sequence ?? null }));
+        // Returned as a second list rather than pre-merged: the client
+        // already owns timeline assembly (src/shared/timeline.ts), and both
+        // lists carry the same `sequence` key precisely so it can interleave
+        // them into one narrative. Messages from before sequencing existed
+        // have a null sequence and keep their relative order here.
+        const activities = eventStore.listActivities(command.threadId);
         // The mode catalog is never persisted — only ever broadcast live,
         // once, from AcpSession.start(). A Thread whose runtime isn't
         // currently active (a genuine edge case; runtimes are never
@@ -386,6 +392,12 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           connectionState: connectionState.state,
           connectionError: connectionState.error,
           messages,
+          activities,
+          // False for Threads that predate durable activity, so the client
+          // can say so instead of rendering an empty timeline that reads as
+          // lost data. No backfill is possible — the events were never
+          // emitted for those Threads.
+          recordsActivity: thread.recordsActivity,
         };
       }
       case "fs.list-directory": {

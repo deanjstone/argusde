@@ -409,3 +409,190 @@ describe("ThreadRuntime", () => {
     expect(events).toContainEqual({ kind: "connection-state", state: "disconnected" });
   });
 });
+
+describe("ThreadRuntime durable activity", () => {
+  it("records a tool call and merges its later update onto the same activity", async () => {
+    const runtime = runtimeWithSteps(
+      [
+        { type: "tool-call", toolCallId: "tc-1", title: "Read src/index.ts", status: "pending" },
+        {
+          type: "tool-call-update",
+          toolCallId: "tc-1",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "file contents here" } }],
+        },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("read it");
+    await runtime.dispose();
+
+    const activities = eventStore.listActivities("thread-1");
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      activityId: "tc-1",
+      turn: 1,
+      status: "completed",
+      summary: "Read src/index.ts",
+      detail: "file contents here",
+      data: [{ type: "text", text: "file contents here" }],
+    });
+  }, 20_000);
+
+  it("records a failed tool call with that outcome", async () => {
+    const runtime = runtimeWithSteps(
+      [
+        { type: "tool-call", toolCallId: "tc-1", title: "Write /etc/passwd", status: "pending" },
+        { type: "tool-call-update", toolCallId: "tc-1", status: "failed" },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("do it");
+    await runtime.dispose();
+
+    // The record has to show what was refused, not just what ran — and the
+    // title from the original tool_call has to survive an update that
+    // carries only a status.
+    expect(eventStore.listActivities("thread-1")[0]).toMatchObject({
+      status: "failed",
+      summary: "Write /etc/passwd",
+    });
+  }, 20_000);
+
+  it("orders an agent's reply by when it started streaming, not when it was persisted", async () => {
+    const runtime = runtimeWithSteps(
+      [
+        { type: "message", text: "let me look" },
+        { type: "tool-call", toolCallId: "tc-1", title: "Read a file", status: "completed" },
+        { type: "tool-call", toolCallId: "tc-2", title: "Edit a file", status: "completed" },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("what's broken?");
+    await runtime.dispose();
+
+    const messages = eventStore
+      .listEventsForThread("thread-1")
+      .filter((e) => e.kind === "thread.message-recorded")
+      .map((e) => (e.kind === "thread.message-recorded" ? { role: e.role, sequence: e.sequence } : null));
+    const activities = eventStore.listActivities("thread-1");
+
+    // The agent's reply is only *persisted* at turn-complete, after both
+    // tool calls — but it started streaming before them, so its sequence
+    // has to place it there. Without this the replayed turn would read as
+    // "did two things, then said something", which is not what happened.
+    const [user, agentReply] = messages;
+    expect(user?.sequence).toBe(1);
+    expect(agentReply?.sequence).toBe(2);
+    expect(activities.map((a) => a.sequence)).toEqual([3, 4]);
+  }, 20_000);
+
+  it("splits an agent's prose around a tool call, exactly as the live timeline does", async () => {
+    // The live timeline starts a new message whenever a tool call has been
+    // appended since the last chunk (appendOrMergeMessage's `continuesLast`
+    // check, src/shared/timeline.ts). Replay has to reach the same shape,
+    // or a Thread reads differently after a reload than it did live —
+    // prose that came *after* a tool call would sort ahead of it.
+    const runtime = runtimeWithSteps(
+      [
+        { type: "message", text: "let me look" },
+        { type: "tool-call", toolCallId: "tc-1", title: "Read a file", status: "completed" },
+        { type: "message", text: "found it" },
+        { type: "tool-call", toolCallId: "tc-2", title: "Edit a file", status: "completed" },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("what's broken?");
+    await runtime.dispose();
+
+    const timeline = [
+      ...eventStore
+        .listEventsForThread("thread-1")
+        .filter((e) => e.kind === "thread.message-recorded")
+        .map((e) =>
+          e.kind === "thread.message-recorded"
+            ? { sequence: e.sequence ?? 0, label: `${e.role}: ${e.content.map((c) => (c.type === "text" ? c.text : "")).join("")}` }
+            : { sequence: 0, label: "" },
+        ),
+      ...eventStore.listActivities("thread-1").map((a) => ({ sequence: a.sequence, label: `tool: ${a.summary}` })),
+    ].sort((a, b) => a.sequence - b.sequence);
+
+    expect(timeline.map((i) => i.label)).toEqual([
+      "user: what's broken?",
+      "agent: let me look",
+      "tool: Read a file",
+      "agent: found it",
+      "tool: Edit a file",
+    ]);
+  }, 20_000);
+
+  it("forwards a tool call to the client before persisting it", async () => {
+    // Story 7's observable form: persistence must never sit between the
+    // agent and the client's stream. Reading the store from inside the
+    // forwarding callback is synchronous, so an empty result here means the
+    // push genuinely went out first.
+    //
+    // Deliberately at this seam and not the protocol one, where the same
+    // assertion would be vacuous: a push crosses a real socket
+    // asynchronously, so a synchronous write always wins that race no
+    // matter which order the code runs in. The broadcast boundary is the
+    // only place the ordering is actually observable.
+    const activitiesVisibleAtForwardTime: number[] = [];
+    const runtime = runtimeWithSteps(
+      [{ type: "tool-call", toolCallId: "tc-1", title: "Read a file", status: "completed" }],
+      (event) => {
+        if (event.kind === "tool-call") {
+          activitiesVisibleAtForwardTime.push(eventStore.listActivities("thread-1").length);
+        }
+      },
+    );
+    await runtime.start();
+    await runtime.sendMessage("go");
+    await runtime.dispose();
+
+    expect(activitiesVisibleAtForwardTime).toEqual([0]);
+    expect(eventStore.listActivities("thread-1")).toHaveLength(1);
+  }, 20_000);
+
+  it("continues the sequence past persisted history rather than restarting at 1", async () => {
+    // Models a server restart over a Thread that already has history: the
+    // counter lives in ThreadRuntime's memory, so a fresh runtime has to
+    // re-seed from what was persisted or it hands out sequences that
+    // collide with the timeline already recorded.
+    eventStore.appendEvent({
+      kind: "thread.message-recorded",
+      threadId: "thread-1",
+      messageId: "user-1",
+      role: "user",
+      content: [{ type: "text", text: "earlier" }],
+      sequence: 5,
+      timestamp: "2026-08-17T00:00:00.000Z",
+    });
+    eventStore.appendEvent({
+      kind: "thread.activity-recorded",
+      threadId: "thread-1",
+      activityId: "tc-earlier",
+      sequence: 6,
+      turn: 1,
+      summary: "Something earlier",
+      status: "completed",
+      data: [],
+      timestamp: "2026-08-17T00:00:01.000Z",
+    });
+
+    const runtime = runtimeWithSteps(
+      [{ type: "tool-call", toolCallId: "tc-new", title: "Edit a file", status: "completed" }],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("later");
+    await runtime.dispose();
+
+    const sequences = eventStore.listActivities("thread-1").map((a) => a.sequence);
+    expect(sequences).toEqual([6, 8]);
+  }, 20_000);
+});

@@ -43,10 +43,41 @@ export function ensureSchema(db: Database.Database): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (thread_id, turn)
     );
+
+    /*
+     * Durable record of what the agent *did* — one row per ACP tool call,
+     * projected from thread.activity-recorded events (spec #93 phase 1).
+     * Keyed by (thread_id, activity_id) rather than an autoincrement id so
+     * a tool_call_update merges onto the row its tool_call created, which
+     * is the same upsert-by-toolCallId shape the live timeline already uses
+     * (src/shared/timeline.ts).
+     */
+    CREATE TABLE IF NOT EXISTS activities (
+      thread_id TEXT NOT NULL REFERENCES threads(id),
+      activity_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      turn INTEGER NOT NULL,
+      kind TEXT,
+      status TEXT,
+      summary TEXT,
+      detail TEXT,
+      -- Nullable, and NULL is meaningful: "this update reported no content
+      -- at all", which is what lets the upsert leave existing content alone
+      -- rather than clearing it. Reads back as an empty list.
+      data TEXT,
+      data_truncated INTEGER,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (thread_id, activity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_activities_thread_sequence ON activities(thread_id, sequence);
   `);
 
   addColumnIfMissing(db, "checkpoints", "reverted_to_turn", "INTEGER");
   addColumnIfMissing(db, "threads", "closed_at", "TEXT");
+  // NULL on every Thread row written before durable activity existed —
+  // which is exactly the signal the UI needs, since activity recording is
+  // prospective only and those Threads have nothing to show.
+  addColumnIfMissing(db, "threads", "records_activity", "INTEGER");
   addColumnIfMissing(db, "events", "thread_id", "TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id)");
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AcpSessionEvent } from "./acp-events.js";
+import type { AcpSessionEvent, ChatContentBlock, ToolCallStatus } from "./acp-events.js";
 
 /**
  * Wire format for ArgusDE's standalone server WebSocket API (spec #33).
@@ -20,7 +20,7 @@ export const WS_PATH = "/ws";
  * doesn't need to import the whole server module graph just to reach this
  * string.
  */
-export const API_VERSION = "1.0.0";
+export const API_VERSION = "1.1.0";
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
@@ -90,6 +90,45 @@ export interface ThreadRecord {
   createdAt: string;
   /** Set once the Thread is closed — its live session is torn down and (if promoted) its worktree removed, but persisted history stays browsable. */
   closedAt: string | null;
+  /**
+   * False for Threads created before durable activity existed (spec #93
+   * phase 1). Activity recording is prospective only — the events were
+   * never emitted for those Threads, so there is nothing to backfill, and
+   * the UI has to be able to say "not recorded here" rather than showing an
+   * empty timeline that reads as data loss.
+   */
+  recordsActivity: boolean;
+}
+
+/**
+ * One recorded thing the agent *did* (as opposed to said) — currently a
+ * tool call, projected from `thread.activity-recorded` events. Shared for
+ * the same reason as CheckpointRecord above: browser code can't import the
+ * server's event-store module.
+ *
+ * `summary`/`detail` are bounded and `data` is byte-capped at record time —
+ * see ACTIVITY_BOUNDS in the server's activity-bounds module for the values
+ * and why they were chosen.
+ */
+export interface ActivityRecord {
+  threadId: string;
+  /** Stable per Thread — the ACP toolCallId, so updates land on the same record. */
+  activityId: string;
+  /** Explicit thread-wide ordering key, shared with messages so the two merge into one timeline. Assigned when the activity began, never on update. */
+  sequence: number;
+  turn: number;
+  /** ACP's tool kind (read/edit/execute/…) — null when the agent didn't say. */
+  kind: string | null;
+  status: ToolCallStatus | null;
+  /** Display headline, bounded. Denormalised so list rendering never parses `data`. */
+  summary: string | null;
+  /** Longer preview shown when the activity is expanded, bounded. */
+  detail: string | null;
+  /** The tool call's content blocks, passed through from ACP. */
+  data: ChatContentBlock[];
+  /** True when `data` exceeded the byte cap and was stored truncated. */
+  dataTruncated: boolean;
+  createdAt: string;
 }
 
 /**
