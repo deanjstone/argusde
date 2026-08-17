@@ -49,9 +49,7 @@ describe("WorktreeStore", () => {
 
     expect(git(["rev-parse", "--abbrev-ref", "HEAD"], worktreePath).trim()).toBe(branchNameFor("thread-1"));
 
-    const list = git(["worktree", "list", "--porcelain"]);
-    expect(list).toContain(worktreePath);
-    expect(list).not.toContain("detached");
+    expect(git(["worktree", "list", "--porcelain"])).toContain(worktreePath);
   });
 
   it("names the branch so it can be found from a terminal — prefixed and grouped, never bare", () => {
@@ -77,7 +75,7 @@ describe("WorktreeStore", () => {
     git(["commit", "-m", "the agent's own commit"], worktreePath);
     const sha = git(["rev-parse", "HEAD"], worktreePath).trim();
 
-    store.removeWorktree(repoDir, worktreePath);
+    store.removeWorktree(repoDir, worktreePath, "thread-1");
 
     // Reachable *via the branch*, not merely still in the object database —
     // an unreferenced object is a garbage-collection candidate, which is
@@ -94,7 +92,7 @@ describe("WorktreeStore", () => {
     git(["worktree", "add", "--detach", legacyPath]);
     expect(git(["worktree", "list", "--porcelain"])).toContain("detached");
 
-    store.removeWorktree(repoDir, legacyPath);
+    store.removeWorktree(repoDir, legacyPath, "thread-1");
 
     expect(fs.existsSync(legacyPath)).toBe(false);
     expect(git(["worktree", "list", "--porcelain"])).not.toContain(legacyPath);
@@ -132,7 +130,7 @@ describe("WorktreeStore", () => {
     const worktreePath = store.createWorktree(repoDir, "thread-1");
     expect(fs.existsSync(worktreePath)).toBe(true);
 
-    store.removeWorktree(repoDir, worktreePath);
+    store.removeWorktree(repoDir, worktreePath, "thread-1");
 
     expect(fs.existsSync(worktreePath)).toBe(false);
     const list = git(["worktree", "list", "--porcelain"]);
@@ -144,6 +142,70 @@ describe("WorktreeStore", () => {
   });
 
   it("removeWorktree throws a clean, catchable error for a path that was never a real worktree", () => {
-    expect(() => store.removeWorktree(repoDir, `${repoDir}-worktrees/never-created`)).toThrow();
+    expect(() => store.removeWorktree(repoDir, `${repoDir}-worktrees/never-created`, "thread-1")).toThrow();
+  });
+  describe("failure leaves nothing behind", () => {
+    it("does not burn the Thread's branch name when the path is what blocks creation", () => {
+      // `worktree add -b` is not atomic: git validates the branch first, so
+      // when the *path* is the blocker it has already created the branch by
+      // the time it fails. Without cleanup the name is permanently taken and
+      // every retry fails for a second, unrelated reason — where `--detach`
+      // left nothing behind at all.
+      const worktreePath = store.createWorktree(repoDir, "thread-1");
+      store.removeWorktree(repoDir, worktreePath, "thread-1");
+      // The branch survives removal (that's the point of the phase), so
+      // delete it to isolate the path as the sole blocker.
+      git(["branch", "-D", branchNameFor("thread-1")]);
+      fs.mkdirSync(worktreePath, { recursive: true });
+      fs.writeFileSync(path.join(worktreePath, "in-the-way.txt"), "occupied\n");
+
+      expect(() => store.createWorktree(repoDir, "thread-1")).toThrow();
+
+      expect(git(["branch", "--list", branchNameFor("thread-1")]).trim()).toBe("");
+    });
+
+    it("never deletes a branch it did not create, even when creation fails", () => {
+      // If the branch already existed, it is the user's — the more common
+      // failure, since git checks the branch before the path. Cleaning that
+      // up would be exactly the data loss this phase exists to prevent.
+      git(["branch", branchNameFor("thread-1")]);
+      const sha = git(["rev-parse", branchNameFor("thread-1")]).trim();
+
+      expect(() => store.createWorktree(repoDir, "thread-1")).toThrow();
+
+      expect(git(["rev-parse", branchNameFor("thread-1")]).trim()).toBe(sha);
+    });
+  });
+
+  describe("worktrees that predate branch backing", () => {
+    it("rescues a legacy detached worktree's commits onto a branch before removing it", () => {
+      // Branch backing only helps worktrees created after it. Spec #93's
+      // "removal must no longer be able to discard commits" is unqualified,
+      // so a detached worktree an older build made still has to be safe to
+      // close — otherwise the guarantee has a hole exactly where the
+      // existing data lives.
+      const legacyPath = `${repoDir}-worktrees/thread-1`;
+      git(["worktree", "add", "--detach", legacyPath]);
+      fs.writeFileSync(path.join(legacyPath, "file.txt"), "committed before the upgrade\n");
+      git(["add", "-A"], legacyPath);
+      git(["commit", "-m", "legacy agent commit"], legacyPath);
+      const sha = git(["rev-parse", "HEAD"], legacyPath).trim();
+
+      store.removeWorktree(repoDir, legacyPath, "thread-1");
+
+      expect(git(["rev-parse", branchNameFor("thread-1")]).trim()).toBe(sha);
+      expect(git(["log", "--format=%s", "-1", branchNameFor("thread-1")]).trim()).toBe("legacy agent commit");
+    });
+
+    it("adds no branch for a legacy worktree that never committed — a rescue nobody needs is just litter", () => {
+      const legacyPath = `${repoDir}-worktrees/thread-1`;
+      git(["worktree", "add", "--detach", legacyPath]);
+
+      store.removeWorktree(repoDir, legacyPath, "thread-1");
+
+      // Its HEAD is still the commit it was promoted from, which main
+      // already reaches — nothing was at risk.
+      expect(git(["branch", "--list", "argusde/*"]).trim()).toBe("");
+    });
   });
 });

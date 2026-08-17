@@ -310,7 +310,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         if (thread.worktreePath) {
           const project = eventStore.getProject(thread.projectId);
           if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
-          worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath);
+          worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath, command.threadId);
         }
 
         eventStore.appendEvent({ kind: "thread.closed", threadId: command.threadId, timestamp: new Date().toISOString() });
@@ -337,7 +337,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           // the records. The workspace root itself is never touched.
           if (thread.worktreePath) {
             try {
-              worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath);
+              worktreeStore.removeWorktree(project.workspaceRoot, thread.worktreePath, thread.id);
             } catch {
               // Already gone, or the main repo has moved on — the records
               // are still being removed either way, and a stale scratch
