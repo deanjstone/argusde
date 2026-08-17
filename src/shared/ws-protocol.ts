@@ -101,6 +101,18 @@ export interface ThreadRecord {
 }
 
 /**
+ * One message as returned by thread.get-history. `sequence` is null for
+ * messages recorded before spec #93 phase 1 introduced it — see
+ * mergeHistoryTimeline for what that means when rebuilding a timeline.
+ */
+export interface ThreadHistoryMessage {
+  messageId: string;
+  role: "user" | "agent";
+  content: ChatContentBlock[];
+  sequence: number | null;
+}
+
+/**
  * One recorded thing the agent *did* (as opposed to said) — currently a
  * tool call, projected from `thread.activity-recorded` events. Shared for
  * the same reason as CheckpointRecord above: browser code can't import the

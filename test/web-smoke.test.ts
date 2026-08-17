@@ -500,6 +500,68 @@ describe("web smoke: server + browser round trip", () => {
   );
 
   it(
+    "replays a Thread's tool calls on the timeline after a reload — the whole point of durable activity",
+    async () => {
+      const activityRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-activity-repo-"));
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: activityRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: activityRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: activityRepoDir });
+      fs.writeFileSync(path.join(activityRepoDir, "notes.txt"), "hello\n");
+      execFileSync("git", ["add", "-A"], { cwd: activityRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: activityRepoDir });
+
+      const previousSteps = process.env.ARGUSDE_FAKE_AGENT_STEPS;
+      // Read when the server spawns this Thread's agent process, so it has
+      // to be in place before the setup form is submitted, and restored
+      // afterwards so the shared fixture stays as every other test expects.
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "message", text: "let me check the notes" },
+        { type: "tool-call", toolCallId: "tc-smoke-1", title: "Read notes.txt", kind: "read", status: "pending" },
+        {
+          type: "tool-call-update",
+          toolCallId: "tc-smoke-1",
+          status: "completed",
+          content: [{ type: "content", content: { type: "text", text: "hello" } }],
+        },
+      ]);
+
+      // Mobile viewport deliberately: replaying activity on a phone is the
+      // case this whole surface exists for.
+      const activityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      try {
+        await activityPage.goto(`http://127.0.0.1:${server.port}/`);
+        await activityPage.getByRole("button", { name: /type a path manually/i }).click();
+        await activityPage.getByLabel(/workspace path/i).fill(activityRepoDir);
+        await activityPage.getByRole("button", { name: /start/i }).click();
+        await activityPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await activityPage.getByPlaceholder(/message/i).fill("what's in the notes?");
+        await activityPage.getByPlaceholder(/message/i).press("Enter");
+        await activityPage.waitForSelector("text=Read notes.txt", { timeout: 15_000 });
+
+        await activityPage.reload();
+
+        // The tool call has to survive the reload — before this feature the
+        // reloaded Thread showed the prose and nothing else, which is the
+        // problem spec #93 opened with.
+        await activityPage.waitForSelector("text=Read notes.txt", { timeout: 15_000 });
+        const body = await activityPage.textContent("body");
+        expect(body).toContain("let me check the notes");
+        expect(body).toContain("Read notes.txt");
+        expect(body).toContain("completed");
+        // Never claim the Thread predates recording — it plainly doesn't.
+        expect(body).not.toMatch(/predates activity recording/i);
+      } finally {
+        await activityPage.close();
+        if (previousSteps === undefined) delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
+        else process.env.ARGUSDE_FAKE_AGENT_STEPS = previousSteps;
+        fs.rmSync(activityRepoDir, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
+
+  it(
     "removes a Project through the UI — confirmed first, gone from the list, and the workspace folder left on disk",
     async () => {
       const deleteTestRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-delete-repo-"));
