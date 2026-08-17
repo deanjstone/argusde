@@ -215,6 +215,7 @@ describe("EventStore", () => {
         currentModeId: null,
         createdAt: "2026-08-13T00:01:00.000Z",
         closedAt: null,
+        recordsActivity: true,
       },
       {
         id: "thread-2",
@@ -224,6 +225,7 @@ describe("EventStore", () => {
         currentModeId: null,
         createdAt: "2026-08-13T00:02:00.000Z",
         closedAt: null,
+        recordsActivity: true,
       },
     ]);
     expect(store.getThread("thread-2")?.worktreePath).toBe("/workspace-worktrees/thread-2");

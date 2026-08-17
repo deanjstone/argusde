@@ -14,7 +14,9 @@ Vocabulary adopted for the T3-Code-parity uplift (see wayfinder map: ArgusDE →
 
 **Turn** — one user-to-assistant work cycle inside a Thread: starts at user input, ends when follow-up work (e.g. checkpointing) settles.
 
-**Activity** — a user-visible log item attached to a Thread for non-message events (approvals, tool actions, failures).
+**Activity** — a user-visible log item attached to a Thread for non-message events (approvals, tool actions, failures). Durable since spec #93 phase 1: each one is recorded as a `thread.activity-recorded` event and projected into its own table, so reopening a Thread replays what the agent did and not only what it said. Currently one per ACP tool call, keyed by the tool call's own id so its later updates merge onto the same Activity.
+
+**Sequence** — the per-Thread ordering key shared by messages and Activities, assigned when an item *began* rather than when it was persisted. It is what lets history replay merge the two into one narrative: an agent's reply is only persisted once its Turn completes, after every tool call in that Turn, so persistence order alone would replay a Turn as "said everything, then did everything".
 
 ## Checkpointing
 

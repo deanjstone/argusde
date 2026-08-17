@@ -1,9 +1,10 @@
 import Database from "better-sqlite3";
 import { ensureSchema } from "./schema.js";
-import type { ChatContentBlock } from "../../shared/acp-events.js";
-import type { CheckpointRecord, ProjectRecord, ThreadRecord } from "../../shared/ws-protocol.js";
+import { boundData, boundText, ACTIVITY_BOUNDS } from "./activity-bounds.js";
+import type { ChatContentBlock, ToolCallStatus } from "../../shared/acp-events.js";
+import type { ActivityRecord, CheckpointRecord, ProjectRecord, ThreadRecord } from "../../shared/ws-protocol.js";
 
-export type { CheckpointRecord, ProjectRecord, ThreadRecord };
+export type { ActivityRecord, CheckpointRecord, ProjectRecord, ThreadRecord };
 
 export type DomainEvent =
   | { kind: "project.created"; projectId: string; workspaceRoot: string; title: string; timestamp: string }
@@ -30,6 +31,44 @@ export type DomainEvent =
       messageId: string;
       role: "user" | "agent";
       content: ChatContentBlock[];
+      /**
+       * Thread-wide ordering key shared with activities, assigned when the
+       * message *began* rather than when it was persisted — an agent's
+       * reply is only appended at turn-complete, after every tool call in
+       * its turn, so append order alone would replay a turn as "all the
+       * talking, then all the doing" regardless of what actually happened.
+       *
+       * Optional because messages recorded before spec #93 phase 1 have
+       * none. Those keep their relative append order, which costs nothing:
+       * a Thread old enough to have unsequenced messages has no activities
+       * to interleave them with.
+       */
+      sequence?: number;
+      timestamp: string;
+    }
+  /**
+   * One thing the agent *did* — an ACP tool call, or an update to one it
+   * already reported. Absent fields on an update mean "unchanged", matching
+   * ACP's own tool_call_update semantics; on a first sighting they mean
+   * "not reported". `summary`/`detail`/`data` are bounded by appendEvent
+   * before this reaches the log — see activity-bounds.ts.
+   */
+  | {
+      kind: "thread.activity-recorded";
+      threadId: string;
+      /** The ACP toolCallId — stable across the call's updates, so they merge onto one record. */
+      activityId: string;
+      /** Fixed at first sighting; an update carrying a later one never reorders the activity. */
+      sequence: number;
+      turn: number;
+      /** ACP's tool kind (read/edit/execute/…). Named `toolKind` because `kind` is this union's own discriminator. */
+      toolKind?: string | null;
+      status?: ToolCallStatus | null;
+      summary?: string | null;
+      detail?: string | null;
+      data?: ChatContentBlock[];
+      /** Set by appendEvent when `data` had to be cut to fit the byte cap — never passed in by callers. */
+      dataTruncated?: boolean;
       timestamp: string;
     }
   | { kind: "thread.mode-changed"; threadId: string; modeId: string; timestamp: string }
@@ -42,6 +81,60 @@ export type DomainEvent =
    * the log's history intact rather than rewriting it.
    */
   | { kind: "project.deleted"; projectId: string; timestamp: string };
+
+/**
+ * SQLite stores booleans as integers and has no way to express "this column
+ * didn't exist when the row was written" other than NULL — both of which
+ * have to be flattened before a row can satisfy the shared ThreadRecord
+ * shape the clients compile against.
+ */
+interface ThreadRow extends Omit<ThreadRecord, "recordsActivity"> {
+  recordsActivity: number | null;
+}
+
+const THREAD_COLUMNS = `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
+                current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt,
+                records_activity AS recordsActivity`;
+
+function toThreadRecord(row: ThreadRow): ThreadRecord {
+  return { ...row, recordsActivity: row.recordsActivity === 1 };
+}
+
+/** Same flattening job for activities: JSON in a text column, a boolean in an integer one. */
+interface ActivityRow extends Omit<ActivityRecord, "data" | "dataTruncated"> {
+  data: string | null;
+  dataTruncated: number | null;
+}
+
+function toActivityRecord(row: ActivityRow): ActivityRecord {
+  return {
+    ...row,
+    data: row.data === null ? [] : (JSON.parse(row.data) as ChatContentBlock[]),
+    dataTruncated: row.dataTruncated === 1,
+  };
+}
+
+/**
+ * Applies the per-activity storage bounds *before* the event reaches the
+ * log, so the append-only table — the one that grows forever — is bounded
+ * too, not just the projection that reads from it. Every other event kind
+ * passes through untouched.
+ *
+ * Doing it here rather than in a dedicated write method keeps appendEvent
+ * as the store's single write path (the existing design rule) while leaving
+ * every boundary case reachable from a plain store test.
+ */
+function boundEvent(event: DomainEvent): DomainEvent {
+  if (event.kind !== "thread.activity-recorded") return event;
+
+  const bounded = event.data === undefined ? undefined : boundData(event.data);
+  return {
+    ...event,
+    summary: boundText(event.summary, ACTIVITY_BOUNDS.summaryChars),
+    detail: boundText(event.detail, ACTIVITY_BOUNDS.detailChars),
+    ...(bounded ? { data: bounded.data, dataTruncated: bounded.truncated } : {}),
+  };
+}
 
 /**
  * Append-only event log plus the SQLite read-model projected from it.
@@ -102,7 +195,7 @@ export class EventStore {
       insertEvent.run(e.kind, JSON.stringify(e), threadId, e.timestamp);
       this.project(e);
     });
-    apply(event);
+    apply(boundEvent(event));
   }
 
   private project(event: DomainEvent): void {
@@ -115,10 +208,14 @@ export class EventStore {
           .run(event.projectId, event.workspaceRoot, event.title, event.timestamp);
         break;
       case "thread.created":
+        // records_activity is 1 for every Thread created from spec #93
+        // phase 1 onward. Rows written by an earlier build keep the NULL
+        // addColumnIfMissing left them with, which is the only way to tell
+        // "this Thread genuinely did nothing" from "nobody was recording".
         this.db
           .prepare(
-            `INSERT INTO threads (id, project_id, title, worktree_path, current_mode_id, created_at)
-             VALUES (?, ?, ?, ?, NULL, ?)`,
+            `INSERT INTO threads (id, project_id, title, worktree_path, current_mode_id, records_activity, created_at)
+             VALUES (?, ?, ?, ?, NULL, 1, ?)`,
           )
           .run(event.threadId, event.projectId, event.title, event.worktreePath, event.timestamp);
         break;
@@ -138,6 +235,45 @@ export class EventStore {
               : "INSERT INTO checkpoints (thread_id, turn, ref, created_at, reverted_to_turn) VALUES (?, ?, ?, ?, ?)",
           )
           .run(event.threadId, event.turn, event.ref, event.timestamp, event.revertedToTurn ?? null);
+        break;
+      case "thread.activity-recorded":
+        // Upsert keyed on (thread_id, activity_id): a tool_call creates the
+        // row and each tool_call_update merges onto it, exactly as the live
+        // timeline's upsertToolCall does. COALESCE(excluded.x, activities.x)
+        // is what makes an omitted field mean "unchanged" rather than
+        // "cleared" — ACP replaces a tool call's content collection only
+        // when it actually sends one. `sequence` is deliberately absent
+        // from the update clause: an activity's place on the timeline is
+        // where it began, not where its last update landed.
+        this.db
+          .prepare(
+            `INSERT INTO activities (thread_id, activity_id, sequence, turn, kind, status, summary, detail, data, data_truncated, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (thread_id, activity_id) DO UPDATE SET
+               turn = excluded.turn,
+               kind = COALESCE(excluded.kind, activities.kind),
+               status = COALESCE(excluded.status, activities.status),
+               summary = COALESCE(excluded.summary, activities.summary),
+               detail = COALESCE(excluded.detail, activities.detail),
+               data = COALESCE(excluded.data, activities.data),
+               data_truncated = COALESCE(excluded.data_truncated, activities.data_truncated)`,
+          )
+          .run(
+            event.threadId,
+            event.activityId,
+            event.sequence,
+            event.turn,
+            event.toolKind ?? null,
+            event.status ?? null,
+            event.summary ?? null,
+            event.detail ?? null,
+            // NULL (not "[]") when the event carried no content at all, so
+            // COALESCE above can tell "no content reported this time" from
+            // "reported as empty".
+            event.data === undefined ? null : JSON.stringify(event.data),
+            event.data === undefined ? null : event.dataTruncated ? 1 : 0,
+            event.timestamp,
+          );
         break;
       case "thread.mode-changed":
         this.db
@@ -161,6 +297,9 @@ export class EventStore {
         // transaction, so a failure part-way rolls the whole thing back.
         this.db
           .prepare("DELETE FROM checkpoints WHERE thread_id IN (SELECT id FROM threads WHERE project_id = ?)")
+          .run(event.projectId);
+        this.db
+          .prepare("DELETE FROM activities WHERE thread_id IN (SELECT id FROM threads WHERE project_id = ?)")
           .run(event.projectId);
         this.db.prepare("DELETE FROM threads WHERE project_id = ?").run(event.projectId);
         this.db.prepare("DELETE FROM projects WHERE id = ?").run(event.projectId);
@@ -196,23 +335,16 @@ export class EventStore {
 
   getThread(id: string): ThreadRecord | undefined {
     const row = this.db
-      .prepare(
-        `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
-                current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt
-         FROM threads WHERE id = ?`,
-      )
-      .get(id) as ThreadRecord | undefined;
-    return row;
+      .prepare(`${THREAD_COLUMNS} FROM threads WHERE id = ?`)
+      .get(id) as ThreadRow | undefined;
+    return row && toThreadRecord(row);
   }
 
   listThreads(projectId: string): ThreadRecord[] {
-    return this.db
-      .prepare(
-        `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
-                current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt
-         FROM threads WHERE project_id = ? ORDER BY created_at`,
-      )
-      .all(projectId) as ThreadRecord[];
+    const rows = this.db
+      .prepare(`${THREAD_COLUMNS} FROM threads WHERE project_id = ? ORDER BY created_at`)
+      .all(projectId) as ThreadRow[];
+    return rows.map(toThreadRecord);
   }
 
   /**
@@ -225,6 +357,48 @@ export class EventStore {
       payload: string;
     }[];
     return rows.map((row) => JSON.parse(row.payload) as DomainEvent);
+  }
+
+  /**
+   * Everything the agent did in this Thread, in the order it began doing
+   * it. Ordered by the explicit sequence rather than by insertion, since
+   * several activities land within one Turn and an update can arrive long
+   * after a later activity started — see the sequence field's own note.
+   */
+  listActivities(threadId: string): ActivityRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT thread_id AS threadId, activity_id AS activityId, sequence, turn, kind, status,
+                summary, detail, data, data_truncated AS dataTruncated, created_at AS createdAt
+         FROM activities WHERE thread_id = ? ORDER BY sequence, activity_id`,
+      )
+      .all(threadId) as ActivityRow[];
+    return rows.map(toActivityRecord);
+  }
+
+  /**
+   * The next unused ordering key for a Thread, so ThreadRuntime's in-memory
+   * counter can be re-seeded after a server restart instead of handing out
+   * numbers that collide with already-persisted history.
+   *
+   * Reads the high-water mark from both projections it could be in: the
+   * activities table, and the message events (messages have no projection
+   * table of their own — the event log is still their source of truth).
+   * Messages written before sequencing existed have no `sequence` at all
+   * and json_extract yields NULL for them, so they simply don't participate.
+   */
+  getNextSequence(threadId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(seq) AS maxSequence FROM (
+           SELECT MAX(sequence) AS seq FROM activities WHERE thread_id = ?
+           UNION ALL
+           SELECT MAX(json_extract(payload, '$.sequence')) AS seq
+             FROM events WHERE thread_id = ? AND kind = 'thread.message-recorded'
+         )`,
+      )
+      .get(threadId, threadId) as { maxSequence: number | null };
+    return (row.maxSequence ?? 0) + 1;
   }
 
   listCheckpoints(threadId: string): CheckpointRecord[] {

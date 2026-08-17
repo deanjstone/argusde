@@ -1,6 +1,15 @@
 import type { AcpSession } from "../../utility/acp-session.js";
-import type { AcpSessionEvent, ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../../shared/acp-events.js";
+import type {
+  AcpSessionEvent,
+  ChatContentBlock,
+  ConnectionState,
+  PermissionOutcome,
+  SessionModeSummary,
+  ToolCallSummary,
+  ToolCallUpdateSummary,
+} from "../../shared/acp-events.js";
 import type { EventStore } from "../persistence/event-store.js";
+import { flattenDetail } from "../persistence/activity-bounds.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 
 export interface ThreadRuntimeOptions {
@@ -35,9 +44,18 @@ function mergeContent(existing: ChatContentBlock[], next: ChatContentBlock): Cha
 export class ThreadRuntime {
   private readonly options: ThreadRuntimeOptions;
   private nextTurn = 1;
-  private pendingAgentMessages = new Map<string, ChatContentBlock[]>();
+  private pendingAgentMessages = new Map<string, { content: ChatContentBlock[]; sequence: number }>();
   private pendingAgentMessageOrder: string[] = [];
   private anonymousMessageCounter = 0;
+  // Thread-wide ordering key shared by messages and activities, so history
+  // replay can merge the two into one timeline. Seeded from what's already
+  // persisted (constructor) rather than from zero, so a server restart
+  // doesn't start handing out numbers that collide with existing history.
+  private nextSequence: number;
+  // toolCallId -> the sequence it was first seen at. An update has to reuse
+  // it: an activity's place on the timeline is where it began, not where
+  // its last status change landed.
+  private activitySequences = new Map<string, number>();
   // The mode catalog is never persisted — only ever broadcast live, once,
   // from AcpSession.start(). Cached here (in memory, for this runtime's
   // whole lifetime) so a client that switches to this Thread later, after
@@ -69,7 +87,12 @@ export class ThreadRuntime {
 
   constructor(options: ThreadRuntimeOptions) {
     this.options = options;
+    this.nextSequence = options.eventStore.getNextSequence(options.threadId);
     options.session.on("event", (event) => this.handleEvent(event));
+  }
+
+  private allocateSequence(): number {
+    return this.nextSequence++;
   }
 
   async start(): Promise<void> {
@@ -93,6 +116,7 @@ export class ThreadRuntime {
       messageId: `user-${++this.anonymousMessageCounter}`,
       role: "user",
       content: [{ type: "text", text }],
+      sequence: this.allocateSequence(),
       timestamp: new Date().toISOString(),
     });
     this.turnInFlight = true;
@@ -216,6 +240,12 @@ export class ThreadRuntime {
       case "message-chunk":
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
         break;
+      case "tool-call":
+        this.recordActivity(event.toolCall, true);
+        break;
+      case "tool-call-update":
+        this.recordActivity(event.toolCall, false);
+        break;
       case "mode-changed":
         // Only the session-start event carries the catalog — a mid-session
         // change (client-requested or autonomous) doesn't, and must not
@@ -241,25 +271,68 @@ export class ThreadRuntime {
     const key = messageId ?? "__anon__";
     const existing = this.pendingAgentMessages.get(key);
     if (existing) {
-      this.pendingAgentMessages.set(key, mergeContent(existing, content));
+      this.pendingAgentMessages.set(key, { ...existing, content: mergeContent(existing.content, content) });
     } else {
-      this.pendingAgentMessages.set(key, [content]);
+      // The sequence is taken here, at the first chunk, not at
+      // completeTurn() where the message is actually persisted — otherwise
+      // every agent reply would sort after all of its own turn's tool
+      // calls, replaying a turn as "said everything, then did everything"
+      // no matter what really happened.
+      this.pendingAgentMessages.set(key, { content: [content], sequence: this.allocateSequence() });
       this.pendingAgentMessageOrder.push(key);
     }
+  }
+
+  /**
+   * Persists one tool call, or an update to one already recorded, as a
+   * durable Activity (spec #93 phase 1).
+   *
+   * Called from handleEvent's switch, i.e. *after* the event has already
+   * been forwarded to `onEvent` — persistence must never sit between the
+   * agent and the client's stream, and forwarding first is the observable
+   * form of that guarantee.
+   *
+   * An update is passed through with its absent fields left absent, since
+   * that is what ACP means by them (unchanged), and what the store's upsert
+   * is built to preserve.
+   */
+  private recordActivity(toolCall: ToolCallSummary | ToolCallUpdateSummary, isNew: boolean): void {
+    const existingSequence = this.activitySequences.get(toolCall.toolCallId);
+    // An update for a call never announced (an agent that skipped the
+    // tool_call, or a session resumed after a restart) still gets a place
+    // rather than being dropped — its "beginning" is simply the first time
+    // this runtime saw it.
+    const sequence = existingSequence ?? this.allocateSequence();
+    if (existingSequence === undefined) this.activitySequences.set(toolCall.toolCallId, sequence);
+
+    this.options.eventStore.appendEvent({
+      kind: "thread.activity-recorded",
+      threadId: this.options.threadId,
+      activityId: toolCall.toolCallId,
+      sequence,
+      turn: this.nextTurn,
+      toolKind: toolCall.kind,
+      status: toolCall.status,
+      summary: toolCall.title,
+      detail: toolCall.content === undefined ? undefined : flattenDetail(toolCall.content),
+      data: isNew ? ((toolCall as ToolCallSummary).content ?? []) : toolCall.content,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   private async completeTurn(event: AcpSessionEvent): Promise<void> {
     const { threadId, eventStore } = this.options;
 
     for (const key of this.pendingAgentMessageOrder) {
-      const content = this.pendingAgentMessages.get(key);
-      if (!content) continue;
+      const pending = this.pendingAgentMessages.get(key);
+      if (!pending) continue;
       eventStore.appendEvent({
         kind: "thread.message-recorded",
         threadId,
         messageId: `agent-${++this.anonymousMessageCounter}`,
         role: "agent",
-        content,
+        content: pending.content,
+        sequence: pending.sequence,
         timestamp: new Date().toISOString(),
       });
     }

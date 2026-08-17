@@ -4,7 +4,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ThreadList } from "./thread-list.js";
 
 const THREADS = [
-  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "", closedAt: null },
+  { id: "t1", projectId: "p1", title: "Fix the bug", worktreePath: null, currentModeId: null, createdAt: "", closedAt: null, recordsActivity: true },
   {
     id: "t2",
     projectId: "p1",
@@ -13,6 +13,7 @@ const THREADS = [
     currentModeId: null,
     createdAt: "",
     closedAt: null,
+    recordsActivity: true,
   },
 ];
 
@@ -30,7 +31,7 @@ describe("ThreadList", () => {
   });
 
   it("marks a closed thread's row with a closed indicator", () => {
-    const withClosed = [...THREADS, { id: "t3", projectId: "p1", title: "Old chat", worktreePath: null, currentModeId: null, createdAt: "", closedAt: "2026-08-14T00:00:00.000Z" }];
+    const withClosed = [...THREADS, { id: "t3", projectId: "p1", title: "Old chat", worktreePath: null, currentModeId: null, createdAt: "", closedAt: "2026-08-14T00:00:00.000Z", recordsActivity: true }];
     render(<ThreadList threads={withClosed} onSelectThread={() => {}} onCreateThread={() => {}} onBack={() => {}} />);
     expect(screen.getByRole("button", { name: /old chat/i })).toHaveTextContent(/closed/i);
   });

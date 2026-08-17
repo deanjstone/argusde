@@ -19,3 +19,7 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 - [Phase 10: PWA installability](phase-10-pwa-installability.md) — manifest, icons, and a deliberately non-caching service worker so the shared web UI can be installed on a phone. Merged [#50](https://github.com/deanjstone/argusde/pull/50).
 - [Phase 11: Thread close + worktree auto-cleanup](phase-11-thread-close.md) — close a Thread, tear down its live session, and clean up its worktree from disk. Merged [#51](https://github.com/deanjstone/argusde/pull/51).
 - [Phase 12: Resume most-recently-active Thread across reload](phase-12-resume-last-thread.md) — remember the last-active Thread in localStorage, skip first-run setup on a reload. Merged [#52](https://github.com/deanjstone/argusde/pull/52).
+
+Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjstone/argusde/issues/93)), whose own phase numbering starts fresh at 0; files here keep this directory's running count:
+
+- [Phase 13: Durable activity](phase-13-durable-activity.md) — spec #93 phase 1. Tool calls recorded as domain events and replayed from history, so reopening a Thread shows what the agent did, not only what it said.

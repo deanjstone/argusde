@@ -816,6 +816,85 @@ describe("ws-server", () => {
     expect(messagesB).toEqual([]);
   }, 20_000);
 
+  it("thread.get-history replays the Thread's tool calls, interleaved with its messages in the order they streamed", async () => {
+    process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+      { type: "message", text: "let me look" },
+      { type: "tool-call", toolCallId: "tc-1", title: "Read src/index.ts", kind: "read", status: "pending" },
+      { type: "tool-call-update", toolCallId: "tc-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "the file contents" } }] },
+      { type: "tool-call", toolCallId: "tc-2", title: "Edit src/index.ts", kind: "edit", status: "completed" },
+    ]);
+    const projectResult = await send({ type: "project.create", commandId: "ac1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "ac2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "ac3", threadId, text: "what's broken?" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    // Re-requested after the turn, exactly as a client reopening the Thread
+    // the next morning would — this is the whole point of the feature.
+    const historyResult = await send({ type: "thread.get-history", commandId: "ac4", threadId });
+    expect(historyResult.ok).toBe(true);
+    const history = historyResult.ok
+      ? (historyResult.result as {
+          messages: { role: string; sequence: number | null }[];
+          activities: { activityId: string; sequence: number; kind: string | null; status: string; summary: string; detail: string | null; turn: number }[];
+          recordsActivity: boolean;
+        })
+      : undefined;
+
+    expect(history?.activities.map((a) => ({ id: a.activityId, kind: a.kind, status: a.status, summary: a.summary }))).toEqual([
+      { id: "tc-1", kind: "read", status: "completed", summary: "Read src/index.ts" },
+      { id: "tc-2", kind: "edit", status: "completed", summary: "Edit src/index.ts" },
+    ]);
+    expect(history?.activities[0]?.detail).toBe("the file contents");
+    expect(history?.activities.every((a) => a.turn === 1)).toBe(true);
+
+    // The two lists carry the same ordering key so the client can rebuild
+    // one narrative: the agent spoke first, then used two tools — not the
+    // "both tools, then the reply" order the append-only log alone implies,
+    // since an agent's reply is only persisted at turn-complete.
+    const merged = [
+      ...(history?.messages ?? []).map((m) => ({ sequence: m.sequence ?? 0, label: `message:${m.role}` })),
+      ...(history?.activities ?? []).map((a) => ({ sequence: a.sequence, label: `activity:${a.activityId}` })),
+    ].sort((a, b) => a.sequence - b.sequence);
+    expect(merged.map((item) => item.label)).toEqual(["message:user", "message:agent", "activity:tc-1", "activity:tc-2"]);
+  }, 20_000);
+
+  it("thread.get-history replays a failed tool call as failed", async () => {
+    process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+      { type: "tool-call", toolCallId: "tc-1", title: "Write /etc/passwd", status: "pending" },
+      { type: "tool-call-update", toolCallId: "tc-1", status: "failed" },
+    ]);
+    const projectResult = await send({ type: "project.create", commandId: "af1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "af2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    await send({ type: "thread.send-message", commandId: "af3", threadId, text: "do it" });
+    await waitFor((messages) => messages.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "turn-complete"));
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "af4", threadId });
+    const activities = historyResult.ok ? (historyResult.result as { activities: { status: string; summary: string }[] }).activities : [];
+    // The record has to show what was refused as well as what ran, and the
+    // title has to survive an update carrying only a status.
+    expect(activities).toEqual([expect.objectContaining({ status: "failed", summary: "Write /etc/passwd" })]);
+  }, 20_000);
+
+  it("thread.get-history reports a Thread created now as one that records activity", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "ar1", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "ar2", projectId, title: "T" });
+    const { threadId } = threadResult.ok ? (threadResult.result as { threadId: string }) : { threadId: "" };
+
+    const historyResult = await send({ type: "thread.get-history", commandId: "ar3", threadId });
+    const history = historyResult.ok ? (historyResult.result as { recordsActivity: boolean; activities: unknown[] }) : undefined;
+    // An empty activity list on a Thread that *is* recording means the agent
+    // genuinely did nothing — the distinction the flag exists to make.
+    expect(history?.recordsActivity).toBe(true);
+    expect(history?.activities).toEqual([]);
+  }, 20_000);
+
   it("fs.list-directory lists a real directory's subdirectories, excluding dotfiles and plain files", async () => {
     fs.mkdirSync(path.join(repoDir, "subdir-a"));
     fs.mkdirSync(path.join(repoDir, "subdir-b"));
