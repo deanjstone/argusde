@@ -490,11 +490,57 @@ describe("ThreadRuntime durable activity", () => {
     expect(activities.map((a) => a.sequence)).toEqual([3, 4]);
   }, 20_000);
 
+  it("splits an agent's prose around a tool call, exactly as the live timeline does", async () => {
+    // The live timeline starts a new message whenever a tool call has been
+    // appended since the last chunk (appendOrMergeMessage's `continuesLast`
+    // check, src/shared/timeline.ts). Replay has to reach the same shape,
+    // or a Thread reads differently after a reload than it did live —
+    // prose that came *after* a tool call would sort ahead of it.
+    const runtime = runtimeWithSteps(
+      [
+        { type: "message", text: "let me look" },
+        { type: "tool-call", toolCallId: "tc-1", title: "Read a file", status: "completed" },
+        { type: "message", text: "found it" },
+        { type: "tool-call", toolCallId: "tc-2", title: "Edit a file", status: "completed" },
+      ],
+      () => {},
+    );
+    await runtime.start();
+    await runtime.sendMessage("what's broken?");
+    await runtime.dispose();
+
+    const timeline = [
+      ...eventStore
+        .listEventsForThread("thread-1")
+        .filter((e) => e.kind === "thread.message-recorded")
+        .map((e) =>
+          e.kind === "thread.message-recorded"
+            ? { sequence: e.sequence ?? 0, label: `${e.role}: ${e.content.map((c) => (c.type === "text" ? c.text : "")).join("")}` }
+            : { sequence: 0, label: "" },
+        ),
+      ...eventStore.listActivities("thread-1").map((a) => ({ sequence: a.sequence, label: `tool: ${a.summary}` })),
+    ].sort((a, b) => a.sequence - b.sequence);
+
+    expect(timeline.map((i) => i.label)).toEqual([
+      "user: what's broken?",
+      "agent: let me look",
+      "tool: Read a file",
+      "agent: found it",
+      "tool: Edit a file",
+    ]);
+  }, 20_000);
+
   it("forwards a tool call to the client before persisting it", async () => {
     // Story 7's observable form: persistence must never sit between the
     // agent and the client's stream. Reading the store from inside the
     // forwarding callback is synchronous, so an empty result here means the
     // push genuinely went out first.
+    //
+    // Deliberately at this seam and not the protocol one, where the same
+    // assertion would be vacuous: a push crosses a real socket
+    // asynchronously, so a synchronous write always wins that race no
+    // matter which order the code runs in. The broadcast boundary is the
+    // only place the ordering is actually observable.
     const activitiesVisibleAtForwardTime: number[] = [];
     const runtime = runtimeWithSteps(
       [{ type: "tool-call", toolCallId: "tc-1", title: "Read a file", status: "completed" }],

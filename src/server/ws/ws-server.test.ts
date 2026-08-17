@@ -821,6 +821,10 @@ describe("ws-server", () => {
       { type: "message", text: "let me look" },
       { type: "tool-call", toolCallId: "tc-1", title: "Read src/index.ts", kind: "read", status: "pending" },
       { type: "tool-call-update", toolCallId: "tc-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "the file contents" } }] },
+      // Prose *after* a tool call is the step that actually exercises
+      // interleaving — without it the turn is only "talk, then work", which
+      // append order alone would already get right.
+      { type: "message", text: "found the problem" },
       { type: "tool-call", toolCallId: "tc-2", title: "Edit src/index.ts", kind: "edit", status: "completed" },
     ]);
     const projectResult = await send({ type: "project.create", commandId: "ac1", workspaceRoot: repoDir, title: "P" });
@@ -858,7 +862,13 @@ describe("ws-server", () => {
       ...(history?.messages ?? []).map((m) => ({ sequence: m.sequence ?? 0, label: `message:${m.role}` })),
       ...(history?.activities ?? []).map((a) => ({ sequence: a.sequence, label: `activity:${a.activityId}` })),
     ].sort((a, b) => a.sequence - b.sequence);
-    expect(merged.map((item) => item.label)).toEqual(["message:user", "message:agent", "activity:tc-1", "activity:tc-2"]);
+    expect(merged.map((item) => item.label)).toEqual([
+      "message:user",
+      "message:agent",
+      "activity:tc-1",
+      "message:agent",
+      "activity:tc-2",
+    ]);
   }, 20_000);
 
   it("thread.get-history replays a failed tool call as failed", async () => {

@@ -28,6 +28,8 @@ Truncation runs in `boundEvent`, *before* `appendEvent` inserts — the append-o
 
 **Ordering.** One per-Thread `sequence`, allocated in `ThreadRuntime` when an item *begins*: user messages at `sendMessage`, activities on first sighting of their `toolCallId` (updates reuse it), and agent messages **at their first chunk** in `accumulateAgentChunk` rather than at turn-complete. That last one is the whole point — an agent's reply is persisted after every tool call in its turn, so append order alone replays a turn as "said everything, then did everything". `thread.message-recorded` gained an optional `sequence`; legacy messages have none and keep their relative append order, which costs nothing because a Thread old enough to lack sequences has no activities to interleave. The counter is re-seeded from `EventStore.getNextSequence()` on construction so a rebuilt runtime doesn't collide with persisted history.
 
+Sequencing at the first chunk is necessary but not sufficient: `accumulateAgentChunk` also has to **segment** the agent's prose the way the live timeline does. claude-agent-acp sends no message ids, so every anonymous chunk in a turn was landing in one pending entry — meaning prose sent *after* a tool call merged back into the prose sent before it and inherited its earlier sequence. The live view splits there (`appendOrMergeMessage`'s `continuesLast` check stops continuing once a tool call is the last timeline item), so replay diverged from what the user had actually watched. A new segment now opens whenever a tool call is seen for the first time, and at every turn boundary. Updates to an already-recorded tool call don't split, matching `upsertToolCall`, which merges in place and moves nothing.
+
 **Pre-feature Threads.** `threads.records_activity` via the established `addColumnIfMissing` idiom, set to 1 by the `thread.created` projection from now on. Rows written by an earlier build stay NULL → `recordsActivity: false`, which is the only way to tell "this Thread genuinely did nothing" from "nobody was recording". No backfill is possible — the events were never emitted.
 
 **Protocol.** `thread.get-history` gained `activities` and `recordsActivity`, and every message now carries `sequence` (null for legacy). Both lists ship separately rather than pre-merged: the client already owns timeline assembly (`src/shared/timeline.ts`), and the shared key is there precisely so it can interleave them. `API_VERSION` → `1.1.0`, the single bump spec #93 allots for its whole run; phases 2–10 don't bump again.
@@ -48,9 +50,20 @@ Truncation runs in `boundEvent`, *before* `appendEvent` inserts — the append-o
 ## Verification
 
 - `pnpm typecheck` clean (both projects).
-- Full suite green under `xvfb-run`: **320/320 across 27 files**, up from 293/293 across 26 — 27 new tests, no existing test deleted or weakened. Three existing assertions grew a `recordsActivity` field because the shared `ThreadRecord` shape genuinely gained one.
+- Full suite green under `xvfb-run`: **321/321 across 27 files**, up from 293/293 across 26 — 28 new tests, no existing test deleted or weakened. Three existing assertions grew a `recordsActivity` field because the shared `ThreadRecord` shape genuinely gained one.
 - Checkpoint strip, checkpoint diffing, revert, and thread-close tests pass untouched.
-- Driven against a real running server: a Thread taken through a turn with tool calls, then re-fetched via `thread.get-history`, returns them.
+- Driven against a real running server: a Thread taken through a turn of prose → tool call → prose → tool call, then re-fetched via `thread.get-history`, replays in that order.
+
+## What review changed
+
+`/spec-review` (standards and spec-fidelity axes in parallel) found one real defect and several cleanups, all fixed before merge:
+
+- **The prose-segmentation bug above.** The spec axis caught that the protocol test had been written prose → tool → tool rather than the ticket's prose → tool → prose → tool, and that the missing step was missing because the case was broken. Both tests now drive the full shape.
+- A dead `isNew` branch in `recordActivity` whose `?? []` could never fire (`ToolCallSummary.content` is non-optional) — removed along with the cast propping it up.
+- `THREAD_COLUMNS` renamed `THREAD_SELECT`; it holds a `SELECT`, not a column list.
+- Two comments that overstated what the code did (`recordActivity`'s "absent fields left absent", and `ThreadRuntime`'s class doc still claiming tool calls aren't persisted).
+
+Two findings were considered and deliberately not acted on, with reasons recorded in-code: story 7's push-before-write assertion stays at the `onEvent` seam rather than the protocol seam (across a real socket the assertion is vacuous — an async push always loses to a synchronous write regardless of code order), and `data`/`data_truncated` stay nullable against the ticket's literal `NOT NULL`, because NULL is what lets the upsert tell "reported no content" from "reported empty".
 
 ## Explicitly deferred
 

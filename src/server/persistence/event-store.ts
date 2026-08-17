@@ -92,7 +92,7 @@ interface ThreadRow extends Omit<ThreadRecord, "recordsActivity"> {
   recordsActivity: number | null;
 }
 
-const THREAD_COLUMNS = `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
+const THREAD_SELECT = `SELECT id, project_id AS projectId, title, worktree_path AS worktreePath,
                 current_mode_id AS currentModeId, created_at AS createdAt, closed_at AS closedAt,
                 records_activity AS recordsActivity`;
 
@@ -335,14 +335,14 @@ export class EventStore {
 
   getThread(id: string): ThreadRecord | undefined {
     const row = this.db
-      .prepare(`${THREAD_COLUMNS} FROM threads WHERE id = ?`)
+      .prepare(`${THREAD_SELECT} FROM threads WHERE id = ?`)
       .get(id) as ThreadRow | undefined;
     return row && toThreadRecord(row);
   }
 
   listThreads(projectId: string): ThreadRecord[] {
     const rows = this.db
-      .prepare(`${THREAD_COLUMNS} FROM threads WHERE project_id = ? ORDER BY created_at`)
+      .prepare(`${THREAD_SELECT} FROM threads WHERE project_id = ? ORDER BY created_at`)
       .all(projectId) as ThreadRow[];
     return rows.map(toThreadRecord);
   }

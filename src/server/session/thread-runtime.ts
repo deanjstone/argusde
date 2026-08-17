@@ -35,11 +35,16 @@ function mergeContent(existing: ChatContentBlock[], next: ChatContentBlock): Cha
  * Bridges one running AcpSession to persistence: captures a checkpoint per
  * Turn (turn numbers stay 1:1 with checkpoint numbers, including a turn-0
  * baseline on start()), persists the user's message eagerly and the agent's
- * assembled reply on turn-complete, and stops dropping mode-change updates
- * (persists them instead). Streaming chunks and everything else (tool
- * calls, permission requests, connection state) are forwarded live via
- * `onEvent` but not individually persisted — only Turn/Checkpoint
- * boundaries and completed messages are, per spec #33.
+ * assembled reply on turn-complete, persists mode-change updates rather
+ * than dropping them, and records each tool call as a durable Activity
+ * (spec #93 phase 1). Streaming chunks and the rest (permission
+ * requests, connection state) are forwarded live via `onEvent` but not
+ * individually persisted — only Turn/Checkpoint boundaries, completed
+ * messages, and Activities are.
+ *
+ * Messages and Activities share one per-Thread `sequence`, allocated when
+ * an item *begins*, so history replay can merge them back into the order
+ * they actually happened rather than the order they were written.
  */
 export class ThreadRuntime {
   private readonly options: ThreadRuntimeOptions;
@@ -56,6 +61,13 @@ export class ThreadRuntime {
   // it: an activity's place on the timeline is where it began, not where
   // its last status change landed.
   private activitySequences = new Map<string, number>();
+  // Distinguishes the segments of an agent's prose when the agent itself
+  // sends no message ids (which claude-agent-acp doesn't) — see
+  // accumulateAgentChunk for why prose has to be segmented at all.
+  private anonymousAgentSegment = 0;
+  // Set when a tool call is first seen, cleared when the next prose chunk
+  // opens a fresh segment because of it.
+  private activitySinceLastAgentChunk = false;
   // The mode catalog is never persisted — only ever broadcast live, once,
   // from AcpSession.start(). Cached here (in memory, for this runtime's
   // whole lifetime) so a client that switches to this Thread later, after
@@ -241,10 +253,10 @@ export class ThreadRuntime {
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
         break;
       case "tool-call":
-        this.recordActivity(event.toolCall, true);
+        this.recordActivity(event.toolCall);
         break;
       case "tool-call-update":
-        this.recordActivity(event.toolCall, false);
+        this.recordActivity(event.toolCall);
         break;
       case "mode-changed":
         // Only the session-start event carries the catalog — a mid-session
@@ -264,11 +276,21 @@ export class ThreadRuntime {
   }
 
   private accumulateAgentChunk(messageId: string | undefined, content: ChatContentBlock): void {
-    // An undefined messageId means the agent isn't distinguishing messages —
-    // every such chunk in a turn belongs to the same message (mirrors the
-    // chat-reducer's "continues last" heuristic), so it gets one stable key,
-    // not a fresh key per call.
-    const key = messageId ?? "__anon__";
+    // An undefined messageId means the agent isn't distinguishing messages,
+    // so this has to reproduce the live timeline's own rule for where one
+    // agent message ends and the next begins (appendOrMergeMessage's
+    // `continuesLast` check, src/shared/timeline.ts): chunks merge into the
+    // message still at the end of the timeline, and a tool call appended in
+    // between ends it. Without the segmenting, prose sent *after* a tool
+    // call would merge back into the prose sent before it and inherit its
+    // earlier sequence — so a reopened Thread would read as "said
+    // everything, then did everything" even though the live view showed
+    // them interleaved.
+    if (messageId === undefined && this.activitySinceLastAgentChunk) {
+      this.anonymousAgentSegment++;
+      this.activitySinceLastAgentChunk = false;
+    }
+    const key = messageId ?? `__anon__-${this.anonymousAgentSegment}`;
     const existing = this.pendingAgentMessages.get(key);
     if (existing) {
       this.pendingAgentMessages.set(key, { ...existing, content: mergeContent(existing.content, content) });
@@ -292,30 +314,45 @@ export class ThreadRuntime {
    * agent and the client's stream, and forwarding first is the observable
    * form of that guarantee.
    *
-   * An update is passed through with its absent fields left absent, since
-   * that is what ACP means by them (unchanged), and what the store's upsert
-   * is built to preserve.
+   * An update's absent fields stay absent all the way to the store, since
+   * that is what ACP means by them (unchanged) and what the upsert is built
+   * to preserve — appendEvent normalises them to null on the way, which the
+   * projection's COALESCE reads identically.
    */
-  private recordActivity(toolCall: ToolCallSummary | ToolCallUpdateSummary, isNew: boolean): void {
+  private recordActivity(toolCall: ToolCallSummary | ToolCallUpdateSummary): void {
     const existingSequence = this.activitySequences.get(toolCall.toolCallId);
     // An update for a call never announced (an agent that skipped the
     // tool_call, or a session resumed after a restart) still gets a place
     // rather than being dropped — its "beginning" is simply the first time
     // this runtime saw it.
     const sequence = existingSequence ?? this.allocateSequence();
-    if (existingSequence === undefined) this.activitySequences.set(toolCall.toolCallId, sequence);
+    if (existingSequence === undefined) {
+      this.activitySequences.set(toolCall.toolCallId, sequence);
+      // Only a first sighting ends the agent's current prose segment — that
+      // is the case where the live timeline appends a new item and stops
+      // "continuing last". An update merges into a tool call already on the
+      // timeline and moves nothing.
+      this.activitySinceLastAgentChunk = true;
+    }
 
     this.options.eventStore.appendEvent({
       kind: "thread.activity-recorded",
       threadId: this.options.threadId,
       activityId: toolCall.toolCallId,
       sequence,
+      // nextTurn is the turn *in progress*: it is only consumed (and
+      // incremented) by captureCheckpointEvent at turn-complete, which by
+      // definition hasn't run yet while the agent is still calling tools.
       turn: this.nextTurn,
       toolKind: toolCall.kind,
       status: toolCall.status,
       summary: toolCall.title,
       detail: toolCall.content === undefined ? undefined : flattenDetail(toolCall.content),
-      data: isNew ? ((toolCall as ToolCallSummary).content ?? []) : toolCall.content,
+      // Passed straight through, absence included: a tool_call always
+      // carries content (possibly empty), an update only sometimes, and
+      // ACP means "unchanged" by the difference — which is exactly what
+      // the store's upsert preserves. No branch on new-vs-update needed.
+      data: toolCall.content,
       timestamp: new Date().toISOString(),
     });
   }
@@ -338,6 +375,11 @@ export class ThreadRuntime {
     }
     this.pendingAgentMessages.clear();
     this.pendingAgentMessageOrder = [];
+    // A new Turn always starts a new prose segment: the user's own message
+    // now sits at the end of the timeline, so nothing the agent says next
+    // can continue what it said last Turn.
+    this.anonymousAgentSegment++;
+    this.activitySinceLastAgentChunk = false;
 
     // Cleared only once the turn's checkpoint has actually landed (not
     // synchronously at the top, now that the capture is async) — otherwise
