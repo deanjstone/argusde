@@ -115,9 +115,13 @@ export function VariantBPinnedStrip({ entries }: { entries: PlanEntrySummary[] }
 VariantBPinnedStrip.variantName = "Collapsible pinned strip";
 
 /**
- * Variant C — progress pill above the composer that opens a bottom sheet.
- * Chat chrome stays almost untouched; the full plan is one tap away and
- * takes the whole lower screen on a phone.
+ * Variant C — progress pill above the composer that opens a plan panel.
+ *
+ * The panel grows *upward* from just above the pill: it takes height from the
+ * transcript (which is flex-1 and simply shrinks), so the composer and the app's
+ * bottom tab bar stay visible and usable the whole time it is open. Deliberately
+ * not an `absolute inset-0` overlay — a sheet that lands on top of the input is
+ * a sheet you have to dismiss before you can answer the agent.
  */
 export function VariantCBottomSheet({ entries }: { entries: PlanEntrySummary[] }) {
   const [open, setOpen] = useState(false);
@@ -126,10 +130,28 @@ export function VariantCBottomSheet({ entries }: { entries: PlanEntrySummary[] }
 
   return (
     <>
+      {open && (
+        <div className="max-h-[62%] shrink overflow-y-auto overscroll-contain rounded-t-2xl border-t border-neutral-800 bg-neutral-900/95 px-4 pb-3 pt-2">
+          <div aria-hidden className="mx-auto mb-2 h-1 w-10 rounded-full bg-neutral-700" />
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <h2 className="text-sm font-medium text-neutral-100">Plan</h2>
+            <span className="text-xs text-neutral-500">
+              {done}/{entries.length} done
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {entries.map((entry, index) => (
+              <StepRow key={index} entry={entry} />
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="border-t border-neutral-800 px-3 py-2">
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
           className="flex w-full items-center gap-3 rounded-full border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-left hover:bg-neutral-800"
         >
           <span className="shrink-0 text-[11px] font-medium text-violet-300">
@@ -139,40 +161,15 @@ export function VariantCBottomSheet({ entries }: { entries: PlanEntrySummary[] }
             <ProgressBar done={done} total={entries.length} />
           </span>
           <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-400">{current?.content ?? "Plan complete"}</span>
-          <span aria-hidden className="shrink-0 text-xs text-neutral-500">
+          <span aria-hidden className={cn("shrink-0 text-xs text-neutral-500 transition-transform", open && "rotate-180")}>
             ⌃
           </span>
         </button>
       </div>
-
-      {open && (
-        <div className="absolute inset-0 z-40 flex flex-col justify-end">
-          <button
-            type="button"
-            aria-label="Close plan"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-black/60"
-          />
-          <div className="relative max-h-[70dvh] overflow-y-auto rounded-t-2xl border-t border-neutral-800 bg-neutral-950 p-4">
-            <div aria-hidden className="mx-auto mb-3 h-1 w-10 rounded-full bg-neutral-700" />
-            <div className="mb-3 flex items-baseline justify-between">
-              <h2 className="text-sm font-medium text-neutral-100">Plan</h2>
-              <span className="text-xs text-neutral-500">
-                {done}/{entries.length} done
-              </span>
-            </div>
-            <ul className="space-y-1">
-              {entries.map((entry, index) => (
-                <StepRow key={index} entry={entry} />
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
     </>
   );
 }
-VariantCBottomSheet.variantName = "Composer pill → bottom sheet";
+VariantCBottomSheet.variantName = "Composer pill → expanding panel";
 
 /**
  * Variant D — the plan gets its own tab in the bottom tab bar, with a badge.

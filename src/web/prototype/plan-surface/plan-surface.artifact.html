@@ -328,7 +328,7 @@
 
   .working { font-size: 13px; color: var(--app-faint); }
 
-  .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--app-border); }
+  .composer { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--app-border); }
   .composer .fake-input {
     flex: 1;
     border: 1px solid var(--app-border);
@@ -345,7 +345,7 @@
     display: grid; place-items: center;
   }
 
-  .tabs { display: grid; border-top: 1px solid var(--app-border); }
+  .tabs { flex: 0 0 auto; display: grid; border-top: 1px solid var(--app-border); }
   .tabs.n3 { grid-template-columns: repeat(3, 1fr); }
   .tabs.n4 { grid-template-columns: repeat(4, 1fr); }
   .tabs button {
@@ -417,7 +417,7 @@
   .planStrip .cur { font-size: 12px; color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .planStrip .list { padding: 0 10px 9px 10px; }
 
-  .planPillRow { padding: 8px 10px; border-top: 1px solid var(--app-border); }
+  .planPillRow { padding: 8px 10px; border-top: 1px solid var(--app-border); flex: 0 0 auto; }
   .planPill {
     width: 100%;
     display: flex; align-items: center; gap: 10px;
@@ -434,21 +434,20 @@
   .meter { display: block; width: 64px; flex: 0 0 auto; height: 4px; border-radius: 999px; background: #2b2b2b; overflow: hidden; }
   .meter i { display: block; height: 100%; background: var(--app-violet); }
 
-  .sheetWrap { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; z-index: 5; }
-  .scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .62); border: 0; cursor: pointer; }
-  .sheet {
-    position: relative;
-    max-height: 70%;
+  .planPanel {
+    flex: 0 1 auto;
+    max-height: 62%;
     overflow-y: auto;
-    background: var(--app-bg);
+    overscroll-behavior: contain;
+    background: #131313;
     border-top: 1px solid var(--app-border);
-    border-radius: 18px 18px 0 0;
-    padding: 12px 14px 18px;
+    border-radius: 16px 16px 0 0;
+    padding: 8px 14px 12px;
   }
-  .sheet .grab { width: 38px; height: 4px; border-radius: 999px; background: #454545; margin: 0 auto 10px; }
-  .sheet .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
-  .sheet .head h2 { margin: 0; font-size: 14px; font-weight: 560; }
-  .sheet .head em { font-style: normal; font-size: 11.5px; color: var(--app-faint); }
+  .planPanel .grab { width: 38px; height: 4px; border-radius: 999px; background: #454545; margin: 0 auto 9px; }
+  .planPanel .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+  .planPanel .head h2 { margin: 0; font-size: 14px; font-weight: 560; }
+  .planPanel .head em { font-style: normal; font-size: 11.5px; color: var(--app-faint); }
 
   .planScreen { flex: 1; overflow-y: auto; padding: 14px; }
   .planScreen .top { display: flex; justify-content: space-between; align-items: baseline; }
@@ -540,7 +539,7 @@
 
 <div class="page">
   <header>
-    <p class="eyebrow">argusde#90 · prototype · four candidates</p>
+    <p class="eyebrow">argusde#90 · resolved 17 Aug 2026 · variant C</p>
     <h1>What shape does the plan surface take?</h1>
     <p class="lede">
       Plan entries already reach the reducer and are thrown away at <code>chat-state.ts:122</code>. Wiring them up is trivial;
@@ -554,7 +553,7 @@
     <div class="chips" role="group" aria-label="Plan surface variant">
       <button class="chip" data-variant="A" aria-pressed="true"><span class="k">A</span>Inline card</button>
       <button class="chip" data-variant="B" aria-pressed="false"><span class="k">B</span>Pinned strip</button>
-      <button class="chip" data-variant="C" aria-pressed="false"><span class="k">C</span>Bottom sheet</button>
+      <button class="chip" data-variant="C" aria-pressed="false"><span class="k">C</span>Expanding panel ✓</button>
       <button class="chip" data-variant="D" aria-pressed="false"><span class="k">D</span>Plan tab</button>
     </div>
     <span class="spacer"></span>
@@ -577,7 +576,7 @@
   <div class="compare" id="compare" hidden></div>
 
   <footer class="prov">
-    <p>Throwaway code on <code>prototype/plan-surface-90</code> — nothing merges until a shape wins.</p>
+    <p>Throwaway code on <code>prototype/plan-surface-90</code>. Decision recorded; implementation goes through a spec, not this branch.</p>
     <p><a href="https://github.com/deanjstone/argusde/issues/90">argusde#90</a></p>
   </footer>
 </div>
@@ -607,11 +606,12 @@
       phone: "The strongest of the four collapsed. Expanded it needs a height cap or the transcript disappears.",
     },
     C: {
-      name: "Composer pill into a bottom sheet",
-      thesis: "The chat chrome stays untouched. A progress pill sits just above the composer, right where your thumb already is, and pulls up a sheet with the full plan.",
-      buys: ["Cheapest resting state of the four — one pill, no new bars", "Full plan gets a whole comfortable screen when you ask for it", "Native phone gesture; the thumb is already there"],
-      costs: ["Detail always costs a tap", "A sheet over the composer blocks typing while it's open", "Two components (pill and sheet) to build and keep in sync"],
-      phone: "Designed for the phone first — and the one shape that doesn't fight the transcript for height.",
+      chosen: true,
+      name: "Composer pill into an expanding panel",
+      thesis: "The chat chrome stays untouched. A progress pill sits just above the composer, right where your thumb already is, and opens upward into the full plan — taking its height from the transcript, never from the composer or the tabs.",
+      buys: ["Cheapest resting state of the four — one pill, no new bars", "Composer and tab bar stay live: read the plan and reply without dismissing anything", "Only the transcript gives up height, and it is the one surface you can scroll"],
+      costs: ["Detail still costs a tap", "Open, it pushes the transcript up — you lose sight of recent output", "Two pieces (pill and panel) to build and keep in sync"],
+      phone: "Built for the phone first: thumb-height trigger, and nothing it opens ever lands on the input you were about to type into.",
     },
     D: {
       name: "Dedicated Plan tab",
@@ -664,24 +664,21 @@
       (open ? '<div class="list">' + stepList(step) + "</div>" : "") +
     "</div>";
 
-  const composerPill = (step, live) => '' +
+  const composerPill = (step, live, openNow) => '' +
     '<div class="planPillRow">' +
-      '<button class="planPill" data-act="toggle"' + (live ? "" : " tabindex=\"-1\"") + '>' +
+      '<button class="planPill" data-act="toggle" aria-expanded="' + openNow + '"' + (live ? "" : " tabindex=\"-1\"") + '>' +
         '<span class="n">' + step + "/" + PLAN.length + "</span>" +
         meter(step) +
         '<span class="cur">' + esc(current(step)) + "</span>" +
-        '<span aria-hidden="true" style="color:var(--app-faint);font-size:11px">⌃</span>' +
+        '<span aria-hidden="true" style="color:var(--app-faint);font-size:11px;display:inline-block' + (openNow ? ';transform:rotate(180deg)' : '') + '">⌃</span>' +
       "</button>" +
     "</div>";
 
-  const sheet = (step) => '' +
-    '<div class="sheetWrap">' +
-      '<button class="scrim" data-act="toggle" aria-label="Close plan"></button>' +
-      '<div class="sheet">' +
-        '<div class="grab" aria-hidden="true"></div>' +
-        '<div class="head"><h2>Plan</h2><em>' + step + "/" + PLAN.length + " done</em></div>" +
-        stepList(step) +
-      "</div>" +
+  const planPanel = (step) => '' +
+    '<div class="planPanel">' +
+      '<div class="grab" aria-hidden="true"></div>' +
+      '<div class="head"><h2>Plan</h2><em>' + step + "/" + PLAN.length + " done</em></div>" +
+      stepList(step) +
     "</div>";
 
   function planScreen(step) {
@@ -723,7 +720,8 @@
         (v === "A" ? inlineCard(step) : "") +
         '<div class="working">Claude is working…</div>' +
       "</div>" +
-      (v === "C" ? composerPill(step, live) : "") +
+      (v === "C" && open ? planPanel(step) : "") +
+      (v === "C" ? composerPill(step, live, open) : "") +
       '<div class="composer"><div class="fake-input">Message ArgusDE…</div><div class="send" aria-hidden="true">→</div></div>';
 
     const tabs = v === "D"
@@ -734,7 +732,7 @@
         "</nav>"
       : '<nav class="tabs n3"><button aria-current="page">Chat</button><button>Threads</button><button>Settings</button></nav>';
 
-    return body + (v === "C" && open ? sheet(step) : "") + tabs;
+    return body + tabs;
   }
 
   /* Notes -------------------------------------------------------------- */

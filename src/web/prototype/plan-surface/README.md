@@ -21,7 +21,7 @@ agent one plan step so each variant can be judged mid-run, not just at rest.
 |---|---|---|
 | A | Inline card in the transcript | plan as a point-in-time artifact; scrolls away with history |
 | B | Collapsible pinned strip (CheckpointStrip-shaped) | always visible, one line collapsed, full checklist expanded |
-| C | Composer pill → bottom sheet | chat chrome untouched, full plan one tap away, phone-native sheet |
+| C | Composer pill → expanding panel | **chosen 2026-08-17.** Chat chrome untouched; the panel grows upward from the pill and takes height from the transcript, so the composer and tab bar are never covered |
 | D | Dedicated Plan tab with a badge | chat stays clean, plan is a full-screen grouped view, invisible while chatting |
 
 ## What is throwaway and must go
