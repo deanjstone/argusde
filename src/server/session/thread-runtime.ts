@@ -7,6 +7,7 @@ import type {
   ConnectionState,
   PermissionOutcome,
   SessionModeSummary,
+  SessionUsage,
   ToolCallSummary,
   ToolCallUpdateSummary,
 } from "../../shared/acp-events.js";
@@ -109,6 +110,14 @@ export class ThreadRuntime {
   // road lastKnownModes opened. Empty until the agent says otherwise, which
   // is also what an agent advertising no commands honestly reports.
   private lastKnownCommands: AgentCommand[] = [];
+  /**
+   * Context occupancy for the *current* session only, and pointedly not
+   * persisted (spec #93 phase 9). It describes a live agent session's context
+   * window; a reopened Thread starts a fresh session with an empty context, so
+   * a carried-over number would describe something that no longer exists.
+   * Cleared when the session reconnects, below.
+   */
+  private lastKnownUsage: SessionUsage | null = null;
   // Same rationale as lastKnownModes, but this one genuinely changes across
   // a session's lifetime (not just a one-shot catalog) — every
   // "connection-state" event updates it, so a client that missed the live
@@ -221,6 +230,10 @@ export class ThreadRuntime {
     return this.lastKnownCommands;
   }
 
+  getUsage(): SessionUsage | null {
+    return this.lastKnownUsage;
+  }
+
   getConnectionState(): { state: ConnectionState; error: string | undefined } {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
   }
@@ -317,6 +330,11 @@ export class ThreadRuntime {
       case "connection-state":
         this.lastKnownConnectionState = event.state;
         this.lastKnownConnectionError = event.error;
+        // A session starting over means a fresh, empty context. Keeping the
+        // old number would report occupancy for a window that no longer
+        // exists — worse than reporting nothing, which is what story 50 asks
+        // for anyway.
+        if (event.state === "connecting") this.lastKnownUsage = null;
         break;
       case "message-chunk":
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
@@ -329,6 +347,9 @@ export class ThreadRuntime {
         break;
       case "agent-capabilities":
         this.lastKnownCapabilities = event.capabilities;
+        break;
+      case "usage":
+        this.lastKnownUsage = event.usage;
         break;
       case "available-commands":
         // Replaced wholesale, never merged: ACP resends the complete list on

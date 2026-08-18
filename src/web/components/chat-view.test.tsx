@@ -40,6 +40,19 @@ describe("ChatView", () => {
     expect(screen.getByText(/working/i)).toBeInTheDocument();
   });
 
+  it("shows the context meter once the agent reports usage (spec #93 phase 9)", () => {
+    const state = stateWith({ usage: { used: 50_000, size: 200_000 } });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} />);
+
+    expect(screen.getByText("25%")).toBeInTheDocument();
+  });
+
+  it("shows no meter, and no row for one, before any usage is reported", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
+
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
   // The composer's own behaviour is covered in composer.test.tsx; this is the
   // wiring check — that ChatView still hands its onSend down to it.
   it("sends the typed message and clears the input", () => {

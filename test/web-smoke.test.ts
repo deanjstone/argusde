@@ -52,7 +52,12 @@ describe("web smoke: server + browser round trip", () => {
     eventStore = new EventStore(path.join(dbDir, "argusde.sqlite"));
     checkpointStore = new CheckpointStore();
 
-    process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([{ type: "message", text: "Hello from the web smoke test agent" }]);
+    process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+      // The real bridge pushes usage several times per turn, mid-turn; one is
+      // enough to prove the meter is fed by a real notification.
+      { type: "usage", used: 50_000, size: 200_000 },
+      { type: "message", text: "Hello from the web smoke test agent" },
+    ]);
     // The real claude-agent-acp advertises `{ image: true, embeddedContext:
     // true }` (verified against v0.57.0), so the fixture does too — otherwise
     // the composer correctly hides its attach control and the attachment
@@ -322,6 +327,52 @@ describe("web smoke: server + browser round trip", () => {
         await cspPage.getByRole("button", { name: /cancel/i }).click();
       } finally {
         await cspPage.close();
+      }
+    },
+    45_000,
+  );
+
+  /**
+   * The context meter in a real browser (spec #93 phase 9). Two things only
+   * provable here: that the meter is driven by a real `usage_update` travelling
+   * the whole path, and that its tooltip — a third distinct Radix component —
+   * is CSP-clean under the real policy.
+   */
+  it(
+    "shows the context meter only after the agent reports usage, and its tooltip is CSP-clean",
+    async () => {
+      const meterPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const consoleMessages: string[] = [];
+      meterPage.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
+      meterPage.on("pageerror", (error) => consoleMessages.push(`pageerror: ${error.message}`));
+
+      try {
+        await meterPage.goto(`http://127.0.0.1:${server.port}/`);
+        await meterPage.getByRole("button", { name: /type a path manually/i }).click();
+        await meterPage.getByLabel(/workspace path/i).fill(repoDir);
+        await meterPage.getByRole("button", { name: /^start$/i }).click();
+        await meterPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        // Nothing reported yet — story 50 wants no meter, not a zeroed one.
+        expect(await meterPage.getByRole("progressbar").count()).toBe(0);
+
+        await meterPage.getByPlaceholder(/message/i).fill("go");
+        await meterPage.getByPlaceholder(/message/i).press("Enter");
+
+        const meter = meterPage.getByRole("progressbar");
+        await meter.waitFor({ timeout: 15_000 });
+        expect(await meter.getAttribute("aria-label")).toMatch(/50,000 of 200,000/);
+        expect(await meter.getAttribute("data-band")).toBe("comfortable");
+        await meterPage.getByText("25%").waitFor({ timeout: 5_000 });
+
+        // Hovering opens the Radix tooltip — the third distinct overlay in this
+        // app, and so a third exercise of argusde#113's nonce.
+        await meter.hover();
+        await meterPage.getByRole("tooltip").waitFor({ timeout: 10_000 });
+
+        expect(consoleMessages.filter((message) => /content security policy/i.test(message))).toEqual([]);
+      } finally {
+        await meterPage.close();
       }
     },
     45_000,

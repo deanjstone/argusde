@@ -294,9 +294,17 @@ export class AcpSession extends EventEmitter {
           })),
         });
         break;
+      case "usage_update":
+        // Sent several times *during* a turn, not only at its end — which is
+        // what makes the meter live (spec #93 story 47) with no polling.
+        // `cost` rides along on the same update and is deliberately not
+        // carried: this spec asks for a context meter, and money is a
+        // different question with its own shape (see argusde#124).
+        this.emitEvent({ kind: "usage", usage: { used: update.used, size: update.size } });
+        break;
       default:
-        // Other update kinds (config options, usage, etc.) are out of scope
-        // for the MVP chat surface and are intentionally dropped.
+        // Other update kinds (config options, session info, etc.) are out of
+        // scope for this chat surface and are intentionally dropped.
         break;
     }
   }

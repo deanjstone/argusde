@@ -25,31 +25,39 @@ const DEFAULT_MIME_TYPE = "application/octet-stream";
 // linked <script>/<link> tags only), so neither directive needs
 // 'unsafe-inline'.
 //
-// **What `style-src` costs the UI, stated here once.** The distinction that
-// matters, and that cost real time to establish (spec #93 phase 4, then
-// argusde#113 — both measured in a real browser, not reasoned about):
+// **What `style-src` costs the UI, stated here once — measured, not reasoned
+// about.** The boundary is not "inline styles"; it is *how* the style reaches
+// the element. Probed in a real browser under this exact policy (argusde#124,
+// correcting a wrong account written during argusde#113):
 //
-//   * An injected `<style>` **element** can carry a nonce, and does. This is
-//     how Radix's overlays lock body scroll (`react-remove-scroll` →
-//     `react-style-singleton`), so dialog, alert-dialog, popover, select,
-//     dropdown-menu, tooltip, drawer and sheet all work. Without the nonce
-//     they *degrade rather than fail*: the dialog opens, but `document.body`
-//     stays at `overflow: visible` so the page scrolls behind it, plus a
-//     console violation the audit's zero-console-errors gate fails on.
+//   | Mechanism                                    | Under `style-src 'self'` |
+//   |----------------------------------------------|--------------------------|
+//   | React's `style={{ … }}` prop (CSSOM)          | allowed                  |
+//   | `element.style.foo = …` (CSSOM)               | allowed                  |
+//   | `element.setAttribute("style", …)`            | **blocked**              |
+//   | a `style="…"` attribute parsed from markup    | **blocked**              |
+//   | a `<style>` element with no nonce             | **blocked**              |
+//   | a `<style>` element carrying this nonce       | allowed                  |
 //
-//   * An inline `style` **attribute** cannot. A nonce applies to elements,
-//     never to attributes — only 'unsafe-inline' (or 'unsafe-hashes') would
-//     cover one, and neither is on the table. So these stay ruled out:
+// The nonce is what makes the last row work, and it is why Radix's overlays
+// function at all: they lock body scroll through `react-remove-scroll`, which
+// stamps the nonce onto the element it injects. Without it a dialog *opens*
+// but leaves the page scrolling behind it, plus a console violation the
+// audit's zero-console-errors gate fails on.
 //
-//       1. shadcn/Radix's `scroll-area`, which styles its viewport through a
-//          style attribute. Re-tested under the nonce and **still blocked** —
-//          it is not an overlay and does not benefit. Blocking it broke the
-//          whole app in phase 4, since first-run renders the directory
-//          browser. Use plain `overflow-y-auto` containers.
-//       2. Per-token `style={{ color }}` for syntax highlighting. The server
-//          sends a token's semantic *kind* and the stylesheet owns the colours.
-//       3. Any computed `style={{ … }}` at all, e.g. a runtime grid-column
-//          count.
+// What this does and does not rule out:
+//
+//   * `scroll-area` is blocked **by default**, but not inherently: Radix
+//     renders a `<style>` element for it and accepts a `nonce` prop to stamp,
+//     which it simply isn't given today. The plain `overflow-y-auto`
+//     containers elsewhere in this app predate that understanding and are
+//     kept because they work, not because a nonce could not fix them.
+//   * Computed `style={{ … }}` from React is **fine**. The syntax highlighter
+//     still sends semantic token *kinds* rather than colours, but for the
+//     reason stated in CLAUDE.md — colour belongs in the theme's variables —
+//     and not because the CSP forbids it.
+//   * Anything that reaches for `setAttribute("style", …)`, or that injects
+//     markup carrying a style attribute, is genuinely out.
 //
 // A nonce is only worth anything if it is unguessable and per-response, which
 // is why it is generated here per request rather than baked into the built
@@ -57,9 +65,9 @@ const DEFAULT_MIME_TYPE = "application/octet-stream";
 // nonce that no later response header matches, and its overlays would break in
 // exactly the way this exists to prevent.
 //
-// This is not weakened to 'unsafe-inline' to make styling easier: the server
-// renders agent output and is reachable over Tailscale. Code that trips over
-// it cites this comment rather than restating the reasoning.
+// This is not weakened to 'unsafe-inline': the server renders agent output and
+// is reachable over Tailscale. Code that trips over it cites this comment
+// rather than restating the reasoning.
 //
 // The placeholder below lives in src/web/index.html and is replaced on the way
 // out. Vite copies it through the build untouched.

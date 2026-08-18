@@ -139,6 +139,15 @@ const app = agent({ name: "smoke-fake-agent" })
         });
       }
 
+      // Context-window occupancy, which the real bridge pushes several times
+      // per turn rather than once at the end (spec #93 phase 9).
+      if (step.type === "usage") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "usage_update", used: step.used, size: step.size },
+        });
+      }
+
       // The agent's command set changing mid-session (spec #93 story 44) —
       // the whole list again, not a delta.
       if (step.type === "commands-changed") {

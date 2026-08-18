@@ -18,6 +18,7 @@ import {
 } from "./ui/message-scroller.js";
 import { ActivityCard } from "./activity-card.js";
 import { Composer, type MessageAttachment } from "./composer.js";
+import { ContextMeter } from "./context-meter.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView, type DiffRange } from "./diff-view.js";
 import { ModeSwitcher } from "./mode-switcher.js";
@@ -279,6 +280,17 @@ export function ChatView({
       </MessageScrollerProvider>
 
       {threadClosed && <p className="border-t border-border px-4 pt-2 text-xs text-muted-foreground">This thread is closed.</p>}
+
+      {/* Directly above the composer: this is the number you act on when
+          deciding whether to keep going in this Thread or start a fresh one,
+          so it belongs where that decision is made. Renders nothing at all
+          until the agent reports (story 50), so the row costs no space on a
+          Thread that has never had a turn. */}
+      {state.usage && (
+        <div className="flex justify-end border-t border-border px-3 pt-2">
+          <ContextMeter usage={state.usage} />
+        </div>
+      )}
       <Composer
         onSend={onSend}
         acceptsImages={state.promptCapabilities.image}

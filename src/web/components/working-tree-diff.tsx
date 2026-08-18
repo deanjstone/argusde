@@ -78,8 +78,8 @@ export function WorkingTreeDiff({ diff, loading, error }: WorkingTreeDiffProps) 
         <Badge variant="outline">working tree</Badge>
       </div>
 
-      {/* Plain overflow, not shadcn's `scroll-area`, which styles through an
-          inline style attribute that no CSP nonce can cover — see the
+      {/* Plain overflow rather than shadcn's `scroll-area`, whose injected
+          `<style>` is blocked unless Radix is handed the CSP nonce — see the
           style-src commentary in server/http/static-server.ts. */}
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="w-max min-w-full py-2 font-mono text-xs leading-relaxed">
