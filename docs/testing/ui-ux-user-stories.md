@@ -327,3 +327,28 @@ the agent's own context-window occupancy directly above the composer.
   same 25%-full bar and a nearly-full one are never visually indistinguishable.
 - **US-20.4** — Neither an absent nor a shown meter introduces horizontal page scroll at mobile
   width.
+
+## US-21: Plan panel
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 10, which surfaced
+the agent's own plan as a pill directly above the composer (and above the context-meter row) that
+expands into the full step list.
+
+- **US-21.1** — Before the agent has ever reported a plan, no pill renders at all — no row, no
+  collapsed placeholder waiting at zero. This is also the state of a freshly reopened Thread,
+  whose new session has not yet reported a plan of its own.
+- **US-21.2** — Once the agent reports a plan mid-turn, a pill appears showing a `completed/total`
+  count (e.g. `1/3`), a small progress bar, and — as its label — the content of whichever step is
+  currently `in_progress`.
+- **US-21.3** — Clicking the pill expands an ordered list of every step in the plan; each step is
+  distinguishable by status (`completed` | `in_progress` | `pending`) rather than all reading
+  identically.
+- **US-21.4** — Clicking the same pill again collapses the list back down — one control drives
+  both directions, not a separate close affordance.
+- **US-21.5** — The expanded panel never covers the composer or the bottom tab bar: it grows
+  upward into space the transcript gives up, and its bounding box never vertically overlaps
+  either the composer's message input or the tab bar's, checked by comparing their real
+  `getBoundingClientRect()` geometry rather than inferred from a screenshot. This is the reason
+  the panel is a collapsible rather than a modal drawer.
+- **US-21.6** — Neither the collapsed pill nor the expanded panel introduces horizontal page
+  scroll at mobile width.

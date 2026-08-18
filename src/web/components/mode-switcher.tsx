@@ -24,12 +24,12 @@ export function ModeSwitcher({ currentModeId, availableModes, onSetMode }: ModeS
   const isKnownMode = availableModes.some((mode) => mode.id === currentModeId);
 
   return (
-    <div className="flex justify-end border-b border-neutral-800 px-3 py-2">
+    <div className="flex justify-end border-b border-border px-3 py-2">
       <select
         aria-label="Agent mode"
         value={currentModeId}
         onChange={(event) => onSetMode(event.target.value)}
-        className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300"
+        className="rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground"
       >
         {!isKnownMode && currentModeId !== undefined && (
           <option value={currentModeId} disabled>

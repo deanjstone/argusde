@@ -40,6 +40,25 @@ describe("ChatView", () => {
     expect(screen.getByText(/working/i)).toBeInTheDocument();
   });
 
+  it("shows the plan pill once the agent produces a plan (spec #93 phase 10)", () => {
+    const state = stateWith({
+      plan: [
+        { content: "Read the router", priority: "medium", status: "completed" },
+        { content: "Add the route", priority: "medium", status: "in_progress" },
+      ],
+    });
+    render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} />);
+
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add the route/i })).toBeInTheDocument();
+  });
+
+  it("shows no plan pill at all before the agent produces one", () => {
+    render(<ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} />);
+
+    expect(screen.queryByText(/\d+\/\d+/)).toBeNull();
+  });
+
   it("shows the context meter once the agent reports usage (spec #93 phase 9)", () => {
     const state = stateWith({ usage: { used: 50_000, size: 200_000 } });
     render(<ChatView state={state} onSend={() => {}} onRespondPermission={() => {}} />);

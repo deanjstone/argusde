@@ -1685,6 +1685,141 @@ async function main() {
       }
     }
 
+    // ---- US-21: plan panel (spec #93 phase 10) ----
+    // Needs a scripted `plan` notification to be deterministic — the real
+    // agent only produces a plan when it decides one is warranted, which
+    // this audit can't provoke reliably. Uses the fake agent's
+    // `{ type: "plan", entries }` step (fake-agent-cli.mjs), driven through
+    // startIsolatedServer's `steps` option — the same mechanism the
+    // US-18/US-19/US-20 blocks above use for their own scripted fixtures.
+    // Runs at every viewport, like those blocks, so the mobile
+    // no-horizontal-scroll checks (US-21.6) have something to check.
+    {
+      let planServer;
+      const planRepo = makeGitRepo("argusde-audit-plan-panel-");
+      const planPage = await context.newPage();
+      try {
+        planServer = await startIsolatedServer({
+          steps: [
+            {
+              type: "plan",
+              entries: [
+                { content: "Investigate the bug", priority: "medium", status: "completed" },
+                { content: "Write the fix", priority: "medium", status: "in_progress" },
+                { content: "Add a regression test", priority: "medium", status: "pending" },
+              ],
+            },
+            { type: "message", text: "done" },
+          ],
+        });
+        await planPage.goto(planServer.url);
+        await planPage.getByRole("button", { name: /type a path manually/i }).click();
+        await planPage.getByLabel(/workspace path/i).fill(planRepo);
+        await planPage.getByRole("button", { name: /^start$/i }).click();
+        await planPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        // ---- US-21.1: no pill before any plan has ever been reported ----
+        const pillAbsentBeforeTurn = (await planPage.locator('[data-slot="collapsible-trigger"]').count()) === 0;
+        record(
+          "US-21.1",
+          pillAbsentBeforeTurn ? "pass" : "fail",
+          pillAbsentBeforeTurn ? "no plan pill rendered before the agent has ever reported a plan" : "a plan pill rendered before any plan was ever reported",
+        );
+        if (pillAbsentBeforeTurn) await shot(planPage, "US-21.1-no-pill");
+
+        const planComposer = planPage.getByPlaceholder(/message/i);
+        await planComposer.fill("trigger a turn");
+        await planComposer.press("Enter");
+
+        // ---- US-21.2: the pill appears with completed/total and names the
+        // in-progress step ----
+        const pill = planPage.locator('[data-slot="collapsible-trigger"]');
+        const pillShown = await pill
+          .waitFor({ state: "visible", timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const pillText = pillShown ? ((await pill.textContent()) ?? "").trim() : "";
+        const showsCount = /1\s*\/\s*3/.test(pillText);
+        const namesInProgressStep = /Write the fix/.test(pillText);
+        record(
+          "US-21.2",
+          pillShown && showsCount && namesInProgressStep ? "pass" : "fail",
+          pillShown
+            ? `pill text: "${pillText}" (expected to contain 1/3 and "Write the fix")`
+            : "no plan pill appeared after the agent reported a plan",
+        );
+        if (pillShown) {
+          await scanA11y(planPage, "US-21.2");
+          await shot(planPage, "US-21.2-pill");
+          await checkNoHorizontalScroll(planPage, "US-21.6-collapsed");
+        }
+
+        if (pillShown) {
+          // ---- US-21.3: clicking the pill expands the step list, each step
+          // distinguishable by data-status ----
+          await pill.click();
+          const panel = planPage.locator('[data-slot="collapsible-content"]');
+          const panelShown = await panel
+            .waitFor({ state: "visible", timeout: 10000 })
+            .then(() => true)
+            .catch(() => false);
+          const statuses = panelShown ? await panel.locator("li[data-status]").evaluateAll((els) => els.map((el) => el.getAttribute("data-status"))) : [];
+          const expectedStatuses = ["completed", "in_progress", "pending"];
+          const statusesMatch = statuses.length === expectedStatuses.length && expectedStatuses.every((s, i) => statuses[i] === s);
+          record(
+            "US-21.3",
+            panelShown && statusesMatch ? "pass" : "fail",
+            panelShown ? `expanded step statuses: [${statuses.join(", ")}] (expected [${expectedStatuses.join(", ")}])` : "clicking the pill did not expand the step list",
+          );
+          if (panelShown) {
+            await scanA11y(planPage, "US-21.3");
+            await shot(planPage, "US-21.3-expanded");
+            await checkNoHorizontalScroll(planPage, "US-21.6-expanded");
+
+            // ---- US-21.5: the expanded panel never covers the composer or
+            // the tab bar — checked on real geometry, not a screenshot. This
+            // is the whole reason the panel is a collapsible rather than a
+            // drawer (plan-panel.tsx's own story-54 commentary).
+            const panelBox = await panel.boundingBox();
+            const composerBox = await planComposer.boundingBox();
+            const tabBarBox = await planPage.getByRole("button", { name: "Chat" }).boundingBox();
+            const verticallyOverlaps = (a, b) => !!a && !!b && a.y < b.y + b.height && b.y < a.y + a.height;
+            const coversComposer = verticallyOverlaps(panelBox, composerBox);
+            const coversTabBar = verticallyOverlaps(panelBox, tabBarBox);
+            record(
+              "US-21.5",
+              panelBox && composerBox && tabBarBox && !coversComposer && !coversTabBar ? "pass" : "fail",
+              panelBox && composerBox && tabBarBox
+                ? `panel y=[${Math.round(panelBox.y)},${Math.round(panelBox.y + panelBox.height)}], composer y=[${Math.round(composerBox.y)},${Math.round(composerBox.y + composerBox.height)}], tab bar y=[${Math.round(tabBarBox.y)},${Math.round(tabBarBox.y + tabBarBox.height)}] — overlaps composer: ${coversComposer}, overlaps tab bar: ${coversTabBar}`
+                : "could not measure panel, composer, and tab bar geometry",
+            );
+          }
+
+          // ---- US-21.4: clicking the same pill again collapses it ----
+          await pill.click();
+          const panelGoneAfterCollapse = await panel
+            .waitFor({ state: "hidden", timeout: 10000 })
+            .then(() => true)
+            .catch(() => false);
+          record(
+            "US-21.4",
+            panelGoneAfterCollapse ? "pass" : "fail",
+            panelGoneAfterCollapse ? "clicking the pill again collapsed the step list" : "the step list stayed expanded after clicking the pill a second time",
+          );
+        } else {
+          record("US-21.3", "skip", "no pill rendered — nothing to expand");
+          record("US-21.4", "skip", "no pill rendered — nothing to collapse");
+          record("US-21.5", "skip", "no pill rendered — no panel geometry to check");
+        }
+      } catch (error) {
+        record("US-21.throw", "fail", `plan-panel checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await planPage.close();
+        await planServer?.close();
+        fs.rmSync(planRepo, { recursive: true, force: true });
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.

@@ -4,6 +4,7 @@ import type {
   AgentPromptCapabilities,
   ChatContentBlock,
   ConnectionState,
+  PlanEntrySummary,
   SessionModeSummary,
   SessionUsage,
 } from "../shared/acp-events.js";
@@ -63,6 +64,12 @@ export interface ChatState {
    * that no longer exists once the session restarts.
    */
   usage: SessionUsage | null;
+  /**
+   * The agent's current plan (spec #93 phase 10). Null until it produces one —
+   * story 58 wants no pill at all in that case. Session-scoped like usage and
+   * never persisted: a plan describes what a live session is doing now.
+   */
+  plan: PlanEntrySummary[] | null;
 }
 
 export const initialChatState: ChatState = {
@@ -78,6 +85,7 @@ export const initialChatState: ChatState = {
   promptCapabilities: NO_PROMPT_CAPABILITIES,
   availableCommands: [],
   usage: null,
+  plan: null,
 };
 
 /**
@@ -122,6 +130,7 @@ export type ChatEvent =
       promptCapabilities: AgentPromptCapabilities;
       availableCommands: AgentCommand[];
       usage: SessionUsage | null;
+      plan: PlanEntrySummary[] | null;
     };
 
 const generateMessageId = createMessageIdGenerator();
@@ -147,6 +156,7 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
               promptCapabilities: NO_PROMPT_CAPABILITIES,
               availableCommands: [],
               usage: null,
+              plan: null,
             }
           : {}),
       };
@@ -190,7 +200,10 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
       // so a command the agent dropped has to stop being offered.
       return { ...state, availableCommands: event.commands };
     case "plan":
-      return state;
+      // Replaced, never appended. Every notification carries the whole plan
+      // (verified against the real agent), and story 57 wants exactly one
+      // answer to "what is the plan".
+      return { ...state, plan: event.entries };
   }
 }
 
@@ -249,6 +262,7 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
         promptCapabilities: event.promptCapabilities,
         availableCommands: event.availableCommands,
         usage: event.usage,
+        plan: event.plan,
         pendingPermissionRequest: undefined,
         agentStatus: "idle",
       };

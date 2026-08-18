@@ -6,6 +6,7 @@ import type {
   ChatContentBlock,
   ConnectionState,
   PermissionOutcome,
+  PlanEntrySummary,
   SessionModeSummary,
   SessionUsage,
   ToolCallSummary,
@@ -118,6 +119,7 @@ export class ThreadRuntime {
    * Cleared when the session reconnects, below.
    */
   private lastKnownUsage: SessionUsage | null = null;
+  private lastKnownPlan: PlanEntrySummary[] | null = null;
   // Same rationale as lastKnownModes, but this one genuinely changes across
   // a session's lifetime (not just a one-shot catalog) — every
   // "connection-state" event updates it, so a client that missed the live
@@ -234,6 +236,10 @@ export class ThreadRuntime {
     return this.lastKnownUsage;
   }
 
+  getPlan(): PlanEntrySummary[] | null {
+    return this.lastKnownPlan;
+  }
+
   getConnectionState(): { state: ConnectionState; error: string | undefined } {
     return { state: this.lastKnownConnectionState, error: this.lastKnownConnectionError };
   }
@@ -334,7 +340,10 @@ export class ThreadRuntime {
         // old number would report occupancy for a window that no longer
         // exists — worse than reporting nothing, which is what story 50 asks
         // for anyway.
-        if (event.state === "connecting") this.lastKnownUsage = null;
+        if (event.state === "connecting") {
+          this.lastKnownUsage = null;
+          this.lastKnownPlan = null;
+        }
         break;
       case "message-chunk":
         if (event.role === "agent") this.accumulateAgentChunk(event.messageId, event.content);
@@ -350,6 +359,14 @@ export class ThreadRuntime {
         break;
       case "usage":
         this.lastKnownUsage = event.usage;
+        break;
+      case "plan":
+        // Replaced, never appended: every notification carries the complete
+        // plan (verified against the real claude-agent-acp, whose entry count
+        // grew 1→1→2→2→3→3→3 across one turn as it built one). Session-scoped
+        // like usage and never persisted — a plan describes what a live
+        // session is doing now.
+        this.lastKnownPlan = event.entries;
         break;
       case "available-commands":
         // Replaced wholesale, never merged: ACP resends the complete list on

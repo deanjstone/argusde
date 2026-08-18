@@ -5,6 +5,7 @@ import type {
   ChatContentBlock,
   ConnectionState,
   PermissionOutcome,
+  PlanEntrySummary,
   SessionModeSummary,
   SessionUsage,
 } from "../shared/acp-events.js";
@@ -221,6 +222,7 @@ export function App() {
     promptCapabilities: AgentPromptCapabilities,
     availableCommands: AgentCommand[],
     usage: SessionUsage | null,
+    plan: PlanEntrySummary[] | null,
   ) {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
@@ -239,6 +241,7 @@ export function App() {
         promptCapabilities,
         availableCommands,
         usage,
+        plan,
       }),
     );
     setDiff(EMPTY_DIFF);
@@ -391,6 +394,7 @@ export function App() {
       promptCapabilities: AgentPromptCapabilities;
       availableCommands: AgentCommand[];
       usage: SessionUsage | null;
+      plan: PlanEntrySummary[] | null;
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
@@ -411,6 +415,7 @@ export function App() {
       history.promptCapabilities,
       history.availableCommands,
       history.usage,
+      history.plan,
     );
   }
 

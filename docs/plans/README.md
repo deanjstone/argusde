@@ -20,7 +20,7 @@ Current sequence — the T3-Code-parity uplift ([spec #33](https://github.com/de
 - [Phase 11: Thread close + worktree auto-cleanup](phase-11-thread-close.md) — close a Thread, tear down its live session, and clean up its worktree from disk. Merged [#51](https://github.com/deanjstone/argusde/pull/51).
 - [Phase 12: Resume most-recently-active Thread across reload](phase-12-resume-last-thread.md) — remember the last-active Thread in localStorage, skip first-run setup on a reload. Merged [#52](https://github.com/deanjstone/argusde/pull/52).
 
-Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjstone/argusde/issues/93)), whose own phase numbering starts fresh at 0; files here keep this directory's running count:
+Final sequence — the daily-driver uplift ([spec #93](https://github.com/deanjstone/argusde/issues/93)), whose own phase numbering starts fresh at 0; files here keep this directory's running count:
 
 - [Phase 13: Durable activity](phase-13-durable-activity.md) — spec #93 phase 1. Tool calls recorded as domain events and replayed from history, so reopening a Thread shows what the agent did, not only what it said.
 - [Phase 14: Activity rendering in the timeline](phase-14-activity-timeline-ui.md) — spec #93 phase 2. The visible half: activity cards with truncation and expand, the pre-feature notice, and the chat transcript migrated onto real shadcn primitives and theme tokens.
@@ -31,3 +31,4 @@ Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjst
 - [Phase 19: Image attachments](phase-19-image-attachments.md) — spec #93 phase 7. Attach, send, persist and replay images on a message, capability-gated against what the agent actually advertised.
 - [Phase 20: Slash-command menu](phase-20-slash-commands.md) — spec #93 phase 8. Discover and insert the agent's own advertised commands from a `/` menu in the composer, filtered and replayed the same way the mode catalog is.
 - [Phase 21: Context meter](phase-21-context-meter.md) — spec #93 phase 9. A compact, live-updating meter of the agent session's context usage in the composer, never persisted across a reconnect.
+- [Phase 22: Plan pill and expanding panel](phase-22-plan-panel.md) — spec #93 phase 10. A live pill and expanding panel for the agent's plan, plus the mode switcher, thread list and project picker migrated onto theme tokens.
