@@ -115,7 +115,7 @@ body,
   --warning-foreground: oklch(0.22 0.05 68);
   /* Syntax colours live here rather than arriving with the payload — the
      server sends a token's *kind* and these decide how it looks. See
-     CONTENT_SECURITY_POLICY in src/server/http/static-server.ts for why a
+     contentSecurityPolicy in src/server/http/static-server.ts for why a
      per-token colour is not an option. */
   --syntax-comment: oklch(0.55 0.02 260);
   --syntax-string: oklch(0.55 0.15 150);

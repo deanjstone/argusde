@@ -16,7 +16,7 @@ export interface WorkingTreeDiffProps {
  *
  * Colour comes from theme tokens for the same reason syntax tokens do: the
  * server sends a *kind*, and a per-line colour would need an inline style
- * attribute, which this app's CSP blocks. See CONTENT_SECURITY_POLICY in
+ * attribute, which this app's CSP blocks. See contentSecurityPolicy in
  * server/http/static-server.ts.
  */
 const DIFF_CLASS: Record<DiffLine["kind"], string> = {
@@ -78,8 +78,9 @@ export function WorkingTreeDiff({ diff, loading, error }: WorkingTreeDiffProps) 
         <Badge variant="outline">working tree</Badge>
       </div>
 
-      {/* Plain overflow, not shadcn's `scroll-area` — see
-          CONTENT_SECURITY_POLICY in server/http/static-server.ts. */}
+      {/* Plain overflow, not shadcn's `scroll-area`, which styles through an
+          inline style attribute that no CSP nonce can cover — see the
+          style-src commentary in server/http/static-server.ts. */}
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="w-max min-w-full py-2 font-mono text-xs leading-relaxed">
           <code data-testid="wt-diff-lines">

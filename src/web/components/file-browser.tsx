@@ -232,8 +232,9 @@ export function FileBrowser({ threadId, listDirectory, readFile, search, changed
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Plain overflow, not shadcn's `scroll-area` — see
-            CONTENT_SECURITY_POLICY in server/http/static-server.ts. */}
+        {/* Plain overflow, not shadcn's `scroll-area`, which styles through an
+            inline style attribute that no CSP nonce can cover — see the
+            style-src commentary in server/http/static-server.ts. */}
         <div
           className={cn(
             "min-h-0 flex-1 overflow-y-auto border-border md:flex-none md:basis-1/3 md:max-w-xs md:border-e",

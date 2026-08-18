@@ -328,7 +328,8 @@ describe("ChatView", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /revert/i }));
+    fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^revert$/i }));
     expect(onRevert).toHaveBeenCalled();
   });
 
@@ -447,7 +448,12 @@ describe("ChatView", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+      // Enabled and reachable, which is what "offers normally" means — the
+      // confirmation it opens is diff-view's own concern, covered there.
+      const revert = screen.getByRole("button", { name: /revert to this checkpoint/i });
+      expect(revert).toBeEnabled();
+      fireEvent.click(revert);
+      fireEvent.click(screen.getByRole("button", { name: /^revert$/i }));
       expect(onRevert).toHaveBeenCalled();
     });
   });

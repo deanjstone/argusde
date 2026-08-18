@@ -59,12 +59,46 @@ describe("DiffView", () => {
     expect(screen.queryByRole("button", { name: /revert/i })).not.toBeInTheDocument();
   });
 
-  it("renders a revert control that calls onRevert when clicked", () => {
+  it("asks before reverting — the control alone does not overwrite the working tree", () => {
     const onRevert = vi.fn();
     render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={onRevert} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /revert/i }));
+    fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+
+    expect(onRevert).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("reverts once the confirmation is accepted", () => {
+    const onRevert = vi.fn();
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={onRevert} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^revert$/i }));
+
     expect(onRevert).toHaveBeenCalled();
+  });
+
+  it("leaves the working tree alone when the confirmation is cancelled", () => {
+    const onRevert = vi.fn();
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={onRevert} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(onRevert).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("says what reverting actually does to the files on disk", () => {
+    render(<DiffView diff={SAMPLE_DIFF} loading={false} error={undefined} onClose={() => {}} onRevert={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+
+    // The destructive half and the reassuring half both have to be stated:
+    // files are overwritten, but the Thread's history is not truncated.
+    expect(screen.getByText(/overwritten/i)).toBeInTheDocument();
+    expect(screen.getByText(/history is kept/i)).toBeInTheDocument();
   });
 
   it("disables and relabels the revert control while reverting is in progress", () => {
