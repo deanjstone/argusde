@@ -114,13 +114,17 @@ describe("electron: shows the connect screen when no server is reachable", () =>
             }),
         });
 
-        await window.fill('input[name="server-url"]', `http://127.0.0.1:${server.port}/`);
+        // Deliberately without a trailing slash: Chromium commits the
+        // normalised "…:PORT/" form, so a raw string comparison against what
+        // the user typed would refuse to persist a URL that plainly worked.
+        const typedUrl = `http://127.0.0.1:${server.port}`;
+        await window.fill('input[name="server-url"]', typedUrl);
         await window.click('button:has-text("Connect")');
 
         await window.waitForSelector("text=/choose a workspace folder/i", { timeout: 15_000 });
         expect(fs.existsSync(path.join(userDataDir, "config.json"))).toBe(true);
         const persisted = JSON.parse(fs.readFileSync(path.join(userDataDir, "config.json"), "utf8"));
-        expect(persisted.serverUrl).toBe(`http://127.0.0.1:${server.port}/`);
+        expect(persisted.serverUrl).toBe(typedUrl);
       } finally {
         await server?.close();
         eventStore.close();
