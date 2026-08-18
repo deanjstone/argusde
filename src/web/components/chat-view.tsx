@@ -115,6 +115,23 @@ export function ChatView({
   // this can't just be `worktreePath !== null`.
   const showLiveWorktreeBadge = worktreePath !== null && !threadClosed;
   const showCloseButton = onCloseThread !== undefined && !threadClosed;
+  /**
+   * Both closing a Thread and reverting a Checkpoint are refused by the server
+   * while a Turn is still in flight — closing would snapshot the workspace out
+   * from under the agent, and reverting would overwrite it. Offering the
+   * controls anyway produced a wall of git vocabulary for what is, from the
+   * user's side, "I pressed the button too quickly" (argusde#110).
+   *
+   * `agentStatus` is exactly the right signal and was already here unused:
+   * the server sends its turn-complete push only once the turn's checkpoint
+   * has landed (spec #93 phase 1 made that ordering explicit), which is
+   * precisely the condition both commands require. The window is short on a
+   * small repository and widens with repository size and link latency — and
+   * the phone-over-Tailscale case is the one where a tap lands soonest after
+   * the reply renders.
+   */
+  const turnInFlight = state.agentStatus === "working";
+  const blockedWhileWorking = turnInFlight ? "Not while the agent is working — wait for this turn to finish" : undefined;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -152,7 +169,13 @@ export function ChatView({
       <ModeSwitcher currentModeId={state.currentModeId} availableModes={state.availableModes} onSetMode={onSetMode} />
 
       {(showLiveWorktreeBadge || canPromote || showCloseButton) && (
-        <div className="flex items-center justify-end gap-2 border-b border-border px-3 py-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border px-3 py-2">
+          {/* Stated, not just implied by a greyed-out control: a `title` is
+              invisible on a phone, which is the device where this window is
+              widest. */}
+          {turnInFlight && showCloseButton && (
+            <span className="mr-auto text-xs text-muted-foreground">Not while the agent is working</span>
+          )}
           {showLiveWorktreeBadge && (
             <Badge variant="outline" className="gap-1.5 border-warning/40 text-warning">
               <span aria-hidden className="size-2 rounded-full bg-warning" />
@@ -165,7 +188,13 @@ export function ChatView({
             </Button>
           )}
           {showCloseButton && (
-            <Button variant="outline" size="sm" onClick={onCloseThread} disabled={closing}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCloseThread}
+              disabled={closing || turnInFlight}
+              title={blockedWhileWorking}
+            >
               {closing ? "Closing…" : "Close thread"}
             </Button>
           )}
@@ -180,6 +209,7 @@ export function ChatView({
         onClose={onCloseDiff}
         onRevert={onRevert}
         reverting={reverting}
+        revertBlockedReason={blockedWhileWorking}
         availableTurns={availableTurns}
         range={diffRange}
         onChangeRange={onChangeDiffRange}

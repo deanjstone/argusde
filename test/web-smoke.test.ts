@@ -423,22 +423,19 @@ describe("web smoke: server + browser round trip", () => {
         await closePage.getByPlaceholder(/message/i).press("Enter");
         await closePage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
 
-        // The reply text is the wrong thing to synchronise on before closing.
-        // It arrives on a streaming message chunk, whereas `turnInFlight` only
-        // clears once the turn's checkpoint capture has landed — so a close
-        // issued in that window is rejected with "Cannot capture a final
-        // checkpoint while a turn is still in flight", the tab never switches,
-        // and the wait below times out.
+        // The reply text is the wrong thing to synchronise on before closing:
+        // it arrives on a streaming message chunk, whereas the turn only
+        // settles once its checkpoint capture has landed, and a close issued
+        // in that window is rejected outright.
         //
-        // Waiting for the checkpoint strip to show Turn 1 is the correct
-        // signal: that button only renders once the checkpoint exists, which
-        // is precisely the condition close requires. Reproduced 3/3 against a
-        // real server before being fixed this way — locally the browser's
-        // click latency happened to cover the gap, which is why this passed
-        // for months and failed on its first CI run (argusde#92).
-        await closePage.waitForSelector("text=Turn 1", { timeout: 15_000 });
+        // Waiting for the control itself to become available is the honest
+        // signal — the app now disables it for exactly that window
+        // (argusde#110), so this asserts the guard works rather than merely
+        // dodging the race the way waiting for the checkpoint strip did.
+        const closeButton = closePage.getByRole("button", { name: /close thread/i });
+        await expect.poll(() => closeButton.isDisabled(), { timeout: 15_000 }).toBe(false);
 
-        await closePage.getByRole("button", { name: /close thread/i }).click();
+        await closeButton.click();
 
         // handleCloseThread nulls `thread` and switches to the Threads tab
         // on success — waiting for the Projects picker (not stuck on
