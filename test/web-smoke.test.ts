@@ -58,6 +58,13 @@ describe("web smoke: server + browser round trip", () => {
     // the composer correctly hides its attach control and the attachment
     // tests below would be asserting against a surface that isn't there.
     process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true, embeddedContext: true });
+    // The real bridge pushes its command list as an unprompted notification
+    // after session start (verified against v0.57.0, which sent 122), so the
+    // fixture does the same.
+    process.env.ARGUSDE_FAKE_AGENT_COMMANDS = JSON.stringify([
+      { name: "review", description: "Review the current diff", input: { hint: "What to focus on" } },
+      { name: "plan", description: "Draft a plan before changing anything" },
+    ]);
     process.env.ARGUSDE_FAKE_AGENT_MODES = JSON.stringify({
       currentModeId: "default",
       availableModes: [
@@ -88,6 +95,7 @@ describe("web smoke: server + browser round trip", () => {
     delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
     delete process.env.ARGUSDE_FAKE_AGENT_MODES;
     delete process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
+    delete process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
     await browser?.close();
     await server?.close();
     eventStore?.close();
@@ -314,6 +322,50 @@ describe("web smoke: server + browser round trip", () => {
         await cspPage.getByRole("button", { name: /cancel/i }).click();
       } finally {
         await cspPage.close();
+      }
+    },
+    45_000,
+  );
+
+  /**
+   * The slash-command menu in a real browser (spec #93 phase 8). Two things
+   * only provable here: that a Radix *popover* — a different component from
+   * the alert-dialog #113 shipped with — is CSP-clean under the real policy,
+   * and that the menu actually renders where the composer is.
+   */
+  it(
+    "opens the agent's command menu from the composer, CSP-clean, and puts the pick back in the input",
+    async () => {
+      const menuPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const consoleMessages: string[] = [];
+      menuPage.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
+      menuPage.on("pageerror", (error) => consoleMessages.push(`pageerror: ${error.message}`));
+
+      try {
+        await menuPage.goto(`http://127.0.0.1:${server.port}/`);
+        await menuPage.getByRole("button", { name: /type a path manually/i }).click();
+        await menuPage.getByLabel(/workspace path/i).fill(repoDir);
+        await menuPage.getByRole("button", { name: /^start$/i }).click();
+        await menuPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        const composer = menuPage.getByPlaceholder(/message/i);
+        await composer.fill("/");
+
+        await menuPage.getByText("Review the current diff").waitFor({ timeout: 10_000 });
+        await menuPage.getByText("Draft a plan before changing anything").waitFor({ timeout: 5_000 });
+
+        await composer.fill("/pl");
+        await menuPage.getByText("Draft a plan before changing anything").waitFor({ timeout: 5_000 });
+        expect(await menuPage.getByText("Review the current diff").count()).toBe(0);
+
+        await menuPage.getByText("Draft a plan before changing anything").click();
+        await expect.poll(() => composer.inputValue(), { timeout: 5_000 }).toBe("/plan ");
+
+        // A popover injects the same kind of runtime <style> an alert-dialog
+        // does; without argusde#113's nonce this list would be here.
+        expect(consoleMessages.filter((message) => /content security policy/i.test(message))).toEqual([]);
+      } finally {
+        await menuPage.close();
       }
     },
     45_000,

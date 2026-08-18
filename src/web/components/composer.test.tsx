@@ -39,6 +39,7 @@ function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = 
       acceptsImages={props.acceptsImages ?? true}
       disabled={props.disabled ?? false}
       prepareAttachment={prepare}
+      availableCommands={props.availableCommands ?? []}
     />,
   );
   return { onSend, prepare };
@@ -184,6 +185,105 @@ describe("Composer", () => {
 
     await waitFor(() => expect(input).toHaveValue("https://example.com"));
     expect(prepare).not.toHaveBeenCalled();
+  });
+
+  describe("slash commands (spec #93 phase 8)", () => {
+    const COMMANDS = [
+      { name: "review", description: "Review the current diff", inputHint: "What to focus on" },
+      { name: "plan", description: "Draft a plan", inputHint: null },
+    ];
+
+    it("opens the command menu when the message starts with a slash (story 39)", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "/");
+
+      expect(await screen.findByText("review")).toBeInTheDocument();
+    });
+
+    it("narrows the menu with whatever follows the slash (story 41)", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "/pl");
+
+      expect(await screen.findByText("plan")).toBeInTheDocument();
+      expect(screen.queryByText("review")).toBeNull();
+    });
+
+    it("puts the picked command in the composer, ready for an argument (stories 39, 43)", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+      const input = screen.getByPlaceholderText(/message argusde/i);
+
+      type(input, "/pl");
+      fireEvent.click(await screen.findByText("plan"));
+
+      // A trailing space, so the caret is where an argument goes rather than
+      // glued to the command name.
+      await waitFor(() => expect(input).toHaveValue("/plan "));
+    });
+
+    it("closes the menu once a command is picked, so it doesn't reopen over the argument", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "/pl");
+      fireEvent.click(await screen.findByText("plan"));
+
+      await waitFor(() => expect(screen.queryByText("Draft a plan")).toBeNull());
+    });
+
+    it("leaves the menu closed once an argument is being typed (story 43)", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+
+      // The space ends the command name — from here the user is writing the
+      // argument, and a menu popping back over it would be in the way.
+      type(screen.getByPlaceholderText(/message argusde/i), "/review my diff");
+
+      await waitFor(() => expect(screen.queryByText("Review the current diff")).toBeNull());
+    });
+
+    it("never opens for a slash that isn't at the start — a path is not a command", async () => {
+      renderComposer({ availableCommands: COMMANDS });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "look at src/web/app.tsx");
+
+      await waitFor(() => expect(screen.queryByText("Review the current diff")).toBeNull());
+    });
+
+    it("offers no menu at all when the agent advertises no commands (story 45)", async () => {
+      renderComposer({ availableCommands: [] });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "/");
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("picks a command with the keyboard, and Enter does not send the half-typed name (story 42)", async () => {
+      const { onSend } = renderComposer({ availableCommands: COMMANDS });
+      const input = screen.getByPlaceholderText(/message argusde/i);
+
+      type(input, "/");
+      await screen.findByText("review");
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => expect(input).toHaveValue("/plan "));
+      // Enter belonged to the menu, not to the form — sending "/" would be a
+      // message the user never meant to send.
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("sends a completed command as an ordinary message — the agent parses the slash, not this app", async () => {
+      const { onSend } = renderComposer({ availableCommands: COMMANDS });
+      const input = screen.getByPlaceholderText(/message argusde/i);
+
+      type(input, "/pl");
+      fireEvent.click(await screen.findByText("plan"));
+      await waitFor(() => expect(input).toHaveValue("/plan "));
+      type(input, "/plan the refactor");
+      fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+      expect(onSend).toHaveBeenCalledWith("/plan the refactor", []);
+    });
   });
 
   it("disables everything while the thread is closed", async () => {

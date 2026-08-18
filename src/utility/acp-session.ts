@@ -276,6 +276,24 @@ export class AcpSession extends EventEmitter {
       case "current_mode_update":
         this.emitEvent({ kind: "mode-changed", modeId: update.currentModeId });
         break;
+      case "available_commands_update":
+        // Arrives unprompted shortly after session start, and again whenever
+        // the agent's command set changes — verified against the real
+        // claude-agent-acp, which pushed 122 commands before any prompt was
+        // sent and offers them nowhere else (the session/new response carries
+        // none).
+        this.emitEvent({
+          kind: "available-commands",
+          commands: update.availableCommands.map((command) => ({
+            name: command.name,
+            description: command.description,
+            // ACP's only input kind is unstructured — one hint string — so it
+            // is flattened here rather than passed through as a nested
+            // optional object every consumer would unwrap identically.
+            inputHint: command.input?.hint ?? null,
+          })),
+        });
+        break;
       default:
         // Other update kinds (config options, usage, etc.) are out of scope
         // for the MVP chat surface and are intentionally dropped.

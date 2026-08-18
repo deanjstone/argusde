@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import type { AgentCommand } from "../../shared/acp-events.js";
 import { ATTACHMENT_LIMITS, SUPPORTED_IMAGE_MIME_TYPES } from "../../shared/attachments.js";
 import { prepareImageAttachment, type PreparedAttachment, type PrepareResult } from "../lib/image-attachment.js";
+import { CommandMenu } from "./command-menu.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
 import {
@@ -25,6 +27,11 @@ export interface ComposerProps {
   acceptsImages: boolean;
   disabled?: boolean;
   /**
+   * The agent's own slash commands (spec #93 phase 8). Empty means no menu at
+   * all — story 45: an affordance with nothing behind it is worse than none.
+   */
+  availableCommands?: AgentCommand[];
+  /**
    * Injected so the component's own behaviour is testable without a canvas —
    * the real implementation decodes and re-encodes through one, which jsdom
    * has no version of. Production always uses the default.
@@ -38,14 +45,60 @@ export interface ComposerProps {
  * (slash commands, context meter, plan pill), and four features layered onto
  * an inline form is how a component stops being reviewable.
  */
-export function Composer({ onSend, acceptsImages, disabled = false, prepareAttachment = prepareImageAttachment }: ComposerProps) {
+export function Composer({
+  onSend,
+  acceptsImages,
+  disabled = false,
+  availableCommands = [],
+  prepareAttachment = prepareImageAttachment,
+}: ComposerProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
   // A single message rather than a list: a refusal is about the thing the
   // user just tried, and stacking them turns one mistake into a wall.
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
+  // Closed explicitly after a pick, so the menu doesn't reopen over the
+  // argument the user is now typing. Reopened by editing the command name.
+  const [commandMenuDismissed, setCommandMenuDismissed] = useState(false);
+  /**
+   * The ref lives on a wrapper `div`, not on the `Input` itself.
+   *
+   * shadcn's current CLI emits React-19-style primitives — plain function
+   * components that treat `ref` as an ordinary prop. This project is on React
+   * 18, where a function component cannot receive a ref at all, so
+   * `<Input ref=…>` silently does nothing and `<PopoverAnchor asChild>` around
+   * one measures nothing. That is not a hypothetical: it put this menu 168px
+   * *above* the top of the viewport, where it rendered perfectly and could
+   * never be clicked. Anything in this app that needs a handle on a shadcn
+   * primitive has to go through a wrapper like this one.
+   */
+  const composerRef = useRef<HTMLDivElement>(null);
 
   const atAttachmentLimit = attachments.length >= ATTACHMENT_LIMITS.maxImagesPerMessage;
+
+  // The menu belongs to the command *name* being typed, so it is open only
+  // while the text is a leading slash with no whitespace after it. `/review my
+  // diff` is an argument in progress (story 43) and `src/web/app.tsx` is a
+  // path — neither should summon a menu.
+  const commandQuery = /^\/(\S*)$/.exec(text)?.[1];
+  const commandMenuOpen = commandQuery !== undefined && !commandMenuDismissed;
+
+  function handleTextChange(value: string): void {
+    setText(value);
+    // Editing the name again re-offers the menu; anything else leaves the
+    // dismissal in place.
+    if (/^\/\S*$/.test(value) === false) setCommandMenuDismissed(false);
+  }
+
+  function pickCommand(command: AgentCommand): void {
+    // A trailing space puts the caret where an argument goes rather than glued
+    // to the name. Nothing is executed here — the agent parses the leading
+    // `/name` when the message is sent (verified against the real
+    // claude-agent-acp).
+    setText(`/${command.name} `);
+    setCommandMenuDismissed(true);
+    composerRef.current?.querySelector("input")?.focus();
+  }
 
   async function attach(files: File[]): Promise<void> {
     // Accumulated locally rather than committed per file: setAttachments is
@@ -95,6 +148,7 @@ export function Composer({ onSend, acceptsImages, disabled = false, prepareAttac
     setText("");
     setAttachments([]);
     setRefusal(undefined);
+    setCommandMenuDismissed(false);
   }
 
   return (
@@ -167,14 +221,26 @@ export function Composer({ onSend, acceptsImages, disabled = false, prepareAttac
               />
             </label>
         )}
-        <Input
-          placeholder="Message ArgusDE…"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onPaste={handlePaste}
-          disabled={disabled}
-          className="flex-1"
-        />
+        <CommandMenu
+          open={commandMenuOpen}
+          commands={availableCommands}
+          query={commandQuery ?? ""}
+          onSelect={pickCommand}
+          onOpenChange={(open) => {
+            if (!open) setCommandMenuDismissed(true);
+          }}
+        >
+          <div ref={composerRef} className="flex-1">
+            <Input
+              placeholder="Message ArgusDE…"
+              value={text}
+              onChange={(event) => handleTextChange(event.target.value)}
+              onPaste={handlePaste}
+              disabled={disabled}
+              className="w-full"
+            />
+          </div>
+        </CommandMenu>
         <Button type="submit" size="icon" aria-label="Send" disabled={disabled}>
           →
         </Button>

@@ -290,3 +290,21 @@ composer carry image attachments alongside text.
   `role="alert"` message — never a silent drop.
 - **US-18.4** — Neither the attached nor the refused state introduces horizontal page scroll at
   mobile width.
+
+## US-19: Composer — slash-command menu
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 8, which let the
+composer surface the connected agent's own slash commands.
+
+- **US-19.1** — Typing `/` in the composer, with no whitespace after it, opens a menu of the
+  agent's commands, each row showing the command's name, a truncated description, and — when the
+  command defines one — an italic input hint. An agent that advertises no commands opens no menu
+  at all; there is no empty state to see.
+- **US-19.2** — Typing more after the `/` narrows the menu to commands whose name or description
+  matches what was typed so far.
+- **US-19.3** — Clicking a row puts `/name ` in the composer, caret ready for an argument, and
+  closes the menu.
+- **US-19.5** — The menu is navigable by keyboard as well as by pointer: arrow keys move the
+  highlight (wrapping at both ends) and Enter picks the highlighted command rather than sending
+  the half-typed name as a message.
+- **US-19.4** — The open menu introduces no horizontal page scroll at mobile width.

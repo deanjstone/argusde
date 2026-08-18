@@ -29,3 +29,4 @@ Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjst
 - [Phase 17: Workspace search](phase-17-workspace-search.md) — spec #93 phase 5. `git grep` over the Thread's working tree, grouped results with every cap reported, and a result that opens the file at its matching line.
 - [Phase 18: Changed files and per-file diffs](phase-18-changed-files.md) — spec #93 phase 6. What is changed in the working tree right now, with per-file diffs against it, kept deliberately distinct from Checkpoint diffing.
 - [Phase 19: Image attachments](phase-19-image-attachments.md) — spec #93 phase 7. Attach, send, persist and replay images on a message, capability-gated against what the agent actually advertised.
+- [Phase 20: Slash-command menu](phase-20-slash-commands.md) — spec #93 phase 8. Discover and insert the agent's own advertised commands from a `/` menu in the composer, filtered and replayed the same way the mode catalog is.

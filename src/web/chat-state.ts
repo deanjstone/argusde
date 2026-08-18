@@ -1,4 +1,11 @@
-import type { AcpSessionEvent, AgentPromptCapabilities, ChatContentBlock, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
+import type {
+  AcpSessionEvent,
+  AgentCommand,
+  AgentPromptCapabilities,
+  ChatContentBlock,
+  ConnectionState,
+  SessionModeSummary,
+} from "../shared/acp-events.js";
 import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import type { ActivityRecord, ThreadHistoryMessage } from "../shared/ws-protocol.js";
 import {
@@ -42,6 +49,12 @@ export interface ChatState {
    * otherwise — the composer must not offer an attachment on faith.
    */
   promptCapabilities: AgentPromptCapabilities;
+  /**
+   * The agent's own slash commands (spec #93 phase 8). Empty until the agent
+   * pushes them, which is also the honest state for an agent that advertises
+   * none — story 45 wants no menu at all in that case, not an empty one.
+   */
+  availableCommands: AgentCommand[];
 }
 
 export const initialChatState: ChatState = {
@@ -55,6 +68,7 @@ export const initialChatState: ChatState = {
   availableModes: [],
   recordsActivity: true,
   promptCapabilities: NO_PROMPT_CAPABILITIES,
+  availableCommands: [],
 };
 
 /**
@@ -97,6 +111,7 @@ export type ChatEvent =
       connectionState: ConnectionState;
       connectionError: string | undefined;
       promptCapabilities: AgentPromptCapabilities;
+      availableCommands: AgentCommand[];
     };
 
 const generateMessageId = createMessageIdGenerator();
@@ -116,7 +131,12 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
         // that takes no images must not inherit an attach control from the
         // one before it.
         ...(event.state === "connecting"
-          ? { currentModeId: undefined, availableModes: [], promptCapabilities: NO_PROMPT_CAPABILITIES }
+          ? {
+              currentModeId: undefined,
+              availableModes: [],
+              promptCapabilities: NO_PROMPT_CAPABILITIES,
+              availableCommands: [],
+            }
           : {}),
       };
     case "message-chunk":
@@ -152,6 +172,10 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
       };
     case "agent-capabilities":
       return { ...state, promptCapabilities: event.capabilities };
+    case "available-commands":
+      // Replaced, never merged — ACP resends the whole list on every change,
+      // so a command the agent dropped has to stop being offered.
+      return { ...state, availableCommands: event.commands };
     case "plan":
       return state;
   }
@@ -210,6 +234,7 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
         connectionState: event.connectionState,
         connectionError: event.connectionError,
         promptCapabilities: event.promptCapabilities,
+        availableCommands: event.availableCommands,
         pendingPermissionRequest: undefined,
         agentStatus: "idle",
       };

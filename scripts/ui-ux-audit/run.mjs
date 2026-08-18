@@ -1408,6 +1408,148 @@ async function main() {
       }
     }
 
+    // ---- US-19: composer slash-command menu (spec #93 phase 8) ----
+    // Needs an agent that actually advertises commands — the live agent's real
+    // list is whatever claude-agent-acp reports today (122 commands last
+    // verified), which this audit has no business depending on for a filter
+    // check. Uses the same ARGUSDE_FAKE_AGENT_COMMANDS mechanism
+    // ws-server.test.ts and test/web-smoke.test.ts already exercise:
+    // startIsolatedServer's spawned agent forwards `...process.env` into the
+    // fixture, so setting the var here before calling in is enough — nothing
+    // in helpers.mjs needs to change (same pattern as the US-18 block above).
+    // This is also the first scenario in this file to open a Radix *Popover*
+    // rather than an alert-dialog — a different component from the one
+    // argusde#113's CSP nonce was proven against — so it's worth flagging: a
+    // console error here (caught by the run's global zero-console-errors
+    // gate) would mean the nonce doesn't cover this surface too.
+    {
+      const previousCommands = process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
+      process.env.ARGUSDE_FAKE_AGENT_COMMANDS = JSON.stringify([
+        { name: "review", description: "Review the current diff", input: { hint: "What to focus on" } },
+        { name: "plan", description: "Draft a plan before changing anything" },
+      ]);
+      let commandServer;
+      const commandRepo = makeGitRepo("argusde-audit-commands-");
+      const commandPage = await context.newPage();
+      try {
+        commandServer = await startIsolatedServer({ steps: [{ type: "message", text: "got it" }] });
+        await commandPage.goto(commandServer.url);
+        await commandPage.getByRole("button", { name: /type a path manually/i }).click();
+        await commandPage.getByLabel(/workspace path/i).fill(commandRepo);
+        await commandPage.getByRole("button", { name: /^start$/i }).click();
+        await commandPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        const composer = commandPage.getByPlaceholder(/message/i);
+
+        // ---- US-19.1: "/" opens a menu with each command's name, description,
+        // and (when present) its input hint ----
+        await composer.fill("/");
+        const descriptionShown = await commandPage
+          .getByText("Review the current diff")
+          .waitFor({ timeout: 10000 })
+          .then(() => true)
+          .catch(() => false);
+        const nameShown = (await commandPage.getByText("review", { exact: true }).count()) > 0;
+        const hintShown = (await commandPage.getByText("What to focus on").count()) > 0;
+        record(
+          "US-19.1",
+          descriptionShown && nameShown && hintShown ? "pass" : "fail",
+          descriptionShown
+            ? `menu opened on "/" — name shown: ${nameShown}, description shown: ${descriptionShown}, input hint shown: ${hintShown}`
+            : "menu did not open after typing \"/\"",
+        );
+        if (descriptionShown) {
+          await scanA11y(commandPage, "US-19.1");
+          await shot(commandPage, "US-19.1-command-menu");
+        }
+
+        // ---- US-19.2: typing more narrows the menu to matching commands ----
+        await composer.fill("/pl");
+        const filteredIn = await commandPage
+          .getByText("Draft a plan before changing anything")
+          .waitFor({ timeout: 5000 })
+          .then(() => true)
+          .catch(() => false);
+        const filteredOut = (await commandPage.getByText("Review the current diff").count()) === 0;
+        record(
+          "US-19.2",
+          filteredIn && filteredOut ? "pass" : "fail",
+          `typing "/pl" left the matching "plan" row visible (${filteredIn}) and filtered "review" out (${filteredOut})`,
+        );
+        if (filteredIn) await shot(commandPage, "US-19.2-command-menu-filtered");
+
+        // ---- US-19.3: picking a row puts "/name " in the composer and closes the menu ----
+        await commandPage.getByText("Draft a plan before changing anything").click();
+        const pickedIntoComposer = await commandPage
+          .waitForFunction(
+            () => document.querySelector('input[placeholder*="Message" i]')?.value === "/plan ",
+            undefined,
+            { timeout: 5000 },
+          )
+          .then(() => true)
+          .catch(() => false);
+        // Waited for rather than sampled: Radix keeps the content mounted
+        // through its exit animation, so an immediate count reads "still
+        // there" for a menu that is on its way out.
+        const menuClosed = await commandPage
+          .locator('[data-slot="popover-content"]')
+          .waitFor({ state: "detached", timeout: 5000 })
+          .then(() => true)
+          .catch(() => false);
+        record(
+          "US-19.3",
+          pickedIntoComposer && menuClosed ? "pass" : "fail",
+          `picking "plan" put "/plan " in the composer (${pickedIntoComposer}) and closed the menu (${menuClosed})`,
+        );
+
+        // The menu was open moments ago for this same check, so re-open it to
+        // measure the state US-19.4 is actually about rather than an empty
+        // composer.
+        await composer.fill("/");
+        await commandPage.getByText("Review the current diff").waitFor({ timeout: 5000 }).catch(() => undefined);
+        await checkNoHorizontalScroll(commandPage, "US-19.4");
+      } catch (error) {
+        record("US-19.throw", "fail", `command-menu checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await commandPage.close();
+        await commandServer?.close();
+        fs.rmSync(commandRepo, { recursive: true, force: true });
+        if (previousCommands === undefined) delete process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
+        else process.env.ARGUSDE_FAKE_AGENT_COMMANDS = previousCommands;
+      }
+
+      // ---- Story 45 / US-19.1b: an agent that advertises no commands gets
+      // no menu at all, not an empty one. A fresh server with the env var
+      // unset entirely — command-menu.tsx's own hasCommands gate means the
+      // Popover never mounts its content, so its absence (not just hidden
+      // CSS) is what's checked here.
+      delete process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
+      let noCommandServer;
+      const noCommandRepo = makeGitRepo("argusde-audit-nocommands-");
+      const noCommandPage = await context.newPage();
+      try {
+        noCommandServer = await startIsolatedServer({ steps: [{ type: "message", text: "got it" }] });
+        await noCommandPage.goto(noCommandServer.url);
+        await noCommandPage.getByRole("button", { name: /type a path manually/i }).click();
+        await noCommandPage.getByLabel(/workspace path/i).fill(noCommandRepo);
+        await noCommandPage.getByRole("button", { name: /^start$/i }).click();
+        await noCommandPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        await noCommandPage.getByPlaceholder(/message/i).fill("/");
+        await noCommandPage.waitForTimeout(500);
+        const noMenuRendered = (await noCommandPage.locator('[data-slot="popover-content"]').count()) === 0;
+        record("US-19.1b", noMenuRendered ? "pass" : "fail", noMenuRendered ? "an agent advertising no commands opens no menu on \"/\"" : "a menu rendered despite the agent advertising no commands");
+      } catch (error) {
+        record("US-19.1b", "fail", `no-commands check could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await noCommandPage.close();
+        await noCommandServer?.close();
+        fs.rmSync(noCommandRepo, { recursive: true, force: true });
+        if (previousCommands === undefined) delete process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
+        else process.env.ARGUSDE_FAKE_AGENT_COMMANDS = previousCommands;
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.

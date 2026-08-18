@@ -279,7 +279,12 @@ export function ChatView({
       </MessageScrollerProvider>
 
       {threadClosed && <p className="border-t border-border px-4 pt-2 text-xs text-muted-foreground">This thread is closed.</p>}
-      <Composer onSend={onSend} acceptsImages={state.promptCapabilities.image} disabled={threadClosed} />
+      <Composer
+        onSend={onSend}
+        acceptsImages={state.promptCapabilities.image}
+        availableCommands={state.availableCommands}
+        disabled={threadClosed}
+      />
     </div>
   );
 }
