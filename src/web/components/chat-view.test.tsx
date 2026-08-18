@@ -381,4 +381,72 @@ describe("ChatView", () => {
       expect(screen.queryByText(/predates activity recording/i)).not.toBeInTheDocument();
     });
   });
+  describe("controls that a turn in flight would reject (argusde#110)", () => {
+    const working = { ...initialChatState, agentStatus: "working" as const };
+
+    it("disables Close thread while a turn is still settling, rather than offering it and failing", () => {
+      // The server refuses to capture a final checkpoint mid-turn, and the
+      // window is between the agent's reply appearing and its checkpoint
+      // landing — so the reply is on screen while a close is still rejected.
+      const onCloseThread = vi.fn();
+      render(<ChatView state={working} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} />);
+
+      const close = screen.getByRole("button", { name: /close thread/i });
+      expect(close).toBeDisabled();
+      fireEvent.click(close);
+      expect(onCloseThread).not.toHaveBeenCalled();
+    });
+
+    it("says why, rather than leaving a dead control to be puzzled over", () => {
+      render(<ChatView state={working} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={() => {}} />);
+      expect(screen.getByText(/while the agent is working/i)).toBeInTheDocument();
+    });
+
+    it("offers Close thread normally once the turn has settled", () => {
+      const onCloseThread = vi.fn();
+      render(
+        <ChatView state={initialChatState} onSend={() => {}} onRespondPermission={() => {}} onCloseThread={onCloseThread} />,
+      );
+
+      const close = screen.getByRole("button", { name: /close thread/i });
+      expect(close).toBeEnabled();
+      fireEvent.click(close);
+      expect(onCloseThread).toHaveBeenCalled();
+      expect(screen.queryByText(/while the agent is working/i)).not.toBeInTheDocument();
+    });
+
+    it("disables Revert while a turn is in flight — the same server condition rejects it", () => {
+      const onRevert = vi.fn();
+      render(
+        <ChatView
+          state={working}
+          onSend={() => {}}
+          onRespondPermission={() => {}}
+          diff={{ text: "+added", loading: false, error: undefined }}
+          onRevert={onRevert}
+        />,
+      );
+
+      const revert = screen.getByRole("button", { name: /revert to this checkpoint/i });
+      expect(revert).toBeDisabled();
+      fireEvent.click(revert);
+      expect(onRevert).not.toHaveBeenCalled();
+    });
+
+    it("offers Revert normally once the turn has settled", () => {
+      const onRevert = vi.fn();
+      render(
+        <ChatView
+          state={initialChatState}
+          onSend={() => {}}
+          onRespondPermission={() => {}}
+          diff={{ text: "+added", loading: false, error: undefined }}
+          onRevert={onRevert}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /revert to this checkpoint/i }));
+      expect(onRevert).toHaveBeenCalled();
+    });
+  });
 });
