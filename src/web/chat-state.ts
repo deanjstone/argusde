@@ -5,6 +5,7 @@ import type {
   ChatContentBlock,
   ConnectionState,
   SessionModeSummary,
+  SessionUsage,
 } from "../shared/acp-events.js";
 import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import type { ActivityRecord, ThreadHistoryMessage } from "../shared/ws-protocol.js";
@@ -55,6 +56,13 @@ export interface ChatState {
    * none — story 45 wants no menu at all in that case, not an empty one.
    */
   availableCommands: AgentCommand[];
+  /**
+   * How full the live session's context window is (spec #93 phase 9). Null
+   * until the agent reports — story 50 wants an absent meter, not a zeroed
+   * one — and null again on reconnect, since the number describes a context
+   * that no longer exists once the session restarts.
+   */
+  usage: SessionUsage | null;
 }
 
 export const initialChatState: ChatState = {
@@ -69,6 +77,7 @@ export const initialChatState: ChatState = {
   recordsActivity: true,
   promptCapabilities: NO_PROMPT_CAPABILITIES,
   availableCommands: [],
+  usage: null,
 };
 
 /**
@@ -112,6 +121,7 @@ export type ChatEvent =
       connectionError: string | undefined;
       promptCapabilities: AgentPromptCapabilities;
       availableCommands: AgentCommand[];
+      usage: SessionUsage | null;
     };
 
 const generateMessageId = createMessageIdGenerator();
@@ -136,6 +146,7 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
               availableModes: [],
               promptCapabilities: NO_PROMPT_CAPABILITIES,
               availableCommands: [],
+              usage: null,
             }
           : {}),
       };
@@ -172,6 +183,8 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
       };
     case "agent-capabilities":
       return { ...state, promptCapabilities: event.capabilities };
+    case "usage":
+      return { ...state, usage: event.usage };
     case "available-commands":
       // Replaced, never merged — ACP resends the whole list on every change,
       // so a command the agent dropped has to stop being offered.
@@ -235,6 +248,7 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
         connectionError: event.connectionError,
         promptCapabilities: event.promptCapabilities,
         availableCommands: event.availableCommands,
+        usage: event.usage,
         pendingPermissionRequest: undefined,
         agentStatus: "idle",
       };

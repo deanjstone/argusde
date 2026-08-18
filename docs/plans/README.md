@@ -30,3 +30,4 @@ Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjst
 - [Phase 18: Changed files and per-file diffs](phase-18-changed-files.md) — spec #93 phase 6. What is changed in the working tree right now, with per-file diffs against it, kept deliberately distinct from Checkpoint diffing.
 - [Phase 19: Image attachments](phase-19-image-attachments.md) — spec #93 phase 7. Attach, send, persist and replay images on a message, capability-gated against what the agent actually advertised.
 - [Phase 20: Slash-command menu](phase-20-slash-commands.md) — spec #93 phase 8. Discover and insert the agent's own advertised commands from a `/` menu in the composer, filtered and replayed the same way the mode catalog is.
+- [Phase 21: Context meter](phase-21-context-meter.md) — spec #93 phase 9. A compact, live-updating meter of the agent session's context usage in the composer, never persisted across a reconnect.

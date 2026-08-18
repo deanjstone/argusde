@@ -417,6 +417,11 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // here. No live runtime means no agent to run a command, so an empty
         // list is the honest answer rather than an error.
         const availableCommands = runtimes.get(command.threadId)?.getAvailableCommands() ?? [];
+        // Null, never zeroes: a Thread with no live runtime — or a live one
+        // whose session hasn't reported yet — genuinely has no occupancy to
+        // report, and story 50 wants that shown as an absent meter rather
+        // than an empty one.
+        const usage = runtimes.get(command.threadId)?.getUsage() ?? null;
         return {
           threadId: thread.id,
           projectId: thread.projectId,
@@ -429,6 +434,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           connectionError: connectionState.error,
           promptCapabilities,
           availableCommands,
+          usage,
           messages,
           activities,
           // False for Threads that predate durable activity, so the client

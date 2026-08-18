@@ -19,6 +19,7 @@ describe("chatStateReducer", () => {
       recordsActivity: true,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
       availableCommands: [],
+      usage: null,
     });
   });
 
@@ -187,6 +188,36 @@ describe("chatStateReducer", () => {
     ]);
   });
 
+  it("takes context usage from the agent's live update", () => {
+    const state = reduceAll([
+      { kind: "session-event", threadId: "t1", event: { kind: "usage", usage: { used: 4200, size: 200_000 } } },
+    ]);
+
+    expect(state.usage).toEqual({ used: 4200, size: 200_000 });
+  });
+
+  it("replaces usage on a later update — it is a level, not a running total", () => {
+    const state = reduceAll([
+      { kind: "session-event", threadId: "t1", event: { kind: "usage", usage: { used: 1000, size: 200_000 } } },
+      { kind: "session-event", threadId: "t1", event: { kind: "usage", usage: { used: 4200, size: 200_000 } } },
+    ]);
+
+    expect(state.usage).toEqual({ used: 4200, size: 200_000 });
+  });
+
+  it("reports no usage before the agent says anything, rather than zeroes", () => {
+    expect(initialChatState.usage).toBeNull();
+  });
+
+  it("forgets usage when the session starts over — the context it described is gone", () => {
+    const state = reduceAll([
+      { kind: "session-event", threadId: "t1", event: { kind: "usage", usage: { used: 4200, size: 200_000 } } },
+      { kind: "session-event", threadId: "t1", event: { kind: "connection-state", state: "connecting" } },
+    ]);
+
+    expect(state.usage).toBeNull();
+  });
+
   it("learns the agent's slash commands from its session event", () => {
     const state = reduceAll([
       {
@@ -348,6 +379,7 @@ describe("chatStateReducer", () => {
         connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
     ]);
 
@@ -374,6 +406,7 @@ describe("chatStateReducer", () => {
         connectionError: undefined,
         promptCapabilities: { image: true, audio: false, embeddedContext: true },
         availableCommands: [],
+        usage: null,
       },
     ]);
 
@@ -382,7 +415,7 @@ describe("chatStateReducer", () => {
 
   it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
     const state = reduceAll([
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [] },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null },
     ]);
 
     expect(state.connectionState).toBe("connected");
@@ -396,7 +429,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [] },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null },
     ]);
 
     expect(state.currentModeId).toBeUndefined();
@@ -465,6 +498,7 @@ describe("chatStateReducer", () => {
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
       ]);
 
@@ -486,6 +520,7 @@ describe("chatStateReducer", () => {
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
       ]);
 
@@ -518,6 +553,7 @@ describe("chatStateReducer", () => {
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
       ]);
 
@@ -541,6 +577,7 @@ describe("chatStateReducer", () => {
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
       ]);
 
@@ -563,6 +600,7 @@ describe("chatStateReducer", () => {
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
+        usage: null,
       },
       ]);
 

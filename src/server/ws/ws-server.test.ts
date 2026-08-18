@@ -1821,4 +1821,70 @@ describe("ws-server", () => {
       expect(pushed && pushed.type === "session.event" && pushed.event.kind === "available-commands" ? pushed.event.commands : []).toHaveLength(2);
     }, 20_000);
   });
+
+  /**
+   * Context-window occupancy (spec #93 phase 9, argusde#124). Pushed several
+   * times per turn by the real claude-agent-acp — verified — so it is a level
+   * that gets replaced, not a delta that accumulates. Deliberately never
+   * persisted: it describes one live session's context.
+   */
+  describe("context usage", () => {
+    async function createThread(prefix: string): Promise<string> {
+      const projectResult = await send({
+        type: "project.create",
+        commandId: `${prefix}-p`,
+        workspaceRoot: repoDir,
+        title: "Usage",
+      });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: `${prefix}-t`, projectId, title: "T" });
+      return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    }
+
+    function historyUsage(result: Extract<ServerPush, { type: "command.result" }>): unknown {
+      return result.ok ? (result.result as { usage: unknown }).usage : undefined;
+    }
+
+    it("reports no usage at all before the agent has said anything — not zeroes", async () => {
+      const threadId = await createThread("us1");
+
+      const history = await send({ type: "thread.get-history", commandId: "us1-h", threadId });
+      expect(historyUsage(history)).toBeNull();
+    }, 20_000);
+
+    it("carries the latest usage in history, so a client reconnecting mid-session doesn't wait a turn", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "usage", used: 1000, size: 200_000 },
+        { type: "usage", used: 4200, size: 200_000 },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("us2");
+      await send({ type: "thread.send-message", commandId: "us2-m", threadId, text: "go" });
+
+      const history = await send({ type: "thread.get-history", commandId: "us2-h", threadId });
+      // The *second* update, not the first — this is a level, and a stale one
+      // would understate how full the window is.
+      expect(historyUsage(history)).toEqual({ used: 4200, size: 200_000 });
+    }, 20_000);
+
+    it("pushes usage live, mid-turn, so the meter moves while the agent is still working", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "usage", used: 1000, size: 200_000 },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("us3");
+      await send({ type: "thread.send-message", commandId: "us3-m", threadId, text: "go" });
+
+      await waitFor(() =>
+        received.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "usage"),
+      );
+      const pushed = received.find(
+        (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "usage",
+      );
+      expect(pushed && pushed.type === "session.event" && pushed.event.kind === "usage" ? pushed.event.usage : null).toEqual({
+        used: 1000,
+        size: 200_000,
+      });
+    }, 20_000);
+  });
 });

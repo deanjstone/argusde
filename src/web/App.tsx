@@ -6,6 +6,7 @@ import type {
   ConnectionState,
   PermissionOutcome,
   SessionModeSummary,
+  SessionUsage,
 } from "../shared/acp-events.js";
 import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import {
@@ -219,6 +220,7 @@ export function App() {
     connectionError: string | undefined,
     promptCapabilities: AgentPromptCapabilities,
     availableCommands: AgentCommand[],
+    usage: SessionUsage | null,
   ) {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
@@ -236,6 +238,7 @@ export function App() {
         connectionError,
         promptCapabilities,
         availableCommands,
+        usage,
       }),
     );
     setDiff(EMPTY_DIFF);
@@ -387,6 +390,7 @@ export function App() {
       recordsActivity: boolean;
       promptCapabilities: AgentPromptCapabilities;
       availableCommands: AgentCommand[];
+      usage: SessionUsage | null;
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
@@ -406,6 +410,7 @@ export function App() {
       history.connectionError,
       history.promptCapabilities,
       history.availableCommands,
+      history.usage,
     );
   }
 
@@ -801,6 +806,7 @@ export function App() {
             <h2 className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Connection</h2>
             <p>Server API version: {chatState.apiVersion ?? "unknown"}</p>
             {thread && <p className="text-muted-foreground">Thread ID: {thread.threadId}</p>}
+            <div data-probe="jsstyle" className="h-1 w-48 bg-muted" />
           </div>
         )}
       </main>

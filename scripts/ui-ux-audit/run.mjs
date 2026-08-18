@@ -1550,6 +1550,141 @@ async function main() {
       }
     }
 
+    // ---- US-20: context meter (spec #93 phase 9) ----
+    // Needs a scripted usage_update mid-turn to be deterministic — the live
+    // agent's real token window is whatever claude-agent-acp reports today
+    // (context-meter.tsx's own comment records a 1,000,000-token window
+    // sitting at ~5% after two turns), which would never clear the
+    // warning/pressure bands this story needs to prove. Uses the fake
+    // agent's `{ type: "usage", used, size }` step (fake-agent-cli.mjs),
+    // driven through startIsolatedServer's `steps` option — the same
+    // mechanism the US-18/US-19 blocks above use for their own env-var-
+    // driven fixtures, except this one needs no env var at all: `steps` is
+    // a constructor option, not something threaded through process.env.
+    // Runs at every viewport, like US-18/US-19, so the mobile
+    // no-horizontal-scroll check has something to check.
+    //
+    // The meter's tooltip is a Radix Tooltip overlay — the same CSP-nonce
+    // surface argusde#113 fixed for the alert-dialog and the US-19 block
+    // above proved again for the Popover. This script never hovers/focuses
+    // the trigger, so the tooltip content itself never mounts here, but the
+    // meter's Progress root and its wrapping row are enough to prove the
+    // surface renders without a console error — and the run's global
+    // zero-console-errors gate would still catch a nonce regression on the
+    // Tooltip specifically once something in this flow does open it.
+    {
+      // ---- US-20.1 / US-20.2: absent before usage, present with a
+      // percentage after a turn reports it ----
+      let meterServer;
+      const meterRepo = makeGitRepo("argusde-audit-context-meter-");
+      const meterPage = await context.newPage();
+      try {
+        meterServer = await startIsolatedServer({
+          steps: [
+            { type: "usage", used: 50000, size: 200000 },
+            { type: "message", text: "done" },
+          ],
+        });
+        await meterPage.goto(meterServer.url);
+        await meterPage.getByRole("button", { name: /type a path manually/i }).click();
+        await meterPage.getByLabel(/workspace path/i).fill(meterRepo);
+        await meterPage.getByRole("button", { name: /^start$/i }).click();
+        await meterPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        // Absent, not zeroed: no row, no meter, before the agent has ever
+        // reported anything — a freshly created thread never sent a turn.
+        const meterAbsentBeforeTurn = (await meterPage.locator('[data-slot="context-meter"]').count()) === 0;
+        record(
+          "US-20.1",
+          meterAbsentBeforeTurn ? "pass" : "fail",
+          meterAbsentBeforeTurn ? "no context meter rendered before the agent has reported any usage" : "a context meter rendered before any usage was ever reported",
+        );
+        if (meterAbsentBeforeTurn) await shot(meterPage, "US-20.1-no-meter");
+
+        const meterComposer = meterPage.getByPlaceholder(/message/i);
+        await meterComposer.fill("trigger a turn");
+        await meterComposer.press("Enter");
+
+        const meter = meterPage.locator('[data-slot="context-meter"]');
+        const meterShown = await meter
+          .waitFor({ state: "visible", timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const percentText = meterShown ? (await meter.locator("span").first().textContent())?.trim() : undefined;
+        const progressBar = meter.locator('[data-slot="progress"]');
+        const band = meterShown ? await progressBar.getAttribute("data-band") : undefined;
+        const ariaLabel = meterShown ? await progressBar.getAttribute("aria-label") : undefined;
+        const fullFiguresInTooltipContent = ariaLabel === "Context: 50,000 of 200,000 tokens used";
+        record(
+          "US-20.2",
+          meterShown && percentText === "25%" && band === "comfortable" && fullFiguresInTooltipContent ? "pass" : "fail",
+          meterShown
+            ? `meter appeared after a turn: label "${percentText}" (expected 25%), band "${band}" (expected comfortable), full figures "${ariaLabel}"`
+            : "no context meter appeared after a turn reported usage",
+        );
+        if (meterShown) {
+          await scanA11y(meterPage, "US-20.2");
+          await shot(meterPage, "US-20.2-meter-shown");
+          await checkNoHorizontalScroll(meterPage, "US-20.4");
+        }
+      } catch (error) {
+        record("US-20.throw", "fail", `context-meter checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await meterPage.close();
+        await meterServer?.close();
+        fs.rmSync(meterRepo, { recursive: true, force: true });
+      }
+
+      // ---- US-20.3: the appearance changes in the higher-pressure bands ----
+      // A separate isolated server rather than trying to push a second
+      // usage_update at the live meter above — the fixture plays its steps
+      // once per prompt, not something this script can nudge mid-conversation,
+      // so a fresh server with a high used/size pair is the deterministic way
+      // to reach the pressure band (>= 90% of the window).
+      let pressureServer;
+      const pressureRepo = makeGitRepo("argusde-audit-context-meter-pressure-");
+      const pressurePage = await context.newPage();
+      try {
+        pressureServer = await startIsolatedServer({
+          steps: [
+            { type: "usage", used: 185000, size: 200000 },
+            { type: "message", text: "done" },
+          ],
+        });
+        await pressurePage.goto(pressureServer.url);
+        await pressurePage.getByRole("button", { name: /type a path manually/i }).click();
+        await pressurePage.getByLabel(/workspace path/i).fill(pressureRepo);
+        await pressurePage.getByRole("button", { name: /^start$/i }).click();
+        await pressurePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        const pressureComposer = pressurePage.getByPlaceholder(/message/i);
+        await pressureComposer.fill("trigger a turn");
+        await pressureComposer.press("Enter");
+
+        const pressureProgressBar = pressurePage.locator('[data-slot="context-meter"] [data-slot="progress"]');
+        const pressureShown = await pressureProgressBar
+          .waitFor({ state: "visible", timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        const pressureBand = pressureShown ? await pressureProgressBar.getAttribute("data-band") : undefined;
+        record(
+          "US-20.3",
+          pressureBand === "pressure" ? "pass" : "fail",
+          pressureShown ? `band at 92.5% usage: "${pressureBand}" (expected pressure)` : "no context meter appeared for a high-usage turn",
+        );
+        if (pressureBand === "pressure") {
+          await scanA11y(pressurePage, "US-20.3");
+          await shot(pressurePage, "US-20.3-pressure-band");
+        }
+      } catch (error) {
+        record("US-20.3", "fail", `pressure-band check could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await pressurePage.close();
+        await pressureServer?.close();
+        fs.rmSync(pressureRepo, { recursive: true, force: true });
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.

@@ -47,6 +47,23 @@ export interface AgentCommand {
   inputHint: string | null;
 }
 
+/**
+ * How full the live agent session's context window is (spec #93 phase 9).
+ *
+ * `used` is tokens *currently in context*, not a cumulative counter — verified
+ * against the real claude-agent-acp, where it moved 54,618 → 54,643 across two
+ * turns because cached reads dominate. `size` is the window: 1,000,000 on that
+ * agent, which is why the pressure bands are proportional rather than absolute.
+ *
+ * Deliberately never persisted. It describes one live session's context, so a
+ * value carried into a reopened Thread would describe something that no longer
+ * exists.
+ */
+export interface SessionUsage {
+  used: number;
+  size: number;
+}
+
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export interface ToolCallSummary {
@@ -128,4 +145,9 @@ export type AcpSessionEvent =
    * (spec #93 story 44) — so a later event *replaces* the previous list
    * rather than adding to it: a command the agent dropped has to disappear.
    */
-  | { kind: "available-commands"; commands: AgentCommand[] };
+  | { kind: "available-commands"; commands: AgentCommand[] }
+  /**
+   * Context-window occupancy, pushed several times per turn. A later event
+   * replaces an earlier one — this is a level, not a delta.
+   */
+  | { kind: "usage"; usage: SessionUsage };

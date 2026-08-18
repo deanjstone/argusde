@@ -308,3 +308,22 @@ composer surface the connected agent's own slash commands.
   highlight (wrapping at both ends) and Enter picks the highlighted command rather than sending
   the half-typed name as a message.
 - **US-19.4** — The open menu introduces no horizontal page scroll at mobile width.
+
+## US-20: Context meter
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 9, which surfaced
+the agent's own context-window occupancy directly above the composer.
+
+- **US-20.1** — Before the agent has reported any usage, no meter renders at all — no row, no
+  bar, nothing at zero. This is also the state of a freshly reopened Thread, whose new session
+  starts with an empty context and has not yet reported: absence is the honest statement that
+  nothing has been reported, where a 0% bar would be a claim about the context that isn't true.
+- **US-20.2** — Once the agent reports usage mid-turn, a compact meter appears in a right-aligned
+  row directly above the composer: a progress bar plus a percentage label, both reflecting the
+  reported figures. A tooltip on the meter repeats the full used/of/total figures, for the case a
+  percentage alone isn't precise enough.
+- **US-20.3** — The meter's appearance changes as usage climbs into the higher-pressure bands —
+  a distinct look once usage crosses into "warning" and again into "pressure" territory — so the
+  same 25%-full bar and a nearly-full one are never visually indistinguishable.
+- **US-20.4** — Neither an absent nor a shown meter introduces horizontal page scroll at mobile
+  width.

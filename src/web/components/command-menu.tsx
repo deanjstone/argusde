@@ -108,10 +108,10 @@ export function CommandMenu({ open, commands, query, onSelect, onOpenChange, chi
             if (index >= 0) setActiveIndex(index);
           }}
         >
-          {/* Plain overflow rather than `scroll-area` — see the style-src
-              commentary in server/http/static-server.ts: scroll-area styles
-              through an inline style attribute, which no nonce can cover. The
-              cap matters: the real agent advertised 122 commands. */}
+          {/* Plain overflow rather than `scroll-area`, whose injected `<style>`
+              is blocked unless Radix is handed the CSP nonce — see the
+              style-src commentary in server/http/static-server.ts. The cap
+              matters either way: the real agent advertised 122 commands. */}
           <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>No matching command.</CommandEmpty>
             <CommandGroup>
