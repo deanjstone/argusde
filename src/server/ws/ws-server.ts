@@ -422,6 +422,10 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // report, and story 50 wants that shown as an absent meter rather
         // than an empty one.
         const usage = runtimes.get(command.threadId)?.getUsage() ?? null;
+        // Same treatment as usage, and for the same reason: a plan belongs to
+        // a live session's current work, so a client reconnecting mid-turn
+        // needs it from here rather than waiting for the next notification.
+        const plan = runtimes.get(command.threadId)?.getPlan() ?? null;
         return {
           threadId: thread.id,
           projectId: thread.projectId,
@@ -435,6 +439,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           promptCapabilities,
           availableCommands,
           usage,
+          plan,
           messages,
           activities,
           // False for Threads that predate durable activity, so the client

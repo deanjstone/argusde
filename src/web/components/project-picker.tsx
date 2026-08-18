@@ -61,19 +61,19 @@ export function ProjectPicker({
   }
 
   return (
-    <div className="flex h-full flex-col bg-neutral-950 p-4 text-neutral-100">
-      <h2 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Projects</h2>
+    <div className="flex h-full flex-col bg-background p-4 text-foreground">
+      <h2 className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Projects</h2>
 
-      {projects.length === 0 && !showForm && <p className="text-sm text-neutral-500">No projects yet.</p>}
+      {projects.length === 0 && !showForm && <p className="text-sm text-muted-foreground">No projects yet.</p>}
 
       <div className="flex-1 space-y-1.5 overflow-y-auto">
         {projects.map((project) => (
-          <div key={project.id} className="rounded-lg bg-neutral-900">
+          <div key={project.id} className="rounded-lg bg-card">
             <div className="flex items-center">
               <button
                 type="button"
                 onClick={() => onSelectProject(project.id)}
-                className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-800"
+                className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-muted"
               >
                 <span className="block truncate">{project.title}</span>
               </button>
@@ -86,7 +86,7 @@ export function ProjectPicker({
                   aria-label={`Remove ${project.title}`}
                   onClick={() => setPendingDeleteId(project.id)}
                   disabled={deletingProjectId === project.id}
-                  className="mr-1 shrink-0 rounded-lg px-2.5 py-2 text-sm text-neutral-500 hover:bg-neutral-800 hover:text-red-400 disabled:opacity-50"
+                  className="mr-1 shrink-0 rounded-lg px-2.5 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-50"
                 >
                   {deletingProjectId === project.id ? "…" : "✕"}
                 </button>
@@ -94,16 +94,16 @@ export function ProjectPicker({
             </div>
 
             {pendingDeleteId === project.id && (
-              <div className="border-t border-neutral-800 px-3 py-2.5">
-                <p className="text-sm text-neutral-300">Remove this project from ArgusDE?</p>
-                <p className="mt-1 text-xs text-neutral-500">
+              <div className="border-t border-border px-3 py-2.5">
+                <p className="text-sm text-foreground">Remove this project from ArgusDE?</p>
+                <p className="mt-1 text-xs text-muted-foreground">
                   Its threads and their history go too. The folder on disk is not deleted.
                 </p>
                 <div className="mt-2 flex gap-2">
                   <Button
                     size="sm"
                     onClick={() => handleConfirmDelete(project.id)}
-                    className="bg-red-600 hover:bg-red-700"
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
                     Remove
                   </Button>
@@ -118,11 +118,11 @@ export function ProjectPicker({
       </div>
 
       {showForm ? (
-        <div className="mt-3 space-y-2 border-t border-neutral-800 pt-3">
-          {error && <p className="text-sm text-red-400">{error}</p>}
+        <div className="mt-3 space-y-2 border-t border-border pt-3">
+          {error && <p className="text-sm text-destructive">{error}</p>}
           {manualMode ? (
             <>
-              <label htmlFor="new-project-path" className="block text-xs text-neutral-500">
+              <label htmlFor="new-project-path" className="block text-xs text-muted-foreground">
                 Workspace path
               </label>
               <Input
@@ -138,7 +138,7 @@ export function ProjectPicker({
               <button
                 type="button"
                 onClick={() => setManualMode(false)}
-                className="text-xs text-neutral-500 underline hover:text-neutral-300"
+                className="text-xs text-muted-foreground underline hover:text-foreground"
               >
                 or browse folders
               </button>
@@ -149,7 +149,7 @@ export function ProjectPicker({
               <button
                 type="button"
                 onClick={() => setManualMode(true)}
-                className="text-xs text-neutral-500 underline hover:text-neutral-300"
+                className="text-xs text-muted-foreground underline hover:text-foreground"
               >
                 or type a path manually
               </button>

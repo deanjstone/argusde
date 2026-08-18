@@ -1887,4 +1887,92 @@ describe("ws-server", () => {
       });
     }, 20_000);
   });
+
+  /**
+   * The agent's plan (spec #93 phase 10, argusde#126). Verified against the
+   * real claude-agent-acp: seven notifications in one turn, each carrying the
+   * complete plan rather than a delta. Session-scoped like usage — never
+   * persisted, because a plan describes what a live session is doing now.
+   */
+  describe("plan", () => {
+    const FIRST = [
+      { content: "Read the router", priority: "medium", status: "in_progress" },
+      { content: "Add the route", priority: "medium", status: "pending" },
+    ];
+    const REVISED = [
+      { content: "Read the router", priority: "medium", status: "completed" },
+      { content: "Add the route", priority: "medium", status: "in_progress" },
+      { content: "Add a test", priority: "medium", status: "pending" },
+    ];
+
+    async function createThread(prefix: string): Promise<string> {
+      const projectResult = await send({
+        type: "project.create",
+        commandId: `${prefix}-p`,
+        workspaceRoot: repoDir,
+        title: "Plan",
+      });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: `${prefix}-t`, projectId, title: "T" });
+      return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    }
+
+    function historyPlan(result: Extract<ServerPush, { type: "command.result" }>): unknown {
+      return result.ok ? (result.result as { plan: unknown }).plan : undefined;
+    }
+
+    it("reports no plan for a Thread whose agent has produced none", async () => {
+      const threadId = await createThread("pl1");
+
+      const history = await send({ type: "thread.get-history", commandId: "pl1-h", threadId });
+      expect(historyPlan(history)).toBeNull();
+    }, 20_000);
+
+    it("carries the latest plan in history, for a client reconnecting mid-turn", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "plan", entries: FIRST },
+        { type: "plan", entries: REVISED },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("pl2");
+      await send({ type: "thread.send-message", commandId: "pl2-m", threadId, text: "go" });
+
+      // The revision, and only the revision — a plan that appended would leave
+      // five entries and two answers to "what is the plan".
+      expect(historyPlan(await send({ type: "thread.get-history", commandId: "pl2-h", threadId }))).toEqual(REVISED);
+    }, 20_000);
+
+    it("pushes the plan live, mid-turn, so the panel is a live surface rather than a snapshot", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "plan", entries: FIRST },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("pl3");
+      await send({ type: "thread.send-message", commandId: "pl3-m", threadId, text: "go" });
+
+      await waitFor(() =>
+        received.some((m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "plan"),
+      );
+      const pushed = received.find(
+        (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "plan",
+      );
+      expect(pushed && pushed.type === "session.event" && pushed.event.kind === "plan" ? pushed.event.entries : null).toEqual(
+        FIRST,
+      );
+    }, 20_000);
+
+    it("never persists the plan — it describes a live session, not the Thread", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "plan", entries: FIRST },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("pl4");
+      await send({ type: "thread.send-message", commandId: "pl4-m", threadId, text: "go" });
+
+      // Nothing in the event store should mention it: a plan replayed into a
+      // reopened Thread would describe work a dead session was doing.
+      const persisted = JSON.stringify(eventStore.listEventsForThread(threadId));
+      expect(persisted).not.toContain("Read the router");
+    }, 20_000);
+  });
 });

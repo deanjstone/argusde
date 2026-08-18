@@ -56,6 +56,14 @@ describe("web smoke: server + browser round trip", () => {
       // The real bridge pushes usage several times per turn, mid-turn; one is
       // enough to prove the meter is fed by a real notification.
       { type: "usage", used: 50_000, size: 200_000 },
+      {
+        type: "plan",
+        entries: [
+          { content: "Read the router", priority: "medium", status: "completed" },
+          { content: "Add the route handler", priority: "medium", status: "in_progress" },
+          { content: "Add a test", priority: "medium", status: "pending" },
+        ],
+      },
       { type: "message", text: "Hello from the web smoke test agent" },
     ]);
     // The real claude-agent-acp advertises `{ image: true, embeddedContext:
@@ -327,6 +335,75 @@ describe("web smoke: server + browser round trip", () => {
         await cspPage.getByRole("button", { name: /cancel/i }).click();
       } finally {
         await cspPage.close();
+      }
+    },
+    45_000,
+  );
+
+  /**
+   * The plan panel in a real browser (spec #93 phase 10). The geometry is the
+   * point: story 54 says the expanded panel must never cover the composer or
+   * the tab bar, and that is the whole reason this is a collapsible rather
+   * than the drawer #93's component table also offered. A screenshot cannot
+   * assert it; overlapping rectangles can.
+   */
+  it(
+    "expands the plan without covering the composer or the tab bar",
+    async () => {
+      const planPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const consoleMessages: string[] = [];
+      planPage.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
+
+      try {
+        await planPage.goto(`http://127.0.0.1:${server.port}/`);
+        await planPage.getByRole("button", { name: /type a path manually/i }).click();
+        await planPage.getByLabel(/workspace path/i).fill(repoDir);
+        await planPage.getByRole("button", { name: /^start$/i }).click();
+        await planPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        // Nothing produced a plan yet — story 58 wants no pill at all.
+        expect(await planPage.getByRole("button", { name: /add the route handler/i }).count()).toBe(0);
+
+        await planPage.getByPlaceholder(/message/i).fill("go");
+        await planPage.getByPlaceholder(/message/i).press("Enter");
+
+        const pill = planPage.getByRole("button", { name: /add the route handler/i });
+        await pill.waitFor({ timeout: 15_000 });
+        await planPage.getByText("1/3").waitFor({ timeout: 5_000 });
+
+        await pill.click();
+        await planPage.getByText("Add a test").waitFor({ timeout: 5_000 });
+
+        const overlaps = await planPage.evaluate(() => {
+          const panel = document.querySelector('[data-slot="collapsible-content"]');
+          const composer = document.querySelector('input[placeholder*="Message" i]');
+          const tabBar = document.querySelector("nav") ?? document.querySelector('[data-slot="tab-bar"]');
+          if (!panel || !composer) return { measured: false };
+          const p = panel.getBoundingClientRect();
+          const c = composer.getBoundingClientRect();
+          const t = tabBar?.getBoundingClientRect();
+          const overlapsVertically = (a: DOMRect, b: DOMRect) => a.bottom > b.top && a.top < b.bottom;
+          return {
+            measured: true,
+            panelHeight: p.height,
+            coversComposer: overlapsVertically(p, c),
+            coversTabBar: t ? overlapsVertically(p, t) : false,
+          };
+        });
+
+        expect(overlaps.measured).toBe(true);
+        // A zero-height panel would trivially overlap nothing.
+        expect(overlaps.panelHeight).toBeGreaterThan(0);
+        expect(overlaps.coversComposer).toBe(false);
+        expect(overlaps.coversTabBar).toBe(false);
+
+        // Story 59: the same control closes it.
+        await pill.click();
+        await planPage.getByText("Add a test").waitFor({ state: "hidden", timeout: 5_000 });
+
+        expect(consoleMessages.filter((message) => /content security policy/i.test(message))).toEqual([]);
+      } finally {
+        await planPage.close();
       }
     },
     45_000,

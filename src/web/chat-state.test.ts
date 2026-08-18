@@ -20,6 +20,7 @@ describe("chatStateReducer", () => {
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
       availableCommands: [],
       usage: null,
+      plan: null,
     });
   });
 
@@ -186,6 +187,47 @@ describe("chatStateReducer", () => {
         ],
       },
     ]);
+  });
+
+  it("takes the agent's plan from its live update — the case that returned state unchanged until phase 10", () => {
+    const entries = [
+      { content: "Read the router", priority: "medium", status: "in_progress" },
+      { content: "Add the route", priority: "medium", status: "pending" },
+    ];
+    const state = reduceAll([{ kind: "session-event", threadId: "t1", event: { kind: "plan", entries } }]);
+
+    expect(state.plan).toEqual(entries);
+  });
+
+  it("replaces the plan on a revision rather than appending — exactly one answer to \"what is the plan\"", () => {
+    const first = [{ content: "Read the router", priority: "medium", status: "in_progress" }];
+    const revised = [
+      { content: "Read the router", priority: "medium", status: "completed" },
+      { content: "Add the route", priority: "medium", status: "in_progress" },
+    ];
+    const state = reduceAll([
+      { kind: "session-event", threadId: "t1", event: { kind: "plan", entries: first } },
+      { kind: "session-event", threadId: "t1", event: { kind: "plan", entries: revised } },
+    ]);
+
+    expect(state.plan).toEqual(revised);
+  });
+
+  it("has no plan before the agent produces one", () => {
+    expect(initialChatState.plan).toBeNull();
+  });
+
+  it("forgets the plan when the session starts over — it described a live session's work", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "plan", entries: [{ content: "Read the router", priority: "medium", status: "in_progress" }] },
+      },
+      { kind: "session-event", threadId: "t1", event: { kind: "connection-state", state: "connecting" } },
+    ]);
+
+    expect(state.plan).toBeNull();
   });
 
   it("takes context usage from the agent's live update", () => {
@@ -380,6 +422,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
     ]);
 
@@ -407,6 +450,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: true, audio: false, embeddedContext: true },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
     ]);
 
@@ -415,7 +459,7 @@ describe("chatStateReducer", () => {
 
   it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
     const state = reduceAll([
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null, plan: null },
     ]);
 
     expect(state.connectionState).toBe("connected");
@@ -429,7 +473,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [], usage: null, plan: null },
     ]);
 
     expect(state.currentModeId).toBeUndefined();
@@ -499,6 +543,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
       ]);
 
@@ -521,6 +566,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
       ]);
 
@@ -554,6 +600,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
       ]);
 
@@ -578,6 +625,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
       ]);
 
@@ -601,6 +649,7 @@ describe("chatStateReducer", () => {
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         availableCommands: [],
         usage: null,
+        plan: null,
       },
       ]);
 

@@ -139,6 +139,16 @@ const app = agent({ name: "smoke-fake-agent" })
         });
       }
 
+      // The agent's plan. The real bridge sends the *whole* plan on every
+      // notification, not a delta — seven of them in one turn — which is why
+      // a step carries its own status here rather than a mutation.
+      if (step.type === "plan") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "plan", entries: step.entries },
+        });
+      }
+
       // Context-window occupancy, which the real bridge pushes several times
       // per turn rather than once at the end (spec #93 phase 9).
       if (step.type === "usage") {

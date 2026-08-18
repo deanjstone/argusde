@@ -19,6 +19,7 @@ import {
 import { ActivityCard } from "./activity-card.js";
 import { Composer, type MessageAttachment } from "./composer.js";
 import { ContextMeter } from "./context-meter.js";
+import { PlanPanel } from "./plan-panel.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView, type DiffRange } from "./diff-view.js";
 import { ModeSwitcher } from "./mode-switcher.js";
@@ -280,6 +281,11 @@ export function ChatView({
       </MessageScrollerProvider>
 
       {threadClosed && <p className="border-t border-border px-4 pt-2 text-xs text-muted-foreground">This thread is closed.</p>}
+
+      {/* Above the composer, below the transcript: the panel expands upward
+          into space the transcript gives up, so it can never cover the
+          composer or the tab bar (story 54). */}
+      <PlanPanel plan={state.plan} />
 
       {/* Directly above the composer: this is the number you act on when
           deciding whether to keep going in this Thread or start a fresh one,
