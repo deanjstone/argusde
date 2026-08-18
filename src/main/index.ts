@@ -113,6 +113,14 @@ function createWindow(): void {
   });
   const window = mainWindow;
 
+  // Set by did-fail-load, cleared when a fresh main-frame navigation starts.
+  // See did-finish-load below for why "a load finished" is not "a load worked".
+  let navigationFailed = false;
+
+  window.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
+    if (isMainFrame && !isSameDocument) navigationFailed = false;
+  });
+
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return; // a sub-resource failure, not the page itself
     if (errorCode === ERR_ABORTED) return; // a superseded/cancelled navigation, not a real connection failure
@@ -123,10 +131,27 @@ function createWindow(): void {
     // naming the address matters most, since a typo is the likely cause.
     // Fall back to what the user actually asked for.
     const failedUrl = validatedURL || currentServerUrl;
+    navigationFailed = true;
     void showConnectScreen(window, `Couldn't reach ${failedUrl}: ${errorDescription}`);
   });
 
   window.webContents.on("did-finish-load", () => {
+    // "Finished loading" is not "connected". Verified against real Electron:
+    // an unreachable URL fires did-start-navigation, then did-fail-load
+    // (ERR_CONNECTION_REFUSED), and then **did-finish-load anyway** — because
+    // the error page is itself a finished load — with getURL() still returning
+    // the URL that failed. did-navigate never fires at all.
+    //
+    // So this used to persist a server URL that had never worked, making it the
+    // default for the next launch. What hid it was a race: showConnectScreen is
+    // async, and when its navigation landed first the URL check below happened
+    // to fail. On a slower machine it does not, which is how CI caught this
+    // while every local run passed.
+    //
+    // did-fail-load always precedes did-finish-load (verified in that order),
+    // so the flag is a sound guard rather than a hopeful one.
+    if (navigationFailed) return;
+
     const loadedUrl = window.webContents.getURL();
     if (loadedUrl !== CONNECT_SCREEN_URL && loadedUrl === currentServerUrl) {
       setServerUrl(app.getPath("userData"), currentServerUrl);
