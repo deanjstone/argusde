@@ -17,6 +17,7 @@ describe("chatStateReducer", () => {
       currentModeId: undefined,
       availableModes: [],
       recordsActivity: true,
+      promptCapabilities: { image: false, audio: false, embeddedContext: false },
     });
   });
 
@@ -167,6 +168,53 @@ describe("chatStateReducer", () => {
     expect(afterResponse.pendingPermissionRequest).toBeUndefined();
   });
 
+  it("puts an attached image on the user's own timeline entry, beside the text (spec #93 phase 7, story 37)", () => {
+    const state = reduceAll([
+      { kind: "user-message-sent", text: "what is this?", attachments: [{ mimeType: "image/png", data: "AAAA" }] },
+    ]);
+
+    expect(state.timeline).toEqual([
+      {
+        type: "message",
+        id: expect.any(String),
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image", mimeType: "image/png", data: "AAAA" },
+        ],
+      },
+    ]);
+  });
+
+  it("learns the agent's prompt capabilities from its session-start event", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "agent-capabilities", capabilities: { image: true, audio: false, embeddedContext: true } },
+      },
+    ]);
+
+    expect(state.promptCapabilities).toEqual({ image: true, audio: false, embeddedContext: true });
+  });
+
+  it("advertises nothing before an agent has said anything — the composer must not offer an attachment on faith", () => {
+    expect(initialChatState.promptCapabilities).toEqual({ image: false, audio: false, embeddedContext: false });
+  });
+
+  it("forgets learned capabilities when a session starts over, so a restarted text-only agent doesn't inherit them", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "agent-capabilities", capabilities: { image: true, audio: false, embeddedContext: false } },
+      },
+      { kind: "session-event", threadId: "t1", event: { kind: "connection-state", state: "connecting" } },
+    ]);
+
+    expect(state.promptCapabilities.image).toBe(false);
+  });
+
   it("keeps two separately-sent user messages as two distinct timeline entries, not merged", () => {
     const state = reduceAll([
       { kind: "user-message-sent", text: "first question" },
@@ -244,6 +292,7 @@ describe("chatStateReducer", () => {
         availableModes: [{ id: "plan", name: "Plan" }],
         connectionState: "connected",
         connectionError: undefined,
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
       },
     ]);
 
@@ -257,9 +306,27 @@ describe("chatStateReducer", () => {
     expect(state.pendingPermissionRequest).toBeUndefined();
   });
 
+  it("history-loaded carries the agent's prompt capabilities, for a client that connected after they were broadcast", () => {
+    const state = reduceAll([
+      {
+        kind: "history-loaded",
+        messages: [],
+        activities: [],
+        recordsActivity: true,
+        currentModeId: null,
+        availableModes: [],
+        connectionState: "connected",
+        connectionError: undefined,
+        promptCapabilities: { image: true, audio: false, embeddedContext: true },
+      },
+    ]);
+
+    expect(state.promptCapabilities).toEqual({ image: true, audio: false, embeddedContext: true });
+  });
+
   it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
     const state = reduceAll([
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false } },
     ]);
 
     expect(state.connectionState).toBe("connected");
@@ -273,7 +340,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false } },
     ]);
 
     expect(state.currentModeId).toBeUndefined();
@@ -340,7 +407,8 @@ describe("chatStateReducer", () => {
           availableModes: [],
           connectionState: "connected",
           connectionError: undefined,
-        },
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      },
       ]);
 
       // One narrative, not two lists — and specifically the order the agent
@@ -359,7 +427,8 @@ describe("chatStateReducer", () => {
           availableModes: [],
           connectionState: "connected",
           connectionError: undefined,
-        },
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      },
       ]);
 
       // The same shape a live tool call takes, deliberately — one card
@@ -389,7 +458,8 @@ describe("chatStateReducer", () => {
           availableModes: [],
           connectionState: "connected",
           connectionError: undefined,
-        },
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      },
       ]);
 
       expect(state.timeline[0]).toMatchObject({ type: "tool-call", dataTruncated: true });
@@ -410,7 +480,8 @@ describe("chatStateReducer", () => {
           availableModes: [],
           connectionState: "connected",
           connectionError: undefined,
-        },
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      },
       ]);
 
       // Unsequenced messages have no position relative to activities, so
@@ -430,7 +501,8 @@ describe("chatStateReducer", () => {
           availableModes: [],
           connectionState: "connected",
           connectionError: undefined,
-        },
+        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      },
       ]);
 
       // An empty timeline means two different things depending on this

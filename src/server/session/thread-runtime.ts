@@ -1,6 +1,7 @@
-import type { AcpSession } from "../../utility/acp-session.js";
+import type { AcpSession, PromptContentBlock } from "../../utility/acp-session.js";
 import type {
   AcpSessionEvent,
+  AgentPromptCapabilities,
   ChatContentBlock,
   ConnectionState,
   PermissionOutcome,
@@ -8,9 +9,28 @@ import type {
   ToolCallSummary,
   ToolCallUpdateSummary,
 } from "../../shared/acp-events.js";
+import { NO_PROMPT_CAPABILITIES } from "../../shared/acp-events.js";
 import type { EventStore } from "../persistence/event-store.js";
 import { flattenDetail } from "../persistence/activity-bounds.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
+
+/** One image attachment as it arrives on the wire — base64, already bounds-checked. */
+export interface PromptImageAttachment {
+  mimeType: string;
+  data: string;
+}
+
+/**
+ * A persisted user message and a prompt carry the same blocks, but the two
+ * types differ: `ChatContentBlock` also covers things only an *agent* sends
+ * (resource links, unrecognised blocks). Anything outside text/image is
+ * unreachable here — the wire schema admits only text and images — so it
+ * degrades to its text form rather than inventing a prompt block.
+ */
+function toPromptBlock(block: ChatContentBlock): PromptContentBlock {
+  if (block.type === "image") return { type: "image", mimeType: block.mimeType, data: block.data };
+  return { type: "text", text: block.type === "text" ? block.text : "" };
+}
 
 export interface ThreadRuntimeOptions {
   threadId: string;
@@ -80,6 +100,10 @@ export class ThreadRuntime {
   // missing that original broadcast, can still learn what modes it
   // supports — see thread.get-history in ws-server.ts.
   private lastKnownModes: SessionModeSummary[] = [];
+  // Cached from the agent-capabilities event for the same reason as
+  // lastKnownModes: it is broadcast once, at session start, and a client
+  // that connects afterwards has no other way to learn it.
+  private lastKnownCapabilities: AgentPromptCapabilities = NO_PROMPT_CAPABILITIES;
   // Same rationale as lastKnownModes, but this one genuinely changes across
   // a session's lifetime (not just a one-shot catalog) — every
   // "connection-state" event updates it, so a client that missed the live
@@ -127,19 +151,38 @@ export class ThreadRuntime {
     await this.options.session.start();
   }
 
-  async sendMessage(text: string): Promise<void> {
+  /**
+   * `attachments` are image blocks the client asked to send (spec #93 phase
+   * 7). They are persisted onto the user's own message exactly as they are
+   * sent, so replaying a Thread shows what the agent was actually given
+   * (story 37) with no second path to keep in step. Bounds are enforced
+   * before this is reached — see ws-server's send-message handler.
+   */
+  async sendMessage(text: string, attachments: PromptImageAttachment[] = []): Promise<void> {
     const { threadId, eventStore } = this.options;
+    // Text first: the prompt reads as a message with images attached to it
+    // rather than images with a caption. (Verified against the real
+    // claude-agent-acp that both orderings reach the model, so this is a
+    // legibility choice, not a compatibility one.)
+    const content: ChatContentBlock[] = [
+      { type: "text", text },
+      ...attachments.map((attachment) => ({
+        type: "image" as const,
+        mimeType: attachment.mimeType,
+        data: attachment.data,
+      })),
+    ];
     eventStore.appendEvent({
       kind: "thread.message-recorded",
       threadId,
       messageId: `user-${++this.anonymousMessageCounter}`,
       role: "user",
-      content: [{ type: "text", text }],
+      content,
       sequence: this.allocateSequence(),
       timestamp: new Date().toISOString(),
     });
     this.turnInFlight = true;
-    await this.options.session.sendMessage(text);
+    await this.options.session.sendMessage(content.map(toPromptBlock));
     await this.pendingTurnCompletion;
   }
 
@@ -157,6 +200,16 @@ export class ThreadRuntime {
 
   getAvailableModes(): SessionModeSummary[] {
     return this.lastKnownModes;
+  }
+
+  /**
+   * What the agent said it can be prompted with. Cached from the live
+   * session for the same reason the mode catalog is: it only ever arrives
+   * once, on the initialize response, so a client connecting later can only
+   * learn it from thread.get-history.
+   */
+  getPromptCapabilities(): AgentPromptCapabilities {
+    return this.lastKnownCapabilities;
   }
 
   getConnectionState(): { state: ConnectionState; error: string | undefined } {
@@ -264,6 +317,9 @@ export class ThreadRuntime {
         break;
       case "tool-call-update":
         this.recordActivity(event.toolCall);
+        break;
+      case "agent-capabilities":
+        this.lastKnownCapabilities = event.capabilities;
         break;
       case "mode-changed":
         // Only the session-start event carries the catalog — a mid-session

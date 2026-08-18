@@ -1,4 +1,5 @@
-import type { AcpSessionEvent, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
+import type { AcpSessionEvent, AgentPromptCapabilities, ChatContentBlock, ConnectionState, SessionModeSummary } from "../shared/acp-events.js";
+import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import type { ActivityRecord, ThreadHistoryMessage } from "../shared/ws-protocol.js";
 import {
   appendOrMergeMessage,
@@ -35,6 +36,12 @@ export interface ChatState {
    * limitation unless the server actually said so.
    */
   recordsActivity: boolean;
+  /**
+   * What the connected agent said it can be prompted with, learned once at
+   * session start (spec #93 phase 7). Nothing advertised until an agent says
+   * otherwise — the composer must not offer an attachment on faith.
+   */
+  promptCapabilities: AgentPromptCapabilities;
 }
 
 export const initialChatState: ChatState = {
@@ -47,6 +54,7 @@ export const initialChatState: ChatState = {
   currentModeId: undefined,
   availableModes: [],
   recordsActivity: true,
+  promptCapabilities: NO_PROMPT_CAPABILITIES,
 };
 
 /**
@@ -77,7 +85,7 @@ export type ChatEvent =
    * user-initiated handler has to opt in.
    */
   | { kind: "action-attempted" }
-  | { kind: "user-message-sent"; text: string }
+  | { kind: "user-message-sent"; text: string; attachments?: { mimeType: string; data: string }[] }
   | { kind: "permission-responded"; requestId: string }
   | {
       kind: "history-loaded";
@@ -88,6 +96,7 @@ export type ChatEvent =
       availableModes: SessionModeSummary[];
       connectionState: ConnectionState;
       connectionError: string | undefined;
+      promptCapabilities: AgentPromptCapabilities;
     };
 
 const generateMessageId = createMessageIdGenerator();
@@ -103,7 +112,12 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
         // scratch (initial connect or a future restart) — clear any mode
         // catalog learned from a prior session so a restarted agent that
         // doesn't advertise modes can't leave a stale one displayed.
-        ...(event.state === "connecting" ? { currentModeId: undefined, availableModes: [] } : {}),
+        // Capabilities go with it, for the same reason: a restarted agent
+        // that takes no images must not inherit an attach control from the
+        // one before it.
+        ...(event.state === "connecting"
+          ? { currentModeId: undefined, availableModes: [], promptCapabilities: NO_PROMPT_CAPABILITIES }
+          : {}),
       };
     case "message-chunk":
       if (event.role === "agent-thought") return state;
@@ -136,6 +150,8 @@ function applySessionEvent(state: ChatState, event: AcpSessionEvent): ChatState 
         // the one already learned.
         availableModes: event.availableModes ?? state.availableModes,
       };
+    case "agent-capabilities":
+      return { ...state, promptCapabilities: event.capabilities };
     case "plan":
       return state;
   }
@@ -151,22 +167,32 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
       return { ...state, connectionError: event.message };
     case "action-attempted":
       return state.connectionError === undefined ? state : { ...state, connectionError: undefined };
-    case "user-message-sent":
+    case "user-message-sent": {
+      // A fresh id (not undefined) on every call — undefined means "merge
+      // into the last message of this role" (matching a streaming agent reply
+      // with no id), which is wrong here: two separately-sent user messages
+      // must never collapse into one timeline entry. The id is reused across
+      // this message's own blocks so they land on one entry, which is what
+      // makes an attached image appear on the message it was sent with
+      // (story 37) rather than as a message of its own.
+      const messageId = generateMessageId();
+      const blocks: ChatContentBlock[] = [
+        { type: "text", text: event.text },
+        ...(event.attachments ?? []).map((attachment) => ({
+          type: "image" as const,
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+        })),
+      ];
       return {
         ...state,
-        // A fresh id (not undefined) on every call — undefined means "merge
-        // into the last message of this role" (matching a streaming agent
-        // reply with no id), which is wrong here: two separately-sent user
-        // messages must never collapse into one timeline entry.
-        timeline: appendOrMergeMessage(
+        timeline: blocks.reduce(
+          (timeline, block) => appendOrMergeMessage(timeline, "user", messageId, block, generateMessageId),
           state.timeline,
-          "user",
-          generateMessageId(),
-          { type: "text", text: event.text },
-          generateMessageId,
         ),
         agentStatus: "working",
       };
+    }
     case "permission-responded":
       return state.pendingPermissionRequest?.requestId === event.requestId
         ? { ...state, pendingPermissionRequest: undefined }
@@ -183,6 +209,7 @@ export function chatStateReducer(state: ChatState, event: ChatEvent): ChatState 
         availableModes: event.availableModes,
         connectionState: event.connectionState,
         connectionError: event.connectionError,
+        promptCapabilities: event.promptCapabilities,
         pendingPermissionRequest: undefined,
         agentStatus: "idle",
       };

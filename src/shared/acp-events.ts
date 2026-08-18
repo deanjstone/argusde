@@ -6,6 +6,26 @@ export type ChatContentBlock =
   | { type: "resource_link"; uri: string; name: string }
   | { type: "other" };
 
+/**
+ * What the connected agent said it can be *prompted with*, from its
+ * `initialize` response (spec #93 phase 7). Booleans rather than optionals:
+ * ACP omits a capability it doesn't have, and "absent" and "false" mean the
+ * same thing to every caller — an agent that never advertised images takes
+ * text only. Verified against the real claude-agent-acp, which advertises
+ * `{ image: true, embeddedContext: true }` and no audio.
+ */
+export interface AgentPromptCapabilities {
+  image: boolean;
+  audio: boolean;
+  embeddedContext: boolean;
+}
+
+export const NO_PROMPT_CAPABILITIES: AgentPromptCapabilities = {
+  image: false,
+  audio: false,
+  embeddedContext: false,
+};
+
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export interface ToolCallSummary {
@@ -73,4 +93,11 @@ export type AcpSessionEvent =
   | { kind: "plan"; entries: PlanEntrySummary[] }
   | { kind: "permission-request"; request: PermissionRequestSummary }
   | { kind: "turn-complete"; stopReason: string }
-  | { kind: "mode-changed"; modeId: string; availableModes?: SessionModeSummary[] };
+  | { kind: "mode-changed"; modeId: string; availableModes?: SessionModeSummary[] }
+  /**
+   * Emitted once, on session start, from the agent's initialize response.
+   * Like the mode catalog it is only ever available there — nothing later in
+   * the session restates it — so a client that connects afterwards learns it
+   * from thread.get-history instead.
+   */
+  | { kind: "agent-capabilities"; capabilities: AgentPromptCapabilities };

@@ -93,6 +93,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
+  delete process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
+  delete process.env.ARGUSDE_FAKE_AGENT_ECHO_PROMPT;
   client.close();
   await server.close();
   eventStore.close();
@@ -1550,4 +1552,178 @@ describe("ws-server", () => {
     },
     10_000,
   );
+
+  /**
+   * Image attachments end to end (spec #93 phase 7, argusde#119). The
+   * fixture echoes the *shape* of the prompt it received when
+   * ARGUSDE_FAKE_AGENT_ECHO_PROMPT is set, so these assert the image
+   * reached the agent rather than merely that sending it raised no error.
+   */
+  describe("image attachments", () => {
+    // A real 1x1 PNG, not a placeholder string — the wire carries base64 and
+    // the server measures its decoded length, so a payload that isn't
+    // actually base64 would test the wrong thing.
+    const PNG_1X1 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    async function createThread(commandPrefix: string): Promise<string> {
+      const projectResult = await send({
+        type: "project.create",
+        commandId: `${commandPrefix}-p`,
+        workspaceRoot: repoDir,
+        title: "Attachments",
+      });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: `${commandPrefix}-t`, projectId, title: "T" });
+      return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    }
+
+    function agentText(threadId: string): string {
+      return received
+        .filter((m) => m.type === "session.event" && m.threadId === threadId)
+        .flatMap((m) =>
+          m.type === "session.event" && m.event.kind === "message-chunk" && m.event.content.type === "text"
+            ? [m.event.content.text]
+            : [],
+        )
+        .join("");
+    }
+
+    it("carries an image through to the agent when it advertises image support", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      process.env.ARGUSDE_FAKE_AGENT_ECHO_PROMPT = "1";
+      const threadId = await createThread("at1");
+
+      const result = await send({
+        type: "thread.send-message",
+        commandId: "at1-m",
+        threadId,
+        text: "what is this?",
+        attachments: [{ mimeType: "image/png", data: PNG_1X1 }],
+      });
+      expect(result.ok).toBe(true);
+
+      await waitFor(() => agentText(threadId).includes("PROMPT-BLOCKS:"));
+      const echoed = agentText(threadId);
+      const blocks = JSON.parse(echoed.slice(echoed.indexOf("PROMPT-BLOCKS:") + "PROMPT-BLOCKS:".length).split("\n")[0] ?? "[]");
+      expect(blocks).toEqual([
+        { type: "text" },
+        { type: "image", mimeType: "image/png", dataLength: PNG_1X1.length },
+      ]);
+    }, 20_000);
+
+    it("refuses an image when the connected agent never advertised image support, saying so", async () => {
+      // No ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES — a text-only agent, which
+      // is what the fixture is by default.
+      const threadId = await createThread("at2");
+
+      const result = await send({
+        type: "thread.send-message",
+        commandId: "at2-m",
+        threadId,
+        text: "what is this?",
+        attachments: [{ mimeType: "image/png", data: PNG_1X1 }],
+      });
+      expect(result.ok).toBe(false);
+      expect(result.ok === false ? result.error : "").toMatch(/agent/i);
+    }, 20_000);
+
+    it("records nothing for a refused message — a rejected send must not leave a half-message in history", async () => {
+      const threadId = await createThread("at3");
+      await send({
+        type: "thread.send-message",
+        commandId: "at3-m",
+        threadId,
+        text: "what is this?",
+        attachments: [{ mimeType: "image/png", data: PNG_1X1 }],
+      });
+
+      const history = await send({ type: "thread.get-history", commandId: "at3-h", threadId });
+      const messages = history.ok ? (history.result as { messages: unknown[] }).messages : [];
+      expect(messages).toEqual([]);
+    }, 20_000);
+
+    it("refuses an unsupported attachment type by name, even from an image-capable agent", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      const threadId = await createThread("at4");
+
+      const result = await send({
+        type: "thread.send-message",
+        commandId: "at4-m",
+        threadId,
+        text: "read this",
+        attachments: [{ mimeType: "application/pdf", data: PNG_1X1 }],
+      });
+      expect(result.ok).toBe(false);
+      expect(result.ok === false ? result.error : "").toContain("application/pdf");
+    }, 20_000);
+
+    it("refuses an image past the size cap rather than persisting it", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      const threadId = await createThread("at5");
+
+      // Base64 of 1 MiB + 1 bytes. Built by length rather than by encoding a
+      // real image: the point is the byte accounting, and a real 1 MiB PNG
+      // in the repo would be a fixture nobody could review.
+      const oversized = Buffer.alloc(1024 * 1024 + 1, 0x41).toString("base64");
+      const result = await send({
+        type: "thread.send-message",
+        commandId: "at5-m",
+        threadId,
+        text: "big",
+        attachments: [{ mimeType: "image/png", data: oversized }],
+      });
+      expect(result.ok).toBe(false);
+      expect(result.ok === false ? result.error : "").toMatch(/too large/i);
+    }, 20_000);
+
+    it("replays the image on the user's own message, so history shows what the agent was given", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      const threadId = await createThread("at6");
+
+      await send({
+        type: "thread.send-message",
+        commandId: "at6-m",
+        threadId,
+        text: "what is this?",
+        attachments: [{ mimeType: "image/png", data: PNG_1X1 }],
+      });
+
+      const history = await send({ type: "thread.get-history", commandId: "at6-h", threadId });
+      const messages = history.ok ? (history.result as { messages: { role: string; content: unknown[] }[] }).messages : [];
+      const userMessage = messages.find((m) => m.role === "user");
+      expect(userMessage?.content).toEqual([
+        { type: "text", text: "what is this?" },
+        { type: "image", mimeType: "image/png", data: PNG_1X1 },
+      ]);
+    }, 20_000);
+
+    it("reports the agent's prompt capabilities in thread.get-history, for a client that connected after they were broadcast", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true, embeddedContext: true });
+      const threadId = await createThread("at7");
+
+      const history = await send({ type: "thread.get-history", commandId: "at7-h", threadId });
+      const capabilities = history.ok ? (history.result as { promptCapabilities: unknown }).promptCapabilities : undefined;
+      expect(capabilities).toEqual({ image: true, audio: false, embeddedContext: true });
+    }, 20_000);
+
+    it("reports nothing advertised for a text-only agent, rather than omitting the field", async () => {
+      const threadId = await createThread("at8");
+
+      const history = await send({ type: "thread.get-history", commandId: "at8-h", threadId });
+      const capabilities = history.ok ? (history.result as { promptCapabilities: unknown }).promptCapabilities : undefined;
+      expect(capabilities).toEqual({ image: false, audio: false, embeddedContext: false });
+    }, 20_000);
+
+    it("leaves a plain text message exactly as it was — no empty attachment list, no extra block", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      const threadId = await createThread("at9");
+
+      await send({ type: "thread.send-message", commandId: "at9-m", threadId, text: "just words" });
+
+      const history = await send({ type: "thread.get-history", commandId: "at9-h", threadId });
+      const messages = history.ok ? (history.result as { messages: { role: string; content: unknown[] }[] }).messages : [];
+      expect(messages.find((m) => m.role === "user")?.content).toEqual([{ type: "text", text: "just words" }]);
+    }, 20_000);
+  });
 });

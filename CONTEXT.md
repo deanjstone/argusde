@@ -22,6 +22,10 @@ Vocabulary adopted for the T3-Code-parity uplift (see wayfinder map: ArgusDE →
 
 **Sequence** — the per-Thread ordering key shared by messages and Activities, assigned when an item *began* rather than when it was persisted. It is what lets history replay merge the two into one narrative: an agent's reply is only persisted once its Turn completes, after every tool call in that Turn, so persistence order alone would replay a Turn as "said everything, then did everything".
 
+## Composer
+
+**Attachment** — an image sent alongside a user message's text; images are the only attachable content. Offered only when the connected agent advertised `promptCapabilities.image` at ACP `initialize` — absent or malformed capabilities read as "text only", and a message carrying attachments is refused with a stated reason when the agent hasn't advertised the capability, never silently dropped. Since spec #93 phase 7: the client downscales the image to a 1568px longest edge and caps it at 1 MiB, at most 4 per message, because it is persisted verbatim onto the user's own message and replayed on every history load — so reopening a Thread shows what the agent was actually given, not a placeholder.
+
 ## Checkpointing
 
 **Checkpoint** — a saved snapshot of a Thread's workspace at a particular Turn, enabling diff-against-earlier-turn and revert. Storage mechanism (e.g. hidden git ref, as in T3) is not yet decided for ArgusDE.

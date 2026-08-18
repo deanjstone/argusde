@@ -1269,6 +1269,133 @@ async function main() {
       }
     }
 
+    // ---- US-18: composer image attachments (spec #93 phase 7) ----
+    // Needs an agent that actually advertises image support — the live agent's
+    // real capability is whatever claude-agent-acp reports today, which this
+    // audit has no business depending on. A dedicated fake-agent server is
+    // started with ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES set: the same
+    // mechanism test/web-smoke.test.ts and test/electron-smoke.test.ts already
+    // use for ARGUSDE_FAKE_AGENT_STEPS — startIsolatedServer's spawned agent
+    // gets `...process.env` forwarded into it, so setting the var here before
+    // calling in is enough; nothing in helpers.mjs or the fixture needs to
+    // change. Runs at every viewport (unlike the desktop-only hostile-agent
+    // block above) so the mobile no-horizontal-scroll check has something to
+    // check.
+    {
+      const previousPromptCapabilities = process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
+      process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true });
+      let attachServer;
+      const attachRepo = makeGitRepo("argusde-audit-attach-");
+      const attachPage = await context.newPage();
+      const tmpAttachDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-audit-attach-files-"));
+      try {
+        attachServer = await startIsolatedServer({ steps: [{ type: "message", text: "got it" }] });
+        await attachPage.goto(attachServer.url);
+        await attachPage.getByRole("button", { name: /type a path manually/i }).click();
+        await attachPage.getByLabel(/workspace path/i).fill(attachRepo);
+        await attachPage.getByRole("button", { name: /^start$/i }).click();
+        await attachPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        const attachControl = attachPage.getByLabel(/attach an image/i);
+        const controlOffered = await attachControl.count();
+        record(
+          "US-18.setup",
+          controlOffered > 0 ? "pass" : "fail",
+          `attach control rendered for an agent advertising image support: ${controlOffered > 0}`,
+        );
+
+        if (controlOffered > 0) {
+          // A genuine, tiny, decodable PNG — createImageBitmap has to succeed
+          // on it for the real attach path (the canvas re-encode) to run at
+          // all, not just for the change event to fire.
+          const pngPath = path.join(tmpAttachDir, "sample.png");
+          fs.writeFileSync(
+            pngPath,
+            Buffer.from(
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              "base64",
+            ),
+          );
+
+          // setInputFiles works on the sr-only file input directly — the
+          // composer wraps it in a styled <label> exactly so a hidden-but-
+          // focusable input keeps working for both pointer and keyboard, and
+          // that's also what makes it reachable without ever making it
+          // visible.
+          await attachControl.setInputFiles(pngPath);
+          const thumbnail = attachPage.locator('[data-slot="attachment-media"] img[alt="sample.png"]');
+          const thumbnailShown = await thumbnail
+            .waitFor({ state: "visible", timeout: 10000 })
+            .then(() => true)
+            .catch(() => false);
+          record(
+            "US-18.1",
+            thumbnailShown ? "pass" : "fail",
+            thumbnailShown ? "attaching a supported image shows a named thumbnail in the strip" : "no thumbnail appeared after attaching a supported image",
+          );
+          if (thumbnailShown) {
+            await scanA11y(attachPage, "US-18.1");
+            await shot(attachPage, "US-18.1-attached");
+          }
+
+          // ---- US-18.2: removing it clears the strip ----
+          const removeBtn = attachPage.getByRole("button", { name: "Remove sample.png" });
+          if (await removeBtn.count()) {
+            await removeBtn.click();
+            const strippedAway = await thumbnail
+              .waitFor({ state: "detached", timeout: 5000 })
+              .then(() => true)
+              .catch(() => false);
+            record(
+              "US-18.2",
+              strippedAway ? "pass" : "fail",
+              strippedAway ? "\"Remove <filename>\" takes the attachment back out of the strip" : "thumbnail remained after clicking its Remove control",
+            );
+          } else {
+            record("US-18.2", "fail", "no \"Remove sample.png\" control found next to the thumbnail");
+          }
+
+          // ---- US-18.3: an attachment the agent side will refuse shows the reason ----
+          // A plain-text file fails the type check before capability or size
+          // ever come into it — the simplest genuine refusal to provoke
+          // without also having to synthesize an over-the-limit image.
+          const badPath = path.join(tmpAttachDir, "not-an-image.txt");
+          fs.writeFileSync(badPath, "not a picture\n");
+          await attachControl.setInputFiles(badPath);
+          const refusal = attachPage.getByRole("alert").filter({ hasText: /can't be attached/i });
+          const refusalShown = await refusal
+            .waitFor({ state: "visible", timeout: 10000 })
+            .then(() => true)
+            .catch(() => false);
+          const refusalText = refusalShown ? (await refusal.first().textContent())?.trim() : undefined;
+          record(
+            "US-18.3",
+            refusalShown ? "pass" : "fail",
+            refusalShown ? `refused attachment shows its reason: "${refusalText}"` : "no role=alert refusal reason appeared for an unsupported file type",
+          );
+          if (refusalShown) {
+            await scanA11y(attachPage, "US-18.3");
+            await shot(attachPage, "US-18.3-refused");
+          }
+
+          await checkNoHorizontalScroll(attachPage, "US-18.4");
+        } else {
+          record("US-18.1", "skip", "attach control never rendered — could not attach an image to check");
+          record("US-18.2", "skip", "attach control never rendered — nothing to remove");
+          record("US-18.3", "skip", "attach control never rendered — could not trigger a refusal");
+        }
+      } catch (error) {
+        record("US-18.throw", "fail", `composer attachment checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await attachPage.close();
+        await attachServer?.close();
+        fs.rmSync(attachRepo, { recursive: true, force: true });
+        fs.rmSync(tmpAttachDir, { recursive: true, force: true });
+        if (previousPromptCapabilities === undefined) delete process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
+        else process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = previousPromptCapabilities;
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.

@@ -1,10 +1,8 @@
-import { useState } from "react";
 import type { PermissionOutcome } from "../../shared/acp-events.js";
 import type { CheckpointRecord } from "../../shared/ws-protocol.js";
 import type { ChatState, TimelineItem } from "../chat-state.js";
 import { renderContentBlock } from "./content-block.js";
 import { Button } from "./ui/button.js";
-import { Input } from "./ui/input.js";
 import { Badge } from "./ui/badge.js";
 import { Bubble, BubbleContent } from "./ui/bubble.js";
 import { Item, ItemContent, ItemTitle } from "./ui/item.js";
@@ -19,6 +17,7 @@ import {
   MessageScrollerViewport,
 } from "./ui/message-scroller.js";
 import { ActivityCard } from "./activity-card.js";
+import { Composer, type MessageAttachment } from "./composer.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
 import { DiffView, type DiffRange } from "./diff-view.js";
 import { ModeSwitcher } from "./mode-switcher.js";
@@ -31,7 +30,7 @@ export interface DiffState {
 
 export interface ChatViewProps {
   state: ChatState;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments: MessageAttachment[]) => void;
   onRespondPermission: (requestId: string, outcome: PermissionOutcome) => void;
   checkpoints?: CheckpointRecord[];
   onSelectTurn?: (turn: number) => void;
@@ -99,7 +98,6 @@ export function ChatView({
   closing = false,
   threadClosed = false,
 }: ChatViewProps) {
-  const [text, setText] = useState("");
   // Promoting relocates the thread's agent session to a fresh worktree —
   // only safe while nothing has happened yet. Mirrors state.timeline being
   // empty, not checkpoints.length: a checkpoint only lands once a turn
@@ -133,13 +131,6 @@ export function ChatView({
   const turnInFlight = state.agentStatus === "working";
   const blockedWhileWorking = turnInFlight ? "Not while the agent is working — wait for this turn to finish" : undefined;
 
-  function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
-    setText("");
-  }
 
   return (
     <div
@@ -288,18 +279,7 @@ export function ChatView({
       </MessageScrollerProvider>
 
       {threadClosed && <p className="border-t border-border px-4 pt-2 text-xs text-muted-foreground">This thread is closed.</p>}
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-border p-3">
-        <Input
-          placeholder="Message ArgusDE…"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          disabled={threadClosed}
-          className="flex-1"
-        />
-        <Button type="submit" size="icon" aria-label="Send" disabled={threadClosed}>
-          →
-        </Button>
-      </form>
+      <Composer onSend={onSend} acceptsImages={state.promptCapabilities.image} disabled={threadClosed} />
     </div>
   );
 }

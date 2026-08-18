@@ -10,6 +10,8 @@ import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
+import { base64ByteLength, refuseAttachmentSet } from "../../shared/attachments.js";
+import { NO_PROMPT_CAPABILITIES } from "../../shared/acp-events.js";
 import {
   changedFiles as workingTreeChangedFiles,
   currentBranch as workingTreeBranch,
@@ -180,7 +182,23 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         requireOpenThread(command.threadId);
         const runtime = runtimes.get(command.threadId);
         if (!runtime) throw new Error(`Unknown thread: ${command.threadId}`);
-        await runtime.sendMessage(command.text);
+        const attachments = command.attachments ?? [];
+        if (attachments.length > 0) {
+          // The authoritative check (spec #93 phase 7, story 38). The client
+          // refuses at attach time too, so the user learns before writing a
+          // message around the image — but a client can be stale about what
+          // this agent advertised, and a silent drop is exactly what the
+          // story forbids. Same shared rules on both sides.
+          const refusal = refuseAttachmentSet(
+            attachments.map((attachment) => ({
+              mimeType: attachment.mimeType,
+              byteLength: base64ByteLength(attachment.data),
+            })),
+            { acceptsImages: runtime.getPromptCapabilities().image },
+          );
+          if (refusal) throw new Error(refusal);
+        }
+        await runtime.sendMessage(command.text, attachments);
         return {};
       }
       case "thread.respond-permission": {
@@ -389,6 +407,11 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // live runtime degrades to "disconnected" rather than erroring,
         // matching the empty-catalog fallback above.
         const connectionState = runtimes.get(command.threadId)?.getConnectionState() ?? { state: "disconnected", error: undefined };
+        // Also live-only, also unrecoverable once its one broadcast is
+        // missed — see availableModes above. A Thread with no live runtime
+        // reports nothing advertised, which is the honest answer: there is
+        // no agent to accept an attachment.
+        const promptCapabilities = runtimes.get(command.threadId)?.getPromptCapabilities() ?? NO_PROMPT_CAPABILITIES;
         return {
           threadId: thread.id,
           projectId: thread.projectId,
@@ -399,6 +422,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           availableModes,
           connectionState: connectionState.state,
           connectionError: connectionState.error,
+          promptCapabilities,
           messages,
           activities,
           // False for Threads that predate durable activity, so the client
