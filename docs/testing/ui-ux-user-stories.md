@@ -271,3 +271,18 @@ US-5 (Checkpoints), deliberately: those answer *"what changed between two Turns"
   for an untracked file, which `git diff HEAD` alone returns nothing for.
 - **US-17.4** — Neither the list nor an open diff introduces horizontal page scroll at mobile
   width.
+
+## US-18: Composer — image attachments
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 7, which let the
+composer carry image attachments alongside text.
+
+- **US-18.1** — With an agent that advertises image support, attaching a supported image shows a
+  thumbnail in the attachment strip, labelled with the file's own name.
+- **US-18.2** — Each thumbnail's `Remove <filename>` control takes just that attachment back out
+  of the strip; the strip itself disappears once the last attachment is removed.
+- **US-18.3** — An attachment the agent side will refuse (unsupported type, oversized, over the
+  per-message limit, or an agent that doesn't accept images) shows the refusal reason in a
+  `role="alert"` message — never a silent drop.
+- **US-18.4** — Neither the attached nor the refused state introduces horizontal page scroll at
+  mobile width.

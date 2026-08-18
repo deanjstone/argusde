@@ -40,6 +40,8 @@ describe("ChatView", () => {
     expect(screen.getByText(/working/i)).toBeInTheDocument();
   });
 
+  // The composer's own behaviour is covered in composer.test.tsx; this is the
+  // wiring check — that ChatView still hands its onSend down to it.
   it("sends the typed message and clears the input", () => {
     const onSend = vi.fn();
     render(<ChatView state={initialChatState} onSend={onSend} onRespondPermission={() => {}} />);
@@ -48,7 +50,7 @@ describe("ChatView", () => {
     fireEvent.change(input, { target: { value: "hello there" } });
     fireEvent.submit(input.closest("form")!);
 
-    expect(onSend).toHaveBeenCalledWith("hello there");
+    expect(onSend).toHaveBeenCalledWith("hello there", []);
     expect(input.value).toBe("");
   });
 

@@ -34,7 +34,7 @@ describe("AcpSession", () => {
     const session = sessionWithSteps([{ type: "message", text: "Hello from the agent" }]);
     await session.start();
 
-    const events = await collectEvents(session, () => session.sendMessage("hi"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "hi" }]));
 
     expect(events).toContainEqual({
       kind: "message-chunk",
@@ -48,7 +48,7 @@ describe("AcpSession", () => {
     const session = sessionWithSteps([{ type: "message", text: "done" }]);
     await session.start();
 
-    const events = await collectEvents(session, () => session.sendMessage("hi"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "hi" }]));
 
     expect(events).toContainEqual({ kind: "turn-complete", stopReason: "end_turn" });
   });
@@ -65,7 +65,7 @@ describe("AcpSession", () => {
     ]);
     await session.start();
 
-    const events = await collectEvents(session, () => session.sendMessage("read a file"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "read a file" }]));
 
     expect(events).toContainEqual({
       kind: "tool-call",
@@ -95,7 +95,7 @@ describe("AcpSession", () => {
     ]);
     await session.start();
 
-    const events = await collectEvents(session, () => session.sendMessage("run tests"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "run tests" }]));
 
     const update = events.find((e) => e.kind === "tool-call-update");
     expect(update).toEqual({
@@ -108,7 +108,7 @@ describe("AcpSession", () => {
     const session = sessionWithSteps([{ type: "mode-change", modeId: "plan" }]);
     await session.start();
 
-    const events = await collectEvents(session, () => session.sendMessage("hi"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "hi" }]));
 
     expect(events).toContainEqual({ kind: "mode-changed", modeId: "plan" });
   });
@@ -224,7 +224,7 @@ describe("AcpSession", () => {
       }
     });
 
-    await session.sendMessage("do something sensitive");
+    await session.sendMessage([{ type: "text", text: "do something sensitive" }]);
 
     const permissionEvent = events.find((e) => e.kind === "permission-request");
     expect(permissionEvent).toMatchObject({
@@ -246,7 +246,7 @@ describe("AcpSession", () => {
     const session = sessionWithSteps([{ type: "crash", message: "boom" }]);
     await session.start();
 
-    await expect(session.sendMessage("trigger a crash")).rejects.toThrow();
+    await expect(session.sendMessage([{ type: "text", text: "trigger a crash" }])).rejects.toThrow();
     expect(session.connectionState).not.toBe("connected");
   });
 
@@ -264,13 +264,13 @@ describe("AcpSession", () => {
     });
 
     await session.start();
-    await expect(session.sendMessage("first")).rejects.toThrow();
+    await expect(session.sendMessage([{ type: "text", text: "first" }])).rejects.toThrow();
 
     crashed = true;
     await session.restartSession();
     expect(session.connectionState).toBe("connected");
 
-    const events = await collectEvents(session, () => session.sendMessage("second"));
+    const events = await collectEvents(session, () => session.sendMessage([{ type: "text", text: "second" }]));
     expect(events).toContainEqual({
       kind: "message-chunk",
       role: "agent",

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import zlib from "node:zlib";
 import { EventStore } from "../src/server/persistence/event-store.js";
 import { CheckpointStore } from "../src/server/checkpoint/checkpoint-store.js";
 import { AcpSession } from "../src/utility/acp-session.js";
@@ -52,6 +53,11 @@ describe("web smoke: server + browser round trip", () => {
     checkpointStore = new CheckpointStore();
 
     process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([{ type: "message", text: "Hello from the web smoke test agent" }]);
+    // The real claude-agent-acp advertises `{ image: true, embeddedContext:
+    // true }` (verified against v0.57.0), so the fixture does too — otherwise
+    // the composer correctly hides its attach control and the attachment
+    // tests below would be asserting against a surface that isn't there.
+    process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES = JSON.stringify({ image: true, embeddedContext: true });
     process.env.ARGUSDE_FAKE_AGENT_MODES = JSON.stringify({
       currentModeId: "default",
       availableModes: [
@@ -81,6 +87,7 @@ describe("web smoke: server + browser round trip", () => {
   afterAll(async () => {
     delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
     delete process.env.ARGUSDE_FAKE_AGENT_MODES;
+    delete process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
     await browser?.close();
     await server?.close();
     eventStore?.close();
@@ -645,4 +652,130 @@ describe("web smoke: server + browser round trip", () => {
     },
     20_000,
   );
+
+  /**
+   * Image attachments (spec #93 phase 7). This is the one place the real
+   * encode path runs — createImageBitmap and a canvas, neither of which jsdom
+   * has, so composer.test.tsx injects a fake encoder and this covers what it
+   * cannot. Story 34's paste is only genuinely testable here too.
+   */
+  it(
+    "downscales, attaches and sends a picked image, and shows it on the sent message",
+    async () => {
+      const attachPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const imagePath = path.join(dbDir, "wide.png");
+      // Deliberately past the 1568px bound, so the assertion below proves a
+      // real downscale rather than a pass-through.
+      fs.writeFileSync(imagePath, solidPng(2400, 1200, [0, 128, 255]));
+
+      try {
+        await attachPage.goto(`http://127.0.0.1:${server.port}/`);
+        await attachPage.getByRole("button", { name: /type a path manually/i }).click();
+        await attachPage.getByLabel(/workspace path/i).fill(repoDir);
+        await attachPage.getByRole("button", { name: /^start$/i }).click();
+        await attachPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await attachPage.getByLabel(/attach an image/i).setInputFiles(imagePath);
+
+        const thumbnail = attachPage.getByRole("img", { name: "wide.png" });
+        await thumbnail.waitFor({ timeout: 15_000 });
+
+        // Re-encoded to JPEG and scaled to the bound — the two things that
+        // keep a phone screenshot from being persisted at full size and
+        // replayed on every history load.
+        const src = await thumbnail.getAttribute("src");
+        expect(src?.startsWith("data:image/jpeg;base64,")).toBe(true);
+        const naturalWidth = await thumbnail.evaluate((img) => (img as HTMLImageElement).naturalWidth);
+        expect(naturalWidth).toBe(1568);
+
+        await attachPage.getByPlaceholder(/message/i).fill("what is this?");
+        await attachPage.getByPlaceholder(/message/i).press("Enter");
+
+        // The image appears on the user's own message in the transcript
+        // (story 37) — and the composer's own copy is gone, so this can only
+        // be the sent one.
+        await attachPage.waitForSelector("text=Hello from the web smoke test agent", { timeout: 15_000 });
+        expect(await attachPage.getByRole("img", { name: "wide.png" }).count()).toBe(0);
+        const sentImage = attachPage.locator('img[src^="data:image/jpeg;base64,"]').first();
+        await sentImage.waitFor({ timeout: 15_000 });
+        expect(await sentImage.getAttribute("src")).toBe(src);
+      } finally {
+        await attachPage.close();
+        fs.rmSync(imagePath, { force: true });
+      }
+    },
+    45_000,
+  );
+
+  it(
+    "attaches an image pasted into the composer, so attaching is one gesture (story 34)",
+    async () => {
+      const pastePage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      try {
+        await pastePage.goto(`http://127.0.0.1:${server.port}/`);
+        await pastePage.getByRole("button", { name: /type a path manually/i }).click();
+        await pastePage.getByLabel(/workspace path/i).fill(repoDir);
+        await pastePage.getByRole("button", { name: /^start$/i }).click();
+        await pastePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        const pngBase64 = solidPng(200, 100, [255, 0, 255]).toString("base64");
+        await pastePage.evaluate((base64) => {
+          // Built from bytes rather than fetched from a data: URL — the app's
+          // CSP is `connect-src 'self'`, so a fetch would be blocked.
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const file = new File([bytes], "pasted.png", { type: "image/png" });
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          const input = document.querySelector('input[placeholder*="Message"]');
+          input?.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
+        }, pngBase64);
+
+        await pastePage.getByRole("img", { name: "pasted.png" }).waitFor({ timeout: 15_000 });
+      } finally {
+        await pastePage.close();
+      }
+    },
+    45_000,
+  );
 });
+
+/**
+ * A solid-colour PNG, built here rather than committed as a fixture: the
+ * tests above need specific dimensions to prove a downscale happened, and a
+ * binary blob in the repo is a thing nobody can review.
+ */
+function solidPng(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 3);
+    raw[row] = 0; // PNG per-scanline filter type: none
+    for (let x = 0; x < width; x++) {
+      raw[row + 1 + x * 3] = r;
+      raw[row + 2 + x * 3] = g;
+      raw[row + 3 + x * 3] = b;
+    }
+  }
+
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour RGB
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}

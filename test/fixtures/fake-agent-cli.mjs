@@ -8,12 +8,19 @@ import { Readable, Writable } from "node:stream";
 
 const steps = process.env.ARGUSDE_FAKE_AGENT_STEPS ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_STEPS) : [];
 const modes = process.env.ARGUSDE_FAKE_AGENT_MODES ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_MODES) : undefined;
+// What this agent claims it can be prompted with. Defaults to nothing
+// advertised — the same shape a text-only agent really has — so a test
+// wanting image support has to say so, and the capability gate (spec #93
+// phase 7) is exercised in both directions.
+const promptCapabilities = process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES
+  ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES)
+  : undefined;
 const sessionId = "smoke-session-1";
 
 const app = agent({ name: "smoke-fake-agent" })
   .onRequest(methods.agent.initialize, async () => ({
     protocolVersion: 1,
-    agentCapabilities: {},
+    agentCapabilities: promptCapabilities ? { promptCapabilities } : {},
   }))
   .onRequest(methods.agent.session.new, async () => ({ sessionId, modes }))
   // No current_mode_update notification here — matches the real
@@ -23,6 +30,32 @@ const app = agent({ name: "smoke-fake-agent" })
   // that with a notification the real agent doesn't send.
   .onRequest(methods.agent.session.setMode, async () => ({}))
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
+    // Echoes the shape of what actually arrived, so a test can assert an
+    // image *reached the agent* rather than merely that sending it raised
+    // no error — the difference between covering spec #93 phase 7 and
+    // covering nothing at all. Opt-in: every other test in this suite
+    // asserts on transcript text, and an unconditional extra chunk would
+    // land in the middle of it.
+    const received = Array.isArray(params.prompt) ? params.prompt : [params.prompt];
+    if (process.env.ARGUSDE_FAKE_AGENT_ECHO_PROMPT) await client.notify(methods.client.session.update, {
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: `PROMPT-BLOCKS:${JSON.stringify(
+            received.map((block) =>
+              typeof block === "string"
+                ? { type: "text" }
+                : block.type === "image"
+                  ? { type: "image", mimeType: block.mimeType, dataLength: block.data.length }
+                  : { type: block.type },
+            ),
+          )}\n`,
+        },
+      },
+    });
+
     for (const step of steps) {
       if (step.type === "message") {
         await client.notify(methods.client.session.update, {

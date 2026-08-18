@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatContentBlock, ConnectionState, PermissionOutcome, SessionModeSummary } from "../shared/acp-events.js";
+import type {
+  AgentPromptCapabilities,
+  ChatContentBlock,
+  ConnectionState,
+  PermissionOutcome,
+  SessionModeSummary,
+} from "../shared/acp-events.js";
+import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import {
   WS_PATH,
   type ActivityRecord,
@@ -18,6 +25,7 @@ import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
 import { WorkspaceSetup } from "./components/workspace-setup.js";
 import { ChatView, type DiffState } from "./components/chat-view.js";
+import type { MessageAttachment } from "./components/composer.js";
 import { TabBar, type Tab } from "./components/tab-bar.js";
 import { ProjectPicker } from "./components/project-picker.js";
 import { ThreadList } from "./components/thread-list.js";
@@ -208,6 +216,7 @@ export function App() {
     availableModes: SessionModeSummary[],
     connectionState: ConnectionState,
     connectionError: string | undefined,
+    promptCapabilities: AgentPromptCapabilities,
   ) {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
@@ -223,6 +232,7 @@ export function App() {
         availableModes,
         connectionState,
         connectionError,
+        promptCapabilities,
       }),
     );
     setDiff(EMPTY_DIFF);
@@ -372,6 +382,7 @@ export function App() {
       messages: ThreadHistoryMessage[];
       activities: ActivityRecord[];
       recordsActivity: boolean;
+      promptCapabilities: AgentPromptCapabilities;
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
@@ -389,6 +400,7 @@ export function App() {
       history.availableModes,
       history.connectionState,
       history.connectionError,
+      history.promptCapabilities,
     );
   }
 
@@ -522,12 +534,21 @@ export function App() {
     }
   }
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string, attachments: MessageAttachment[] = []) {
     const client = clientRef.current;
     if (!client || !thread) return;
-    setChatState((s) => chatStateReducer(chatStateReducer(s, { kind: "action-attempted" }), { kind: "user-message-sent", text }));
+    setChatState((s) =>
+      chatStateReducer(chatStateReducer(s, { kind: "action-attempted" }), { kind: "user-message-sent", text, attachments }),
+    );
     try {
-      await client.sendCommand({ type: "thread.send-message", threadId: thread.threadId, text });
+      await client.sendCommand({
+        type: "thread.send-message",
+        threadId: thread.threadId,
+        text,
+        // Omitted entirely when there are none, so a plain text message stays
+        // exactly the command it has always been.
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
     } catch (error) {
       setChatState((s) =>
         chatStateReducer(s, { kind: "protocol-error", message: error instanceof Error ? error.message : String(error) }),

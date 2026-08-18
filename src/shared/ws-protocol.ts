@@ -20,12 +20,31 @@ export const WS_PATH = "/ws";
  * doesn't need to import the whole server module graph just to reach this
  * string.
  */
-export const API_VERSION = "1.1.0";
+export const API_VERSION = "1.2.0";
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
   z.object({ type: z.literal("thread.create"), commandId: z.string(), projectId: z.string(), title: z.string() }),
-  z.object({ type: z.literal("thread.send-message"), commandId: z.string(), threadId: z.string(), text: z.string() }),
+  z.object({
+    type: z.literal("thread.send-message"),
+    commandId: z.string(),
+    threadId: z.string(),
+    text: z.string(),
+    /**
+     * Image attachments (spec #93 phase 7). `text` stays a string rather
+     * than widening to a block array: a text-only message is then
+     * byte-identical to what it always was, and the schema can say exactly
+     * what is attachable in this phase instead of accepting any block and
+     * validating afterwards. The widening #93 calls for happens at
+     * AcpSession.sendMessage, which is the seam it names.
+     *
+     * Bounds (type, size, count) are checked by the server against the
+     * shared rules in src/shared/attachments.ts, not here — a zod refusal
+     * would surface as a protocol error rather than the actionable reason
+     * story 38 requires.
+     */
+    attachments: z.array(z.object({ mimeType: z.string(), data: z.string() })).optional(),
+  }),
   z.object({
     type: z.literal("thread.respond-permission"),
     commandId: z.string(),

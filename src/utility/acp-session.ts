@@ -7,6 +7,7 @@ import {
   type ClientConnection,
   type ContentBlock,
   type PermissionOption,
+  type PromptCapabilities,
   type RequestPermissionResponse,
   type SessionNotification,
   type Stream,
@@ -16,13 +17,20 @@ import {
 } from "@agentclientprotocol/sdk";
 import type {
   AcpSessionEvent,
+  AgentPromptCapabilities,
   ChatContentBlock,
   ConnectionState,
   PermissionOutcome,
   ToolCallSummary,
   ToolCallUpdateSummary,
 } from "../shared/acp-events.js";
+import { NO_PROMPT_CAPABILITIES } from "../shared/acp-events.js";
 import { isDisposableStream } from "./spawn-agent-process.js";
+
+/** What a client may put in a prompt — see toPromptContentBlock. */
+export type PromptContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; data: string };
 
 export interface AcpSessionOptions {
   /** Human-readable client name reported to the agent during initialize. */
@@ -50,6 +58,33 @@ function toChatContentBlock(block: ContentBlock): ChatContentBlock {
     default:
       return { type: "other" };
   }
+}
+
+/**
+ * The other direction: what the *client* sends. Only text and image blocks
+ * are producible here — spec #93 phase 7 attaches images and nothing else,
+ * and the wire schema refuses anything further upstream, so a block that
+ * can't be represented is a bug rather than a case to degrade.
+ */
+/**
+ * ACP omits a capability the agent doesn't have, and the SDK's own response
+ * validation can replace a malformed field with undefined — both of which
+ * mean the same thing here, so everything absent normalises to false rather
+ * than staying optional for every caller to re-handle.
+ */
+function toPromptCapabilities(capabilities: PromptCapabilities | null | undefined): AgentPromptCapabilities {
+  return {
+    image: capabilities?.image === true,
+    audio: capabilities?.audio === true,
+    embeddedContext: capabilities?.embeddedContext === true,
+  };
+}
+
+function toPromptContentBlock(block: PromptContentBlock): ContentBlock {
+  if (block.type === "image") {
+    return { type: "image", mimeType: block.mimeType, data: block.data };
+  }
+  return { type: "text", text: block.text };
 }
 
 function toolCallContentToChatBlocks(content: ToolCallContent[] | null | undefined): ChatContentBlock[] {
@@ -125,6 +160,16 @@ export class AcpSession extends EventEmitter {
     this.emitEvent({ kind: "connection-state", state, error });
   }
 
+  /**
+   * From the agent's initialize response. Defaults to nothing advertised,
+   * which is also what a session that hasn't started yet honestly reports.
+   */
+  private promptCapabilities: AgentPromptCapabilities = NO_PROMPT_CAPABILITIES;
+
+  getPromptCapabilities(): AgentPromptCapabilities {
+    return this.promptCapabilities;
+  }
+
   async start(): Promise<void> {
     this.setState("connecting");
 
@@ -149,12 +194,18 @@ export class AcpSession extends EventEmitter {
         this.setState("error", err instanceof Error ? err.message : String(err));
       });
 
-    await connection.agent.request(methods.agent.initialize, {
+    const initialize = await connection.agent.request(methods.agent.initialize, {
       protocolVersion: 1,
     });
+    this.promptCapabilities = toPromptCapabilities(initialize.agentCapabilities?.promptCapabilities);
 
     this.activeSession = await connection.agent.buildSession(this.options.cwd).start();
     this.setState("connected");
+
+    // Emitted unconditionally, unlike the mode catalog below: "this agent
+    // takes text only" is itself the answer the composer needs (story 38),
+    // where "this agent advertises no modes" means no switcher at all.
+    this.emitEvent({ kind: "agent-capabilities", capabilities: this.promptCapabilities });
 
     // Unlike `current_mode_update` (a change signal only), the mode catalog
     // is only ever available here, on the session's own start response — an
@@ -268,11 +319,14 @@ export class AcpSession extends EventEmitter {
     });
   }
 
-  async sendMessage(text: string): Promise<void> {
+  async sendMessage(content: PromptContentBlock[]): Promise<void> {
     if (!this.activeSession) {
       throw new Error("AcpSession.sendMessage() called before start()");
     }
-    const response = await this.activeSession.prompt(text);
+    // The SDK's prompt() already accepts a block array (string | ContentBlock
+    // | ContentBlock[]), so this is the whole of spec #93's "sole narrowing
+    // point" — nothing below here needed widening.
+    const response = await this.activeSession.prompt(content.map(toPromptContentBlock));
     this.emitEvent({ kind: "turn-complete", stopReason: response.stopReason });
   }
 
