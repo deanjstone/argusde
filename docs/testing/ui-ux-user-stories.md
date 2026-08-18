@@ -256,3 +256,18 @@ Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 5.
   so a result leads somewhere rather than merely reporting a location.
 - **US-16.3** — Neither the results list nor an opened match introduces horizontal page scroll
   at mobile width.
+
+## US-17: Working tree — changed files and per-file diffs
+
+Added with spec [#93](https://github.com/deanjstone/argusde/issues/93) phase 6. Distinct from
+US-5 (Checkpoints), deliberately: those answer *"what changed between two Turns"*, these answer
+*"what has changed right now"*, and the two must never be confused.
+
+- **US-17.1** — The Changes view lists what is currently changed in the Thread's working tree,
+  each entry labelled with how it changed.
+- **US-17.2** — The branch the working tree is on is shown; a detached worktree reads as
+  *detached* rather than as a branch named "HEAD". Exactly one of the two states appears.
+- **US-17.3** — Selecting a changed file opens its diff against the live working tree — including
+  for an untracked file, which `git diff HEAD` alone returns nothing for.
+- **US-17.4** — Neither the list nor an open diff introduces horizontal page scroll at mobile
+  width.

@@ -12,6 +12,8 @@ Vocabulary adopted for the T3-Code-parity uplift (see wayfinder map: ArgusDE →
 
 **Working tree** — the directory a Thread's agent actually operates in: its Worktree when it has one, the Project's `workspaceRoot` otherwise. User-facing since spec #93 phase 4, which made it browsable and readable in-app. Every working-tree command is Thread-scoped and every path in one is *relative to the working tree*, so a client never holds — or can ask for — an absolute server path.
 
+**Changed files** — what differs between a Thread's working tree and its last commit *right now*, with a change kind per entry (added, modified, deleted, renamed, untracked). User-facing since spec #93 phase 6. Deliberately distinct from a **Checkpoint diff**, which compares two Turns: the two answer different questions and the UI keeps them apart.
+
 ## Thread timeline
 
 **Turn** — one user-to-assistant work cycle inside a Thread: starts at user input, ends when follow-up work (e.g. checkpointing) settles.

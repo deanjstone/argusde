@@ -1123,6 +1123,68 @@ describe("ws-server", () => {
       if (!failed.ok) expect(failed.error).not.toContain(repoDir);
     });
 
+    it("reports what is changed right now, and which branch the tree is on", async () => {
+      const threadId = await threadIn(repoDir, ["cf1", "cf2"]);
+      fs.writeFileSync(path.join(repoDir, "file.txt"), "changed by the agent\n");
+      fs.writeFileSync(path.join(repoDir, "brand-new.ts"), "fresh\n");
+
+      const result = await send({ type: "thread.changed-files", commandId: "cf3", threadId });
+      expect(result.ok).toBe(true);
+      const changes = result.ok
+        ? (result.result as { files: { path: string; kind: string }[]; branch: string | null; detached: boolean })
+        : undefined;
+
+      const byPath = new Map(changes?.files.map((f) => [f.path, f.kind]) ?? []);
+      expect(byPath.get("file.txt")).toBe("modified");
+      expect(byPath.get("brand-new.ts")).toBe("untracked");
+      expect(changes?.branch).toBe("main");
+      expect(changes?.detached).toBe(false);
+    });
+
+    it("diffs an untracked file over the wire, which `git diff HEAD` alone shows nothing for", async () => {
+      const threadId = await threadIn(repoDir, ["cf4", "cf5"]);
+      fs.writeFileSync(path.join(repoDir, "created.ts"), "line one\n");
+
+      const result = await send({ type: "thread.file-diff", commandId: "cf6", threadId, path: "created.ts" });
+      expect(result.ok).toBe(true);
+      const diff = result.ok ? (result.result as { kind: string; lines: { kind: string; text: string }[] }) : undefined;
+      expect(diff?.kind).toBe("text");
+      expect(diff?.lines.some((l) => l.kind === "added" && l.text.includes("line one"))).toBe(true);
+    });
+
+    it("reflects a promoted Thread's Worktree, not the Project's workspace root", async () => {
+      const threadId = await threadIn(repoDir, ["cf7", "cf8"]);
+      const promoted = await send({ type: "thread.promote-to-worktree", commandId: "cf9", threadId });
+      const { worktreePath } = promoted.ok ? (promoted.result as { worktreePath: string }) : { worktreePath: "" };
+
+      // Only the worktree gets a new file — asserted by which one comes back.
+      fs.writeFileSync(path.join(worktreePath, "only-in-worktree.ts"), "x\n");
+      fs.writeFileSync(path.join(repoDir, "only-in-main.ts"), "x\n");
+
+      const result = await send({ type: "thread.changed-files", commandId: "cf10", threadId });
+      const changes = result.ok ? (result.result as { files: { path: string }[]; branch: string | null }) : undefined;
+      const paths = changes?.files.map((f) => f.path) ?? [];
+
+      expect(paths).toContain("only-in-worktree.ts");
+      expect(paths).not.toContain("only-in-main.ts");
+      // Branch-backed since phase 3, and read from git rather than derived.
+      expect(changes?.branch).toBe(branchNameFor(threadId));
+    });
+
+    it("never names an absolute server path in a change list or a diff", async () => {
+      const threadId = await threadIn(repoDir, ["cf11", "cf12"]);
+      fs.writeFileSync(path.join(repoDir, "file.txt"), "edited\n");
+
+      const list = await send({ type: "thread.changed-files", commandId: "cf13", threadId });
+      for (const file of list.ok ? (list.result as { files: { path: string }[] }).files : []) {
+        expect(file.path).not.toContain(repoDir);
+      }
+
+      const failed = await send({ type: "thread.file-diff", commandId: "cf14", threadId, path: "../../etc/passwd" });
+      expect(failed.ok).toBe(false);
+      if (!failed.ok) expect(failed.error).not.toContain(repoDir);
+    });
+
     it("keeps working on a closed Thread — reviewing what happened must not require it to be open", async () => {
       const threadId = await threadIn(repoDir, ["wt14", "wt15"]);
       await send({ type: "thread.close", commandId: "wt16", threadId });

@@ -31,8 +31,11 @@ function turnLabel(turn: number): string {
 }
 
 function diffLineClass(line: string): string | undefined {
-  if (line.startsWith("+") && !line.startsWith("+++")) return "text-green-400";
-  if (line.startsWith("-") && !line.startsWith("---")) return "text-red-400";
+  // The same theme tokens the working-tree diff uses (spec #93 phase 6), so
+  // the two diff surfaces answer different questions in one visual language
+  // rather than looking like unrelated features.
+  if (line.startsWith("+") && !line.startsWith("+++")) return "text-diff-added";
+  if (line.startsWith("-") && !line.startsWith("---")) return "text-diff-removed";
   return undefined;
 }
 
@@ -58,9 +61,9 @@ export function DiffView({
   const showRangePickers = availableTurns !== undefined && availableTurns.length > 0 && range !== undefined && onChangeRange !== undefined;
 
   return (
-    <div className="border-b border-neutral-800 bg-neutral-950 px-3 py-2">
+    <div className="border-b border-border bg-background px-3 py-2">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-neutral-500">Diff</span>
+        <span className="text-xs uppercase tracking-wide text-muted-foreground">Diff</span>
         <div className="flex items-center gap-3">
           {onRevert && (
             <button
@@ -68,25 +71,25 @@ export function DiffView({
               onClick={onRevert}
               disabled={reverting || revertBlockedReason !== undefined}
               title={revertBlockedReason}
-              className="text-xs text-amber-400 hover:text-amber-300 disabled:pointer-events-none disabled:opacity-50"
+              className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
             >
               {reverting ? "Reverting…" : "Revert to this checkpoint"}
             </button>
           )}
-          <button type="button" aria-label="Close diff" onClick={onClose} className="text-xs text-neutral-500 hover:text-neutral-300">
+          <button type="button" aria-label="Close diff" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground">
             Close
           </button>
         </div>
       </div>
 
       {showRangePickers && (
-        <div className="mb-1.5 flex items-center gap-2 text-xs text-neutral-500">
+        <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
           <label htmlFor="diff-from">Compare from</label>
           <select
             id="diff-from"
             value={range.from}
             onChange={(event) => onChangeRange({ from: Number(event.target.value), to: range.to })}
-            className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300"
+            className="rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground"
           >
             {availableTurns.map((turn) => (
               <option key={turn} value={turn}>
@@ -100,7 +103,7 @@ export function DiffView({
             aria-label="Compare to"
             value={range.to}
             onChange={(event) => onChangeRange({ from: range.from, to: Number(event.target.value) })}
-            className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300"
+            className="rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground"
           >
             {availableTurns.map((turn) => (
               <option key={turn} value={turn}>
@@ -111,9 +114,9 @@ export function DiffView({
         </div>
       )}
 
-      {loading && <p className="text-sm text-neutral-500">Loading diff…</p>}
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {!loading && !error && diff !== null && diff.length === 0 && <p className="text-sm text-neutral-500">No changes.</p>}
+      {loading && <p className="text-sm text-muted-foreground">Loading diff…</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {!loading && !error && diff !== null && diff.length === 0 && <p className="text-sm text-muted-foreground">No changes.</p>}
       {!loading && !error && diff !== null && diff.length > 0 && (
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs">
           {diff.split("\n").map((line, i) => (

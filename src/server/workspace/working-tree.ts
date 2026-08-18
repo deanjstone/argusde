@@ -3,7 +3,15 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { FilePreview, SearchResults, WorkingTreeListing } from "../../shared/ws-protocol.js";
+import type {
+  ChangedFile,
+  DiffLine,
+  FileDiff,
+  FilePreview,
+  SearchResults,
+  WorkingTreeBranch,
+  WorkingTreeListing,
+} from "../../shared/ws-protocol.js";
 import { languageFor, tokenise } from "./highlight.js";
 
 /**
@@ -450,4 +458,159 @@ function parseGrepOutput(stdout: string): Omit<SearchResults, "query"> {
   }
 
   return { files, totalMatches, truncated };
+}
+
+/** Shared runner for the read-only git commands this module shells out to. */
+async function git(realRoot: string, args: string[]): Promise<string> {
+  const { stdout } = await promisify(execFile)("git", args, {
+    cwd: realRoot,
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: SEARCH_LIMITS.timeoutMs,
+  });
+  return stdout;
+}
+
+/**
+ * What is changed in the Thread's working tree *right now* — spec #93 story
+ * 22, and a different question from Checkpoint diffing, which this deliberately
+ * does not touch.
+ *
+ * Uses `--porcelain=v2 -z`, not v1. v1 renders a rename as `R  old -> new` and
+ * *quotes* any path containing a space or special character, so it is ambiguous
+ * for exactly the paths that break parsers. v2 with `-z` never quotes and
+ * delimits every field with NUL.
+ *
+ * `--untracked-files=all` for the same reason phase 5 needed `git grep
+ * --untracked`: a file the agent has just created is the one you most want to
+ * see, and it is not tracked yet.
+ */
+export async function changedFiles(root: string): Promise<ChangedFile[]> {
+  const realRoot = fsSync.realpathSync(root);
+  const stdout = await git(realRoot, ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--renames"]);
+  return parseStatus(stdout);
+}
+
+/**
+ * Parses porcelain v2's NUL-delimited records.
+ *
+ * Record shapes, which is the whole reason this is a scanner and not a split:
+ *   `1 <XY> …  <path>`                    ordinary change      — one path
+ *   `2 <XY> … <score> <path>\0<origPath>` rename or copy       — **two** paths
+ *   `? <path>` / `! <path>`               untracked / ignored  — one path
+ *
+ * A rename carrying a second NUL-terminated field is what makes "split on NUL
+ * and take each field as a record" wrong: it silently consumes the *next*
+ * entry as the rename's origin. Verified against real porcelain output.
+ */
+function parseStatus(stdout: string): ChangedFile[] {
+  const changes: ChangedFile[] = [];
+  const records = stdout.split("\0");
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record) continue;
+
+    if (record.startsWith("? ")) {
+      changes.push({ path: record.slice(2), kind: "untracked" });
+      continue;
+    }
+    // Ignored entries are not requested, but a future flag change shouldn't
+    // silently reclassify them as something else.
+    if (record.startsWith("! ")) continue;
+
+    if (record.startsWith("1 ") || record.startsWith("2 ")) {
+      const isRename = record.startsWith("2 ");
+      const xy = record.split(" ")[1] ?? "..";
+      // The prefix is a fixed number of space-separated fields, so the path is
+      // everything after the Nth space — taken that way rather than as the last
+      // field, because a path may itself contain spaces:
+      //   1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>          -> 8 fields
+      //   2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <score> <path>  -> 9 fields
+      const filePath = record.slice(indexOfNthSpace(record, isRename ? 9 : 8) + 1);
+
+      const change: ChangedFile = { path: filePath, kind: kindFor(xy) };
+      if (isRename) {
+        // The origin is the *next* NUL-terminated field, consumed here so the
+        // loop doesn't mistake it for a record of its own.
+        change.previousPath = records[++i] ?? undefined;
+      }
+      changes.push(change);
+    }
+  }
+
+  return changes;
+}
+
+/** Index of the nth space in a record, used to find where the fixed-field prefix ends. */
+function indexOfNthSpace(record: string, n: number): number {
+  let index = -1;
+  for (let seen = 0; seen < n; seen++) {
+    index = record.indexOf(" ", index + 1);
+    if (index === -1) return record.length;
+  }
+  return index;
+}
+
+/** porcelain v2's XY code: X is the index, Y the working tree. */
+function kindFor(xy: string): ChangedFile["kind"] {
+  if (xy.startsWith("R") || xy[1] === "R") return "renamed";
+  if (xy.startsWith("A")) return "added";
+  if (xy.includes("D")) return "deleted";
+  return "modified";
+}
+
+/**
+ * One file's diff against the live working tree.
+ *
+ * Two commands rather than one, because **`git diff HEAD` returns nothing at
+ * all for an untracked file** — verified — and a newly created file is the most
+ * common thing an agent produces. Listing it as changed and then showing an
+ * empty diff would be worse than not listing it.
+ */
+export async function fileDiff(root: string, relativePath: string): Promise<FileDiff> {
+  const absolute = resolveWithin(root, relativePath);
+  const realRoot = fsSync.realpathSync(root);
+  const here = toRelative(root, absolute);
+
+  const tracked = (await git(realRoot, ["ls-files", "--error-unmatch", "--", here]).catch(() => "")) !== "";
+  const raw = tracked
+    ? await git(realRoot, ["diff", "HEAD", "--", here])
+    : await git(realRoot, ["diff", "--no-index", "--", "/dev/null", here]).catch((error: { stdout?: string }) => error.stdout ?? "");
+
+  if (/^Binary files? /m.test(raw)) return { path: here, kind: "binary", lines: [] };
+
+  return { path: here, kind: "text", lines: raw.split("\n").filter((line, i, all) => line !== "" || i < all.length - 1).map(toDiffLine) };
+}
+
+/**
+ * Classifies a patch line so the client colours it from theme tokens rather
+ * than re-parsing a patch it was just handed. `---`/`+++` are checked before
+ * the bare `-`/`+` cases, since they start with the same characters.
+ */
+function toDiffLine(text: string): DiffLine {
+  if (text.startsWith("@@")) return { kind: "hunk", text };
+  if (text.startsWith("+++") || text.startsWith("---") || text.startsWith("diff ") || text.startsWith("index ")) {
+    return { kind: "meta", text };
+  }
+  if (text.startsWith("+")) return { kind: "added", text };
+  if (text.startsWith("-")) return { kind: "removed", text };
+  if (text.startsWith("new file") || text.startsWith("deleted file") || text.startsWith("similarity")) {
+    return { kind: "meta", text };
+  }
+  return { kind: "context", text };
+}
+
+/**
+ * What the working tree is checked out on (story 28).
+ *
+ * Read from git, never derived from the Thread id — phase 3's explicit
+ * warning, because a Worktree promoted before branch backing has no branch at
+ * all. `--abbrev-ref` returns the literal string `HEAD` when detached, which
+ * has to be reported as detached rather than shown as a branch by that name.
+ */
+export async function currentBranch(root: string): Promise<WorkingTreeBranch> {
+  const realRoot = fsSync.realpathSync(root);
+  const name = (await git(realRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim();
+  if (name === "" || name === "HEAD") return { branch: null, detached: true };
+  return { branch: name, detached: false };
 }

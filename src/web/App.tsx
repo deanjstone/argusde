@@ -9,7 +9,9 @@ import {
   type ThreadHistoryMessage,
   type FilePreview as FilePreviewData,
   type ThreadRecord,
+  type FileDiff,
   type SearchResults,
+  type WorkingTreeChanges,
   type WorkingTreeListing,
 } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
@@ -261,6 +263,16 @@ export function App() {
   const searchWorkingTree = (query: string) => {
     const { client, threadId } = requireThreadClient();
     return client.sendCommand<SearchResults>({ type: "thread.search", threadId, query });
+  };
+
+  const workingTreeChanges = () => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<WorkingTreeChanges>({ type: "thread.changed-files", threadId });
+  };
+
+  const workingTreeFileDiff = (path: string) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<FileDiff>({ type: "thread.file-diff", threadId, path });
   };
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
@@ -733,6 +745,8 @@ export function App() {
             listDirectory={listWorkingTreeDirectory}
             readFile={readWorkingTreeFile}
             search={searchWorkingTree}
+            changedFiles={workingTreeChanges}
+            fileDiff={workingTreeFileDiff}
           />
         )}
         {tab === "threads" &&

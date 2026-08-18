@@ -15,13 +15,13 @@ export function CheckpointStrip({ checkpoints, onSelectTurn, onSinceStart, activ
   if (checkpoints.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-neutral-800 px-3 py-2">
+    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border px-3 py-2">
       {checkpoints.map((checkpoint) =>
         checkpoint.turn === 0 ? (
           <span
             key="start"
             role="button"
-            className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-500"
+            className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
           >
             Start
           </span>
@@ -34,13 +34,13 @@ export function CheckpointStrip({ checkpoints, onSelectTurn, onSinceStart, activ
             className={cn(
               "shrink-0 rounded-md border px-2 py-1 text-xs transition-colors",
               checkpoint.turn === activeTurn
-                ? "border-violet-500 text-violet-300"
-                : "border-neutral-700 text-neutral-300 hover:bg-neutral-800",
+                ? "border-primary-bright text-primary-bright"
+                : "border-border text-foreground hover:bg-muted",
             )}
           >
             Turn {checkpoint.turn}
             {checkpoint.revertedToTurn !== null && (
-              <span className="ml-1 text-amber-400" title={`Reverted to turn ${checkpoint.revertedToTurn}`}>
+              <span className="ml-1 text-warning" title={`Reverted to turn ${checkpoint.revertedToTurn}`}>
                 ↩ reverted to turn {checkpoint.revertedToTurn}
               </span>
             )}
@@ -51,7 +51,7 @@ export function CheckpointStrip({ checkpoints, onSelectTurn, onSinceStart, activ
         <button
           type="button"
           onClick={onSinceStart}
-          className="ml-auto shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+          className="ml-auto shrink-0 rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
         >
           Since start
         </button>

@@ -55,6 +55,11 @@ body,
   --color-syntax-type: var(--syntax-type);
   --color-syntax-variable: var(--syntax-variable);
   --color-syntax-punctuation: var(--syntax-punctuation);
+  --color-diff-added: var(--diff-added);
+  --color-diff-added-bg: var(--diff-added-bg);
+  --color-diff-removed: var(--diff-removed);
+  --color-diff-removed-bg: var(--diff-removed-bg);
+  --color-diff-hunk: var(--diff-hunk);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -125,6 +130,17 @@ body,
   /* Distinct from comment: punctuation is structure, not prose, so it recedes
      without also reading as a comment. */
   --syntax-punctuation: oklch(0.48 0.01 260);
+
+  /* Diff line colours, same reasoning as the syntax tokens above: the server
+     sends a line's *kind* and these decide how it looks, because a per-line
+     colour would need an inline style attribute the CSP blocks. Foreground and
+     background are separate tokens so the tint can stay subtle enough to read
+     code through while the text itself carries the contrast. */
+  --diff-added: oklch(0.45 0.13 150);
+  --diff-added-bg: oklch(0.94 0.05 150);
+  --diff-removed: oklch(0.48 0.17 25);
+  --diff-removed-bg: oklch(0.94 0.05 25);
+  --diff-hunk: oklch(0.52 0.13 265);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -183,6 +199,12 @@ body,
   --syntax-type: oklch(0.82 0.11 200);
   --syntax-variable: oklch(0.9 0.01 260);
   --syntax-punctuation: oklch(0.72 0.01 260);
+
+  --diff-added: oklch(0.82 0.14 150);
+  --diff-added-bg: oklch(0.28 0.06 150);
+  --diff-removed: oklch(0.75 0.16 25);
+  --diff-removed-bg: oklch(0.28 0.07 25);
+  --diff-hunk: oklch(0.75 0.13 265);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);

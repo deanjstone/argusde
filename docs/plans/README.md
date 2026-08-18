@@ -27,3 +27,4 @@ Next sequence — the daily-driver uplift ([spec #93](https://github.com/deanjst
 - [Phase 15: Branch-backed worktrees](phase-15-branch-backed-worktrees.md) — spec #93 phase 3. A promoted Thread's worktree is created on a real branch, so commits the agent makes in it survive the Thread being closed.
 - [Phase 16: File browser and file preview](phase-16-file-browser.md) — spec #93 phase 4. Browse and read the Thread's working tree in-app, with server-side syntax highlighting and path containment enforced in one place.
 - [Phase 17: Workspace search](phase-17-workspace-search.md) — spec #93 phase 5. `git grep` over the Thread's working tree, grouped results with every cap reported, and a result that opens the file at its matching line.
+- [Phase 18: Changed files and per-file diffs](phase-18-changed-files.md) — spec #93 phase 6. What is changed in the working tree right now, with per-file diffs against it, kept deliberately distinct from Checkpoint diffing.

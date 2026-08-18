@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listDirectory, readFile, resolveWithin, search, SEARCH_LIMITS } from "./working-tree.js";
+import { changedFiles, currentBranch, fileDiff, listDirectory, readFile, resolveWithin, search, SEARCH_LIMITS } from "./working-tree.js";
 
 let root: string;
 let outside: string;
@@ -512,4 +512,169 @@ describe("search", () => {
     }
   });
 });
+});
+
+describe("changedFiles", () => {
+  /** The setup's root has no commits, so most cases need a baseline to diff against. */
+  function commitBaseline() {
+    execFileSync("git", ["config", "user.email", "t@e.com"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: root });
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+  }
+
+  it("reports nothing for a clean tree, rather than erroring", async () => {
+    commitBaseline();
+    expect(await changedFiles(root)).toEqual([]);
+  });
+
+  it("labels each change with how it changed", async () => {
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "src", "index.ts"), "const x = 2;\n");
+    fs.writeFileSync(path.join(root, "added.ts"), "new\n");
+    execFileSync("git", ["add", "added.ts"], { cwd: root });
+    fs.rmSync(path.join(root, "README.md"));
+    fs.writeFileSync(path.join(root, "untracked.ts"), "fresh\n");
+
+    const byPath = new Map((await changedFiles(root)).map((c) => [c.path, c.kind]));
+    expect(byPath.get("src/index.ts")).toBe("modified");
+    expect(byPath.get("added.ts")).toBe("added");
+    expect(byPath.get("README.md")).toBe("deleted");
+    expect(byPath.get("untracked.ts")).toBe("untracked");
+  });
+
+  it("reports a rename as a rename, carrying where it came from", async () => {
+    commitBaseline();
+    execFileSync("git", ["mv", "README.md", "READTHIS.md"], { cwd: root });
+
+    const rename = (await changedFiles(root)).find((c) => c.kind === "renamed");
+    expect(rename?.path).toBe("READTHIS.md");
+    expect(rename?.previousPath).toBe("README.md");
+  });
+
+  it("does not swallow the entry after a rename", async () => {
+    // A rename record carries TWO NUL-terminated paths where every other
+    // record carries one. A parser that treats each NUL-delimited field as a
+    // record mis-associates whatever follows — verified against real porcelain
+    // v2 output before this was written.
+    commitBaseline();
+    execFileSync("git", ["mv", "README.md", "READTHIS.md"], { cwd: root });
+    fs.writeFileSync(path.join(root, "src", "index.ts"), "const x = 3;\n");
+    fs.writeFileSync(path.join(root, "zzz-after.ts"), "still here\n");
+
+    const byPath = new Map((await changedFiles(root)).map((c) => [c.path, c.kind]));
+    expect(byPath.get("READTHIS.md")).toBe("renamed");
+    expect(byPath.get("src/index.ts")).toBe("modified");
+    expect(byPath.get("zzz-after.ts")).toBe("untracked");
+  });
+
+  it("handles paths that porcelain v1 would have quoted or split", async () => {
+    // v1 emits `R  old -> new` and quotes paths with spaces or specials, so it
+    // is ambiguous for exactly the paths that break things. v2 -z never quotes.
+    commitBaseline();
+    for (const name of ["with space.ts", "with:colon.ts", "with\nnewline.ts"]) {
+      fs.writeFileSync(path.join(root, name), "x\n");
+    }
+
+    const paths = (await changedFiles(root)).map((c) => c.path);
+    expect(paths).toEqual(expect.arrayContaining(["with space.ts", "with:colon.ts", "with\nnewline.ts"]));
+  });
+
+  it("excludes ignored paths, taking the rules from the repository", async () => {
+    fs.writeFileSync(path.join(root, ".gitignore"), "node_modules\n");
+    commitBaseline();
+    fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(root, "node_modules", "dep.js"), "x\n");
+
+    expect((await changedFiles(root)).map((c) => c.path)).not.toContain("node_modules/dep.js");
+  });
+
+  it("never names an absolute server path", async () => {
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "changed.ts"), "x\n");
+
+    for (const change of await changedFiles(root)) {
+      expect(path.isAbsolute(change.path)).toBe(false);
+      expect(change.path).not.toContain(root);
+    }
+  });
+});
+
+describe("fileDiff", () => {
+  function commitBaseline() {
+    execFileSync("git", ["config", "user.email", "t@e.com"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: root });
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+  }
+
+  it("diffs a modified file against the live working tree", async () => {
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "src", "index.ts"), "const x = 99;\n");
+
+    const diff = await fileDiff(root, "src/index.ts");
+    expect(diff.kind).toBe("text");
+    const text = diff.lines.map((l) => l.text).join("\n");
+    expect(text).toContain("-const x = 1;");
+    expect(text).toContain("+const x = 99;");
+  });
+
+  it("diffs an untracked file, which `git diff HEAD` alone returns nothing for", async () => {
+    // The single most common thing an agent produces. Verified: `git diff HEAD
+    // -- new.ts` on an untracked file is EMPTY, so without the --no-index
+    // fallback a new file would list as changed and then show nothing at all.
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "brand-new.ts"), "hello\nworld\n");
+
+    const diff = await fileDiff(root, "brand-new.ts");
+    expect(diff.kind).toBe("text");
+    expect(diff.lines.some((l) => l.text.includes("+hello"))).toBe(true);
+    expect(diff.lines.some((l) => l.kind === "added")).toBe(true);
+  });
+
+  it("classifies each line so the client colours from theme tokens, not by re-parsing", async () => {
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "src", "index.ts"), "const x = 99;\n");
+
+    const kinds = new Set((await fileDiff(root, "src/index.ts")).lines.map((l) => l.kind));
+    expect(kinds).toContain("added");
+    expect(kinds).toContain("removed");
+    expect(kinds).toContain("meta");
+  });
+
+  it("reports a binary file as binary rather than dumping it", async () => {
+    commitBaseline();
+    fs.writeFileSync(path.join(root, "blob.bin"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+
+    expect((await fileDiff(root, "blob.bin")).kind).toBe("binary");
+  });
+
+  it("refuses a path outside the working tree", async () => {
+    commitBaseline();
+    await expect(fileDiff(root, "../secret.txt")).rejects.toThrow(/outside/i);
+  });
+});
+
+describe("currentBranch", () => {
+  it("reads the branch from git rather than deriving it", async () => {
+    execFileSync("git", ["config", "user.email", "t@e.com"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: root });
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+
+    expect(await currentBranch(root)).toEqual({ branch: "main", detached: false });
+  });
+
+  it("reports a detached worktree as detached, not as a branch called HEAD", async () => {
+    // Phase 3's warning made concrete: a Worktree promoted before branch
+    // backing has no branch, and `rev-parse --abbrev-ref HEAD` returns the
+    // literal string "HEAD" — which must not be shown as a branch name.
+    execFileSync("git", ["config", "user.email", "t@e.com"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "T"], { cwd: root });
+    execFileSync("git", ["add", "-A"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+    execFileSync("git", ["checkout", "-q", "--detach", "HEAD"], { cwd: root });
+
+    expect(await currentBranch(root)).toEqual({ branch: null, detached: true });
+  });
 });

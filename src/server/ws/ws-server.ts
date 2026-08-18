@@ -11,6 +11,9 @@ import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
 import { createStaticFileServer } from "../http/static-server.js";
 import {
+  changedFiles as workingTreeChangedFiles,
+  currentBranch as workingTreeBranch,
+  fileDiff as workingTreeFileDiff,
   listDirectory as listWorkingTreeDirectory,
   readFile as readWorkingTreeFile,
   search as searchWorkingTree,
@@ -420,6 +423,19 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         return readWorkingTreeFile(resolveThreadCwd(command.threadId), command.path);
       case "thread.search":
         return searchWorkingTree(resolveThreadCwd(command.threadId), command.query);
+      /**
+       * Deliberately separate from thread.list-checkpoints and
+       * thread.diff-checkpoints, which keep their commands and behaviour
+       * untouched. #93 is emphatic that "what has changed right now" and
+       * "what changed between Turn 4 and Turn 7" must never get confused.
+       */
+      case "thread.changed-files": {
+        const cwd = resolveThreadCwd(command.threadId);
+        const [files, branch] = await Promise.all([workingTreeChangedFiles(cwd), workingTreeBranch(cwd)]);
+        return { files, ...branch };
+      }
+      case "thread.file-diff":
+        return workingTreeFileDiff(resolveThreadCwd(command.threadId), command.path);
       case "fs.list-directory": {
         const target = command.path ?? os.homedir();
         const dirents = await fs.readdir(target, { withFileTypes: true });

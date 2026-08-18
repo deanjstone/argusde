@@ -548,6 +548,49 @@ async function main() {
       record("US-16.throw", "fail", `workspace search story threw: ${error.message.split("\n")[0]}`);
     }
 
+    // ---- US-17: changed files and per-file working-tree diffs (spec #93 phase 6) ----
+    try {
+      await page.getByRole("button", { name: /← Files/ }).click().catch(() => undefined);
+      const changesTab = page.getByRole("button", { name: "Changes" });
+      if (await changesTab.count()) {
+        await changesTab.click();
+        const settled = await page
+          .waitForSelector('[data-testid="changed-files"]', { timeout: 20000 })
+          .then(() => true)
+          .catch(() => false);
+        record("US-17.1", settled ? "pass" : "fail", settled ? "changed-files list rendered" : "changed files never settled within 20s");
+
+        // Story 28: the branch has to be shown, and a detached worktree must
+        // not be labelled with a branch called "HEAD".
+        const named = await page.locator('[data-testid="branch-name"]').count();
+        const detached = await page.locator('[data-testid="branch-detached"]').count();
+        record("US-17.2", named + detached === 1 ? "pass" : "fail", `branch shown: named=${named}, detached=${detached} (exactly one expected)`);
+
+        await scanA11y(page, "US-17.1");
+        await shot(page, "US-17.1-changed-files");
+
+        const firstChange = page.locator('[data-testid="changed-files"] button').first();
+        if (await firstChange.count()) {
+          await firstChange.click();
+          const opened = await page
+            .waitForSelector('[data-testid="wt-diff-lines"], [data-testid="wt-diff-binary"]', { timeout: 15000 })
+            .then(() => true)
+            .catch(() => false);
+          record("US-17.3", opened ? "pass" : "fail", opened ? "per-file working-tree diff opened" : "selecting a changed file rendered no diff");
+          await scanA11y(page, "US-17.3");
+          await shot(page, "US-17.3-working-tree-diff");
+        } else {
+          record("US-17.3", "skip", "audit fixture's working tree had no changes to open");
+        }
+
+        await checkNoHorizontalScroll(page, "US-17.4");
+      } else {
+        record("US-17.1", "fail", "no Changes view on the Files tab");
+      }
+    } catch (error) {
+      record("US-17.throw", "fail", `changed-files story threw: ${error.message.split("\n")[0]}`);
+    }
+
     // ---- US-9: settings tab ----
     await page.getByRole("button", { name: "Settings" }).click();
     await page.waitForTimeout(300);
