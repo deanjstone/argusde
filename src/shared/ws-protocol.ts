@@ -64,6 +64,8 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.list-directory"), commandId: z.string(), threadId: z.string(), path: z.string().optional() }),
   z.object({ type: z.literal("thread.read-file"), commandId: z.string(), threadId: z.string(), path: z.string() }),
   z.object({ type: z.literal("thread.search"), commandId: z.string(), threadId: z.string(), query: z.string() }),
+  z.object({ type: z.literal("thread.changed-files"), commandId: z.string(), threadId: z.string() }),
+  z.object({ type: z.literal("thread.file-diff"), commandId: z.string(), threadId: z.string(), path: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -266,6 +268,50 @@ export interface SearchResults {
     /** The specific reason for `output`: the search hit its wall-clock bound. */
     timedOut: boolean;
   };
+}
+
+/**
+ * One file changed in the Thread's working tree right now — a different
+ * question from Checkpoint-to-Checkpoint diffing, which answers "what changed
+ * between Turn 4 and Turn 7". Paths are relative to the working tree.
+ */
+export interface ChangedFile {
+  path: string;
+  kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  /** Where a renamed file came from. Absent for every other kind. */
+  previousPath?: string;
+}
+
+/**
+ * One line of a per-file diff, pre-classified.
+ *
+ * The *kind* travels rather than a colour, for the same two reasons as syntax
+ * tokens: a per-line colour would need an inline style attribute, which the
+ * UI's CSP blocks (see CONTENT_SECURITY_POLICY in server/http/static-server.ts),
+ * and colour belongs in the theme. It also spares the client re-parsing a
+ * patch it was just handed.
+ */
+export interface DiffLine {
+  kind: "added" | "removed" | "context" | "meta" | "hunk";
+  text: string;
+}
+
+export interface FileDiff {
+  path: string;
+  /** `binary` — git reports no textual diff, so there is nothing to render. */
+  kind: "text" | "binary";
+  lines: DiffLine[];
+}
+
+/** What the working tree is checked out on. Read from git, never derived from a Thread id — a Worktree promoted before spec #93 phase 3 has no branch at all. */
+export interface WorkingTreeBranch {
+  branch: string | null;
+  detached: boolean;
+}
+
+/** thread.changed-files: what is changed right now, and where. */
+export interface WorkingTreeChanges extends WorkingTreeBranch {
+  files: ChangedFile[];
 }
 
 export type CommandResult =

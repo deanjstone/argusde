@@ -32,7 +32,12 @@ describe("DiffView", () => {
 
     const added = screen.getByText("+world");
     const removed = screen.queryByText((_, node) => node?.textContent === "-hello");
-    expect(added.className).toContain("text-green");
+    // Was `toContain("text-green")` — an assertion on a Tailwind palette
+    // literal, which is exactly what spec #93 phase 6's migration replaces.
+    // The behaviour (added lines are styled distinctly, and share a visual
+    // language with the working-tree diff) is unchanged; only the spelling of
+    // the colour moved onto a theme token.
+    expect(added.className).toContain("text-diff-added");
     expect(removed).toBeNull(); // this sample diff has no removed lines — sanity check the query itself works
   });
 

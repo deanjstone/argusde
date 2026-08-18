@@ -39,7 +39,7 @@ function listingsFor(map: Record<string, WorkingTreeListing>) {
 
 describe("FileBrowser", () => {
   it("lists the working tree's entries on mount, files and dotfiles included", async () => {
-    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     expect(await screen.findByRole("button", { name: /src\// })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /\.gitignore/ })).toBeInTheDocument();
@@ -47,7 +47,7 @@ describe("FileBrowser", () => {
   });
 
   it("marks directories so they are distinguishable from files in a narrow column", async () => {
-    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     // A trailing slash rather than an icon — it survives a phone-width
     // column and needs no legend.
@@ -57,7 +57,7 @@ describe("FileBrowser", () => {
 
   it("navigates into a directory when it is clicked", async () => {
     const listDirectory = listingsFor({ "": ROOT, src: SRC });
-    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "src/" }));
 
@@ -67,7 +67,7 @@ describe("FileBrowser", () => {
 
   it("offers a breadcrumb back to the root, so navigation is reversible", async () => {
     const listDirectory = listingsFor({ "": ROOT, src: SRC });
-    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "src/" }));
     await screen.findByRole("button", { name: "index.ts" });
@@ -78,7 +78,7 @@ describe("FileBrowser", () => {
 
   it("opens a file into the preview rather than navigating", async () => {
     const readFile = vi.fn(async () => FILE);
-    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT, src: SRC })} readFile={readFile} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT, src: SRC })} readFile={readFile} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "src/" }));
     fireEvent.click(await screen.findByRole("button", { name: "index.ts" }));
@@ -91,14 +91,14 @@ describe("FileBrowser", () => {
     const listDirectory = vi.fn(async () => {
       throw new Error("EACCES: permission denied");
     });
-    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     expect(await screen.findByText(/permission denied/i)).toBeInTheDocument();
   });
 
   it("says so when a folder is empty, rather than looking like it failed to load", async () => {
     render(
-      <FileBrowser threadId="t1" listDirectory={listingsFor({ "": { path: "", parentPath: null, entries: [] } })} readFile={vi.fn()} search={vi.fn()} />,
+      <FileBrowser threadId="t1" listDirectory={listingsFor({ "": { path: "", parentPath: null, entries: [] } })} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />,
     );
 
     expect(await screen.findByText(/this folder is empty/i)).toBeInTheDocument();
@@ -106,7 +106,7 @@ describe("FileBrowser", () => {
 
   it("asks for a thread when none is active, instead of showing an empty tree", () => {
     const listDirectory = vi.fn();
-    render(<FileBrowser threadId={undefined} listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} />);
+    render(<FileBrowser threadId={undefined} listDirectory={listDirectory} readFile={vi.fn()} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     expect(screen.getByText(/no thread selected/i)).toBeInTheDocument();
     expect(listDirectory).not.toHaveBeenCalled();
@@ -116,13 +116,13 @@ describe("FileBrowser", () => {
     // A preview from another Thread's tree would be actively misleading —
     // same path, different working tree.
     const listDirectory = listingsFor({ "": ROOT, src: SRC });
-    const { rerender } = render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn(async () => FILE)} search={vi.fn()} />);
+    const { rerender } = render(<FileBrowser threadId="t1" listDirectory={listDirectory} readFile={vi.fn(async () => FILE)} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "src/" }));
     fireEvent.click(await screen.findByRole("button", { name: "index.ts" }));
     await screen.findByTestId("preview-code");
 
-    rerender(<FileBrowser threadId="t2" listDirectory={listDirectory} readFile={vi.fn(async () => FILE)} search={vi.fn()} />);
+    rerender(<FileBrowser threadId="t2" listDirectory={listDirectory} readFile={vi.fn(async () => FILE)} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     await waitFor(() => expect(screen.queryByTestId("preview-code")).not.toBeInTheDocument());
     expect(await screen.findByRole("button", { name: "README.md" })).toBeInTheDocument();
@@ -130,7 +130,7 @@ describe("FileBrowser", () => {
   it("hands the whole phone screen to the file once one is open, and offers a way back", async () => {
     // Master-detail rather than two cramped panes: at 390px, splitting gives
     // each about a third of a usable height and makes neither good.
-    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT, src: SRC })} readFile={vi.fn(async () => FILE)} search={vi.fn()} />);
+    render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT, src: SRC })} readFile={vi.fn(async () => FILE)} search={vi.fn()} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: /← Files/ })).not.toBeInTheDocument();
 
@@ -155,7 +155,7 @@ describe("FileBrowser", () => {
 
     it("searches the working tree and shows results in place of the tree", async () => {
       const search = vi.fn(async () => RESULTS);
-      render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} />);
+      render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
       await screen.findByRole("button", { name: "README.md" });
 
       fireEvent.change(screen.getByLabelText(/search the working tree/i), { target: { value: "needle" } });
@@ -182,7 +182,7 @@ describe("FileBrowser", () => {
           threadId="t1"
           listDirectory={listingsFor({ "": ROOT })}
           readFile={readFile}
-          search={vi.fn(async () => RESULTS)}
+          search={vi.fn(async () => RESULTS)} changedFiles={vi.fn()} fileDiff={vi.fn()}
         />,
       );
       await screen.findByRole("button", { name: "README.md" });
@@ -203,7 +203,7 @@ describe("FileBrowser", () => {
           threadId="t1"
           listDirectory={listingsFor({ "": ROOT })}
           readFile={vi.fn()}
-          search={vi.fn(async () => RESULTS)}
+          search={vi.fn(async () => RESULTS)} changedFiles={vi.fn()} fileDiff={vi.fn()}
         />,
       );
       await screen.findByRole("button", { name: "README.md" });
@@ -219,7 +219,7 @@ describe("FileBrowser", () => {
 
     it("does not search for an empty query", async () => {
       const search = vi.fn();
-      render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} />);
+      render(<FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
       await screen.findByRole("button", { name: "README.md" });
 
       fireEvent.change(screen.getByLabelText(/search the working tree/i), { target: { value: "   " } });
@@ -231,14 +231,14 @@ describe("FileBrowser", () => {
     it("drops results when the active Thread changes — they belong to the tree they were found in", async () => {
       const search = vi.fn(async () => RESULTS);
       const { rerender } = render(
-        <FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} />,
+        <FileBrowser threadId="t1" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} changedFiles={vi.fn()} fileDiff={vi.fn()} />,
       );
       await screen.findByRole("button", { name: "README.md" });
       fireEvent.change(screen.getByLabelText(/search the working tree/i), { target: { value: "needle" } });
       fireEvent.click(screen.getByRole("button", { name: "Search" }));
       await screen.findByTestId("search-results");
 
-      rerender(<FileBrowser threadId="t2" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} />);
+      rerender(<FileBrowser threadId="t2" listDirectory={listingsFor({ "": ROOT })} readFile={vi.fn()} search={search} changedFiles={vi.fn()} fileDiff={vi.fn()} />);
 
       await waitFor(() => expect(screen.queryByTestId("search-results")).not.toBeInTheDocument());
     });

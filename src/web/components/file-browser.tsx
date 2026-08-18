@@ -1,8 +1,16 @@
 import { Fragment, useEffect, useState } from "react";
 import { cn } from "../lib/utils.js";
-import type { FilePreview as FilePreviewData, SearchResults, WorkingTreeListing } from "../../shared/ws-protocol.js";
+import type {
+  FileDiff,
+  FilePreview as FilePreviewData,
+  SearchResults,
+  WorkingTreeChanges,
+  WorkingTreeListing,
+} from "../../shared/ws-protocol.js";
 import { FilePreview } from "./file-preview.js";
 import { WorkspaceSearch } from "./workspace-search.js";
+import { ChangedFiles } from "./changed-files.js";
+import { WorkingTreeDiff } from "./working-tree-diff.js";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -23,6 +31,8 @@ export interface FileBrowserProps {
   listDirectory: (path: string) => Promise<WorkingTreeListing>;
   readFile: (path: string) => Promise<FilePreviewData>;
   search: (query: string) => Promise<SearchResults>;
+  changedFiles: () => Promise<WorkingTreeChanges>;
+  fileDiff: (path: string) => Promise<FileDiff>;
 }
 
 /**
@@ -48,7 +58,7 @@ function crumbsFor(relativePath: string): { label: string; path: string }[] {
  * decision (every command here is Thread-scoped), so this component never
  * handles an absolute path and cannot be pointed outside the tree.
  */
-export function FileBrowser({ threadId, listDirectory, readFile, search }: FileBrowserProps) {
+export function FileBrowser({ threadId, listDirectory, readFile, search, changedFiles, fileDiff }: FileBrowserProps) {
   const [listing, setListing] = useState<WorkingTreeListing | null>(null);
   const [listingError, setListingError] = useState<string | undefined>(undefined);
   const [loadingListing, setLoadingListing] = useState(false);
@@ -59,6 +69,16 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
   // Set only when a file was opened from a search result, so the preview can
   // mark and scroll to the matching line (story 19).
   const [highlightLine, setHighlightLine] = useState<number | undefined>(undefined);
+
+  const [changes, setChanges] = useState<WorkingTreeChanges | null>(null);
+  const [changesError, setChangesError] = useState<string | undefined>(undefined);
+  const [loadingChanges, setLoadingChanges] = useState(false);
+  const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [diffError, setDiffError] = useState<string | undefined>(undefined);
+  const [loadingDiff, setLoadingDiff] = useState(false);
+  // "browse" | "changes" — search is a mode of browse rather than a third tab,
+  // since clearing the query returns you to the tree.
+  const [view, setView] = useState<"browse" | "changes">("browse");
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -81,6 +101,9 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
     setQuery("");
     setResults(null);
     setSearchError(undefined);
+    setChanges(null);
+    setDiff(null);
+    setView("browse");
     void navigate("");
     // Keyed on threadId alone: navigation within a Thread is user-driven, not
     // a prop change.
@@ -118,6 +141,15 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
     await load(() => readFile(path), setPreview, setPreviewError, setLoadingPreview);
   }
 
+  async function showChanges() {
+    setView("changes");
+    setDiff(null);
+    setDiffError(undefined);
+    await load(() => changedFiles(), setChanges, setChangesError, setLoadingChanges);
+  }
+
+  const openDiff = (path: string) => load(() => fileDiff(path), setDiff, setDiffError, setLoadingDiff);
+
   async function runSearch() {
     const trimmed = query.trim();
     if (trimmed === "") {
@@ -146,7 +178,10 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
   // each about a third of a usable height and makes neither good — and "usable
   // from my phone" is the thing this app is for. Side by side from `md` up,
   // where there is room for both.
-  const showingFile = preview !== null || loadingPreview || previewError !== undefined;
+  const showingFile =
+    view === "changes"
+      ? diff !== null || loadingDiff || diffError !== undefined
+      : preview !== null || loadingPreview || previewError !== undefined;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -159,6 +194,8 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
             onClick={() => {
               setPreview(null);
               setPreviewError(undefined);
+              setDiff(null);
+              setDiffError(undefined);
             }}
           >
             ← Files
@@ -203,8 +240,41 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
             showingFile && "hidden md:block",
           )}
         >
+          <div className="flex gap-1 border-b border-border p-2">
+            <Button
+              type="button"
+              variant={view === "browse" ? "secondary" : "ghost"}
+              size="sm"
+              className="flex-1"
+              onClick={() => setView("browse")}
+            >
+              Files
+            </Button>
+            {/* Named "Changes", not "Diff": the app has a Checkpoint diff too,
+                and spec #93 requires the two questions to stay distinguishable. */}
+            <Button
+              type="button"
+              variant={view === "changes" ? "secondary" : "ghost"}
+              size="sm"
+              className="flex-1"
+              onClick={() => void showChanges()}
+            >
+              Changes
+            </Button>
+          </div>
+
+          {view === "changes" && (
+            <ChangedFiles
+              changes={changes}
+              loading={loadingChanges}
+              error={changesError}
+              selectedPath={diff?.path}
+              onSelect={(path) => void openDiff(path)}
+            />
+          )}
+
           <form
-            className="p-2"
+            className={cn("p-2", view === "changes" && "hidden")}
             onSubmit={(event) => {
               event.preventDefault();
               void runSearch();
@@ -239,7 +309,7 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
           {/* Results replace the listing while a search is active; clearing the
               field returns to browsing. One pane, because search and browse are
               two ways at the same tree rather than two places. */}
-          {(searching || results !== null || searchError !== undefined) && (
+          {view === "browse" && (searching || results !== null || searchError !== undefined) && (
             <WorkspaceSearch
               results={results}
               loading={searching}
@@ -248,7 +318,12 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
             />
           )}
 
-          <div className={cn("flex flex-col gap-1 p-2", (searching || results !== null || searchError !== undefined) && "hidden")}>
+          <div
+            className={cn(
+              "flex flex-col gap-1 p-2",
+              (view === "changes" || searching || results !== null || searchError !== undefined) && "hidden",
+            )}
+          >
             {loadingListing && (
               <div className="flex justify-center py-4">
                 <Spinner />
@@ -289,7 +364,11 @@ export function FileBrowser({ threadId, listDirectory, readFile, search }: FileB
         </div>
 
         <div className={cn("flex min-h-0 flex-1 flex-col", !showingFile && "hidden md:flex")}>
-          <FilePreview preview={preview} loading={loadingPreview} error={previewError} highlightLine={highlightLine} />
+          {view === "changes" ? (
+            <WorkingTreeDiff diff={diff} loading={loadingDiff} error={diffError} />
+          ) : (
+            <FilePreview preview={preview} loading={loadingPreview} error={previewError} highlightLine={highlightLine} />
+          )}
         </div>
       </div>
     </div>
