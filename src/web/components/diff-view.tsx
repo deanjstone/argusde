@@ -1,4 +1,15 @@
 import { cn } from "../lib/utils.js";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog.js";
 
 export interface DiffRange {
   from: number;
@@ -66,15 +77,37 @@ export function DiffView({
         <span className="text-xs uppercase tracking-wide text-muted-foreground">Diff</span>
         <div className="flex items-center gap-3">
           {onRevert && (
-            <button
-              type="button"
-              onClick={onRevert}
-              disabled={reverting || revertBlockedReason !== undefined}
-              title={revertBlockedReason}
-              className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {reverting ? "Reverting…" : "Revert to this checkpoint"}
-            </button>
+            // Reverting force-overwrites the working tree from a checkpoint —
+            // the most destructive thing this UI can do, and until now it
+            // happened on a single click. #93's component table assigns it an
+            // alert-dialog; phase 6 deferred that pending argusde#113, which
+            // is now resolved, so it lands here.
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button
+                  type="button"
+                  disabled={reverting || revertBlockedReason !== undefined}
+                  title={revertBlockedReason}
+                  className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {reverting ? "Reverting…" : "Revert to this checkpoint"}
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Revert to this checkpoint?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The working tree is restored to how it was at this checkpoint. Anything changed since is overwritten
+                    on disk. The Thread's history is kept — the revert is captured as a new checkpoint rather than
+                    erasing the turns after it.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={onRevert}>Revert</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
           <button type="button" aria-label="Close diff" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground">
             Close

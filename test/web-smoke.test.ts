@@ -222,28 +222,101 @@ describe("web smoke: server + browser round trip", () => {
       await page.waitForSelector("text=/revert/i", { timeout: 10_000 });
 
       await page.getByRole("button", { name: /revert to this checkpoint/i }).click();
+      // Reverting now asks first (argusde#113 — the alert-dialog #93's
+      // component table assigns it, unblocked by the CSP nonce).
+      await page.getByRole("alertdialog").waitFor({ timeout: 10_000 });
+      await page.getByRole("button", { name: /^revert$/i }).click();
 
-      // handleRevertCheckpoint closes the whole diff panel (DiffView
-      // unmounts) on success — waiting for its always-present Close button
-      // to disappear (rather than a fixed sleep) proves the round trip
-      // actually completed, not just that the click registered. Using its
-      // aria-label ("Close diff") rather than a "revert" text match — the
-      // checkpoint strip's own new "reverted to turn 1" badge (asserted
-      // below) also contains "revert" and its parent button's accessible
-      // name would otherwise match too, since it's nested text.
-      await page.getByRole("button", { name: "Close diff" }).waitFor({ state: "detached", timeout: 15_000 });
+      // The sync point is the new checkpoint appearing, not the diff panel
+      // closing.
+      //
+      // This test used to wait for the "Close diff" button to detach, on the
+      // grounds that handleRevertCheckpoint only closes the panel *after* the
+      // round trip resolves. That stopped meaning anything the moment the
+      // confirmation became a modal: Radix marks the rest of the document
+      // `aria-hidden` while a dialog is open, which takes those elements out
+      // of the accessibility tree, so a `getByRole` locator reports itself
+      // detached the instant the dialog opens — long before any revert has
+      // happened. The test went green on a click and red on the file it was
+      // actually about.
+      //
+      // Two new checkpoints land from one revert: an unmarked safety
+      // snapshot of whatever was about to be overwritten (Turn 3), then the
+      // actual restored state (Turn 4, marked) — nothing is ever silently
+      // discarded. Turn 4 exists only once refreshCheckpoints has run, which
+      // is strictly after the server finished the revert.
+      await page.waitForSelector('button:has-text("Turn 4")', { timeout: 15_000 });
 
       expect(fs.readFileSync(path.join(repoDir, "notes.txt"), "utf8")).toBe("hello from the web smoke test\n");
 
-      // Two new checkpoints land from one revert: an unmarked safety
-      // snapshot of whatever was about to be overwritten (Turn 3), then
-      // the actual restored state (Turn 4, marked) — nothing is ever
-      // silently discarded.
-      await page.waitForSelector('button:has-text("Turn 4")', { timeout: 10_000 });
       const turn4Text = await page.getByRole("button", { name: /turn 4/i }).textContent();
       expect(turn4Text).toMatch(/reverted to turn 1/i);
     },
     30_000,
+  );
+
+  /**
+   * The CSP nonce, end to end in a real browser (argusde#113).
+   *
+   * Radix overlays lock body scroll by injecting a `<style>` element, which
+   * `style-src 'self'` blocks outright. Measured before the fix: a real
+   * alert-dialog opened, but `document.body` stayed at `overflow: visible`
+   * (so the page scrolled behind it) and the console carried a CSP violation.
+   * Nothing about that is visible from unit tests — jsdom enforces no CSP —
+   * so this is the only place the mechanism is actually proven.
+   */
+  it(
+    "opens a Radix overlay under the real CSP with no violation, and its scroll lock actually applies",
+    async () => {
+      const cspPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const consoleMessages: string[] = [];
+      cspPage.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
+      cspPage.on("pageerror", (error) => consoleMessages.push(`pageerror: ${error.message}`));
+
+      try {
+        const response = await cspPage.goto(`http://127.0.0.1:${server.port}/`);
+        const policy = response?.headers()["content-security-policy"] ?? "";
+        expect(policy).toMatch(/style-src 'self' 'nonce-[^']+'/);
+        expect(policy).not.toContain("unsafe-inline");
+
+        // The document's nonce and the header's have to be the same value —
+        // a mismatch fails exactly like having no nonce at all.
+        const documentNonce = await cspPage.evaluate(
+          () => document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content,
+        );
+        expect(documentNonce).toBeTruthy();
+        expect(policy).toContain(`'nonce-${documentNonce}'`);
+
+        await cspPage.getByRole("button", { name: /type a path manually/i }).click();
+        await cspPage.getByLabel(/workspace path/i).fill(repoDir);
+        await cspPage.getByRole("button", { name: /^start$/i }).click();
+        await cspPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        // A completed turn gives the checkpoint strip something to open a
+        // diff on, which is where the revert control — and so the overlay —
+        // lives.
+        await cspPage.getByPlaceholder(/message/i).fill("say something");
+        await cspPage.getByPlaceholder(/message/i).press("Enter");
+        await cspPage.getByRole("button", { name: /turn 1/i }).waitFor({ timeout: 15_000 });
+        await cspPage.getByRole("button", { name: /turn 1/i }).click();
+
+        await cspPage.getByRole("button", { name: /revert to this checkpoint/i }).click();
+        await cspPage.getByRole("alertdialog").waitFor({ timeout: 10_000 });
+
+        // The load-bearing assertion. react-remove-scroll sets this through
+        // the very stylesheet the CSP was blocking, so "hidden" is only
+        // reachable if the nonce was accepted.
+        expect(await cspPage.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
+
+        const violations = consoleMessages.filter((message) => /content security policy/i.test(message));
+        expect(violations).toEqual([]);
+
+        await cspPage.getByRole("button", { name: /cancel/i }).click();
+      } finally {
+        await cspPage.close();
+      }
+    },
+    45_000,
   );
 
   it(

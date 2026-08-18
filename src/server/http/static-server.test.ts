@@ -11,7 +11,10 @@ let baseUrl: string;
 
 beforeEach(async () => {
   rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-static-server-"));
-  fs.writeFileSync(path.join(rootDir, "index.html"), "<!doctype html><html><body>hi</body></html>");
+  fs.writeFileSync(
+    rootDir + "/index.html",
+    '<!doctype html><html><head><meta name="csp-nonce" content="__CSP_NONCE__" /></head><body>hi</body></html>',
+  );
   fs.mkdirSync(path.join(rootDir, "assets"));
   fs.writeFileSync(path.join(rootDir, "assets", "app.js"), "console.log('hi');");
   fs.writeFileSync(path.join(rootDir, "assets", "app.css"), "body { color: red; }");
@@ -40,6 +43,77 @@ describe("createStaticFileServer", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     expect(await res.text()).toContain("<body>hi</body>");
+  });
+
+  /**
+   * CSP nonce plumbing (argusde#113). Radix overlays lock body scroll by
+   * injecting a <style> element, which `style-src 'self'` blocks outright —
+   * measured, not assumed: a real alert-dialog under the old policy opened
+   * but left `document.body` at `overflow: visible`, i.e. the page still
+   * scrolled behind the dialog, and logged a CSP violation that the audit's
+   * zero-console-errors gate would fail on.
+   */
+  describe("CSP nonce", () => {
+    function nonceFrom(html: string): string | undefined {
+      return /<meta name="csp-nonce" content="([^"]*)"/.exec(html)?.[1];
+    }
+
+    function headerNonce(res: Response): string | undefined {
+      return /'nonce-([^']+)'/.exec(res.headers.get("content-security-policy") ?? "")?.[1];
+    }
+
+    it("serves an HTML nonce that matches the one in its own CSP header", async () => {
+      const res = await fetch(`${baseUrl}/`);
+      const html = await res.text();
+
+      const inDocument = nonceFrom(html);
+      expect(inDocument).toBeDefined();
+      expect(inDocument).not.toBe("__CSP_NONCE__");
+      // The whole mechanism is these two agreeing. A mismatch fails silently
+      // in the browser — the style is blocked exactly as if there were no
+      // nonce at all — so it is asserted here rather than left to be noticed.
+      expect(headerNonce(res)).toBe(inDocument);
+    });
+
+    it("issues a different nonce on every response — a fixed one is no better than 'unsafe-inline'", async () => {
+      const [first, second] = await Promise.all([fetch(`${baseUrl}/`), fetch(`${baseUrl}/`)]);
+      const firstNonce = nonceFrom(await first.text());
+      const secondNonce = nonceFrom(await second.text());
+
+      expect(firstNonce).toBeDefined();
+      expect(secondNonce).toBeDefined();
+      expect(firstNonce).not.toBe(secondNonce);
+    });
+
+    it("keeps 'self' alongside the nonce, so the app's own linked stylesheet still loads", async () => {
+      const res = await fetch(`${baseUrl}/`);
+      const policy = res.headers.get("content-security-policy") ?? "";
+      expect(policy).toMatch(/style-src 'self' 'nonce-[^']+'/);
+    });
+
+    it("never weakens the policy to 'unsafe-inline'", async () => {
+      const res = await fetch(`${baseUrl}/`);
+      expect(res.headers.get("content-security-policy")).not.toContain("unsafe-inline");
+    });
+
+    it("tells caches not to store the HTML — a cached page would carry a nonce its response header no longer matches", async () => {
+      const res = await fetch(`${baseUrl}/`);
+      expect(res.headers.get("cache-control")).toMatch(/no-store/);
+    });
+
+    it("leaves non-HTML responses alone, placeholder or not", async () => {
+      fs.writeFileSync(path.join(rootDir, "assets", "literal.js"), 'const marker = "__CSP_NONCE__";');
+
+      const res = await fetch(`${baseUrl}/assets/literal.js`);
+      // A JS asset that merely contains the placeholder text must not be
+      // rewritten: only the served document carries the nonce.
+      expect(await res.text()).toContain("__CSP_NONCE__");
+    });
+
+    it("still carries a CSP header on a response that has no document to put a nonce in", async () => {
+      const res = await fetch(`${baseUrl}/assets/app.js`);
+      expect(res.headers.get("content-security-policy")).toContain("script-src 'self'");
+    });
   });
 
   it("serves a nested asset with the correct content type", async () => {

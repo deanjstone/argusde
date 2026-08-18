@@ -115,6 +115,10 @@ periodic real-phone verification instead.
   start" shows the cumulative diff from turn 0 to the latest turn.
 - **US-5.4** — The diff view's loading and error states are both visibly distinct from
   its "has content" state — a failed diff fetch never looks identical to "no changes."
+- **US-5.5.confirm** — Reverting asks before it overwrites anything. The confirmation is a
+  real modal dialog (`alert-dialog`), which is also what proves the CSP nonce works: a Radix
+  overlay's scroll lock injects a `<style>` element, and without the nonce it would log a
+  violation the regime's zero-console-errors gate fails on ([argusde#113](https://github.com/deanjstone/argusde/issues/113)).
 - **US-5.5** — Reverting to an earlier checkpoint actually rewrites the working tree
   (verifiable via a real file's on-disk content), closes the diff panel on success, and
   the strip shows two new checkpoints (an unmarked safety snapshot, then the marked

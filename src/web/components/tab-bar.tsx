@@ -20,7 +20,7 @@ export function TabBar({ active, onChange }: TabBarProps) {
     // Flex with equal-basis children rather than `grid-cols-N`, which had to
     // be edited by hand when a fourth tab was added and silently mislaid one
     // until it was. A computed `gridTemplateColumns` would have been the
-    // obvious fix and is unavailable — see CONTENT_SECURITY_POLICY in
+    // obvious fix and is unavailable — see contentSecurityPolicy in
     // server/http/static-server.ts.
     <nav className="flex border-t border-border bg-background pb-[env(safe-area-inset-bottom)]">
       {TABS.map((tab) => (

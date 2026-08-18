@@ -364,6 +364,16 @@ async function main() {
       const revertBtn = page.getByRole("button", { name: /revert to this checkpoint/i });
       if ((await revertBtn.count()) && beforeRevert === "BETA") {
         await revertBtn.click();
+        // Reverting asks first since argusde#113 — the alert-dialog #93's
+        // component table assigns it, which the CSP nonce unblocked. The
+        // confirmation is itself the overlay this regime proves is CSP-clean
+        // (the run's zero-console-errors gate covers the violation a
+        // nonce-less <style> would log).
+        await page.getByRole("alertdialog").waitFor({ timeout: 10000 });
+        record("US-5.5.confirm", "pass", "reverting asks for confirmation before overwriting the working tree");
+        await scanA11y(page, "US-5.5.confirm");
+        await shot(page, "US-5.5-revert-confirmation");
+        await page.getByRole("button", { name: /^revert$/i }).click();
         await page.waitForTimeout(4000);
 
         const afterRevert = fs.readFileSync(revertMarker, "utf8").trim();
@@ -1043,6 +1053,8 @@ async function main() {
           await matrixPage.waitForSelector("text=/revert to this checkpoint/i", { timeout: 10000 });
           failing.add("thread.revert-checkpoint");
           await matrixPage.getByRole("button", { name: /revert to this checkpoint/i }).click();
+          await matrixPage.getByRole("alertdialog").waitFor({ timeout: 10000 });
+          await matrixPage.getByRole("button", { name: /^revert$/i }).click();
           record("US-14.1h", (await failureVisible("thread.revert-checkpoint")) ? "pass" : "fail", "checkpoint-revert failure is visibly surfaced");
           await clearFailure();
         } else {

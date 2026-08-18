@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Replaced per response by the server (see server/http/static-server.ts,
+         argusde#113). Vite copies this through the build untouched; main.tsx
+         reads it and hands it to Radix before anything mounts. A page opened
+         straight off disk keeps the literal placeholder, which matches no CSP
+         header and so grants nothing. -->
+    <meta name="csp-nonce" content="__CSP_NONCE__" />
     <title>ArgusDE</title>
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0a0a0a" />

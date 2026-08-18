@@ -21,7 +21,7 @@ import type { SyntaxKind, SyntaxLine } from "../../shared/ws-protocol.js";
  *
  * **Tokens carry a semantic kind, not a colour.** Not negotiable: the inline
  * style attribute a per-token colour needs is blocked by the UI's CSP (see
- * CONTENT_SECURITY_POLICY in server/http/static-server.ts). It is also what
+ * contentSecurityPolicy in server/http/static-server.ts). It is also what
  * CLAUDE.md asks for — a colour baked into the payload is the same mistake one
  * layer further out — and a short kind costs far less on the wire.
  */

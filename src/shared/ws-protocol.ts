@@ -210,7 +210,7 @@ export interface WorkingTreeListing {
  *
  * The server sends kinds and the stylesheet decides colours: a per-token
  * colour would need an inline style attribute, which the UI's CSP blocks (see
- * CONTENT_SECURITY_POLICY in server/http/static-server.ts), and colour belongs
+ * contentSecurityPolicy in server/http/static-server.ts), and colour belongs
  * in the theme's CSS variables rather than a payload (CLAUDE.md). Bucketed
  * from TextMate scopes — see server/workspace/highlight.ts.
  */
@@ -306,7 +306,7 @@ export interface ChangedFile {
  *
  * The *kind* travels rather than a colour, for the same two reasons as syntax
  * tokens: a per-line colour would need an inline style attribute, which the
- * UI's CSP blocks (see CONTENT_SECURITY_POLICY in server/http/static-server.ts),
+ * UI's CSP blocks (see contentSecurityPolicy in server/http/static-server.ts),
  * and colour belongs in the theme. It also spares the client re-parsing a
  * patch it was just handed.
  */
