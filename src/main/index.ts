@@ -32,7 +32,7 @@ let mainWindow: BrowserWindow | null = null;
  * URL via the connect screen, that becomes authoritative for the rest of
  * the session, not re-read from the env var on every retry. It's only
  * persisted to disk once a connection to it actually succeeds (see
- * did-finish-load below) — not eagerly when the user clicks Connect, so a
+ * did-navigate below) — not eagerly when the user clicks Connect, so a
  * bad URL can never overwrite a previously-working persisted config.
  */
 let currentServerUrl: string;
@@ -47,6 +47,21 @@ let currentServerUrl: string;
  */
 function isFromConnectScreen(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   return event.senderFrame?.url === CONNECT_SCREEN_URL;
+}
+
+/**
+ * Electron reports the URL it committed, which is Chromium's normalised form
+ * — "http://host:3000" typed into the connect screen comes back as
+ * "http://host:3000/". Comparing the raw strings would silently refuse to
+ * persist a perfectly good URL over a trailing slash.
+ */
+function isSameUrl(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return false;
+  }
 }
 
 async function attemptConnect(window: BrowserWindow, url: string): Promise<void> {
@@ -113,14 +128,6 @@ function createWindow(): void {
   });
   const window = mainWindow;
 
-  // Set by did-fail-load, cleared when a fresh main-frame navigation starts.
-  // See did-finish-load below for why "a load finished" is not "a load worked".
-  let navigationFailed = false;
-
-  window.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
-    if (isMainFrame && !isSameDocument) navigationFailed = false;
-  });
-
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame) return; // a sub-resource failure, not the page itself
     if (errorCode === ERR_ABORTED) return; // a superseded/cancelled navigation, not a real connection failure
@@ -131,31 +138,30 @@ function createWindow(): void {
     // naming the address matters most, since a typo is the likely cause.
     // Fall back to what the user actually asked for.
     const failedUrl = validatedURL || currentServerUrl;
-    navigationFailed = true;
     void showConnectScreen(window, `Couldn't reach ${failedUrl}: ${errorDescription}`);
   });
 
-  window.webContents.on("did-finish-load", () => {
-    // "Finished loading" is not "connected". Verified against real Electron:
-    // an unreachable URL fires did-start-navigation, then did-fail-load
-    // (ERR_CONNECTION_REFUSED), and then **did-finish-load anyway** — because
-    // the error page is itself a finished load — with getURL() still returning
-    // the URL that failed. did-navigate never fires at all.
-    //
-    // So this used to persist a server URL that had never worked, making it the
-    // default for the next launch. What hid it was a race: showConnectScreen is
-    // async, and when its navigation landed first the URL check below happened
-    // to fail. On a slower machine it does not, which is how CI caught this
-    // while every local run passed.
-    //
-    // did-fail-load always precedes did-finish-load (verified in that order),
-    // so the flag is a sound guard rather than a hopeful one.
-    if (navigationFailed) return;
-
-    const loadedUrl = window.webContents.getURL();
-    if (loadedUrl !== CONNECT_SCREEN_URL && loadedUrl === currentServerUrl) {
-      setServerUrl(app.getPath("userData"), currentServerUrl);
-    }
+  // "Finished loading" is not "connected". Verified against real Electron
+  // under Xvfb, an unreachable URL produces:
+  //
+  //   start-nav <server url> → fail-load ERR_CONNECTION_REFUSED
+  //     → start-nav <connect screen> → finish-load getURL=<server url>
+  //     → did-navigate <connect screen>
+  //
+  // An unreachable URL still fires did-finish-load — the error page is itself
+  // a finished load — with getURL() returning the URL that failed. Guarding
+  // that with a "did the last navigation fail" flag doesn't work either: the
+  // connect screen's own navigation starts *before* the failed page's
+  // did-finish-load arrives, clearing the flag just in time to persist a URL
+  // that never worked.
+  //
+  // did-navigate is the positive signal instead: it fires only for a
+  // navigation that actually committed a document — never for the failed URL,
+  // and with an httpResponseCode when it did.
+  window.webContents.on("did-navigate", (_event, url) => {
+    if (url === CONNECT_SCREEN_URL) return;
+    if (!isSameUrl(url, currentServerUrl)) return; // some other navigation, not the connect attempt we're tracking
+    setServerUrl(app.getPath("userData"), currentServerUrl);
   });
 
   void attemptConnect(window, currentServerUrl);
