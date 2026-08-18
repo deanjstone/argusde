@@ -13,6 +13,12 @@ export interface DiffViewProps {
   /** Restores the workspace to the checkpoint this diff is showing. Omit to hide the control entirely. */
   onRevert?: () => void;
   reverting?: boolean;
+  /**
+   * Set when reverting would be refused right now, with the reason. Passed in
+   * rather than derived here: the diff view knows nothing about turns, and the
+   * condition belongs to whoever does.
+   */
+  revertBlockedReason?: string;
   /** Every captured turn, for the comparison pickers. Omit (with range/onChangeRange) to hide them. */
   availableTurns?: number[];
   range?: DiffRange;
@@ -41,6 +47,7 @@ export function DiffView({
   onClose,
   onRevert,
   reverting = false,
+  revertBlockedReason,
   availableTurns,
   range,
   onChangeRange,
@@ -62,7 +69,8 @@ export function DiffView({
             <button
               type="button"
               onClick={onRevert}
-              disabled={reverting}
+              disabled={reverting || revertBlockedReason !== undefined}
+              title={revertBlockedReason}
               className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
             >
               {reverting ? "Reverting…" : "Revert to this checkpoint"}
