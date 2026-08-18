@@ -1,6 +1,7 @@
 import type { AcpSession, PromptContentBlock } from "../../utility/acp-session.js";
 import type {
   AcpSessionEvent,
+  AgentCommand,
   AgentPromptCapabilities,
   ChatContentBlock,
   ConnectionState,
@@ -104,6 +105,10 @@ export class ThreadRuntime {
   // lastKnownModes: it is broadcast once, at session start, and a client
   // that connects afterwards has no other way to learn it.
   private lastKnownCapabilities: AgentPromptCapabilities = NO_PROMPT_CAPABILITIES;
+  // And the same again for the agent's command list — a third rider on the
+  // road lastKnownModes opened. Empty until the agent says otherwise, which
+  // is also what an agent advertising no commands honestly reports.
+  private lastKnownCommands: AgentCommand[] = [];
   // Same rationale as lastKnownModes, but this one genuinely changes across
   // a session's lifetime (not just a one-shot catalog) — every
   // "connection-state" event updates it, so a client that missed the live
@@ -210,6 +215,10 @@ export class ThreadRuntime {
    */
   getPromptCapabilities(): AgentPromptCapabilities {
     return this.lastKnownCapabilities;
+  }
+
+  getAvailableCommands(): AgentCommand[] {
+    return this.lastKnownCommands;
   }
 
   getConnectionState(): { state: ConnectionState; error: string | undefined } {
@@ -320,6 +329,12 @@ export class ThreadRuntime {
         break;
       case "agent-capabilities":
         this.lastKnownCapabilities = event.capabilities;
+        break;
+      case "available-commands":
+        // Replaced wholesale, never merged: ACP resends the complete list on
+        // every change, so a command the agent dropped must disappear rather
+        // than linger from an earlier broadcast (spec #93 story 44).
+        this.lastKnownCommands = event.commands;
         break;
       case "mode-changed":
         // Only the session-start event carries the catalog — a mid-session

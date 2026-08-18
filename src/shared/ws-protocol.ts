@@ -20,7 +20,7 @@ export const WS_PATH = "/ws";
  * doesn't need to import the whole server module graph just to reach this
  * string.
  */
-export const API_VERSION = "1.2.0";
+export const API_VERSION = "1.3.0";
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),

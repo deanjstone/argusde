@@ -15,6 +15,13 @@ const modes = process.env.ARGUSDE_FAKE_AGENT_MODES ? JSON.parse(process.env.ARGU
 const promptCapabilities = process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES
   ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES)
   : undefined;
+// The command list this agent pushes shortly after session start, mirroring
+// the real claude-agent-acp (which sends available_commands_update unprompted
+// and offers the list nowhere else). Unset means an agent that advertises
+// none — the case story 45 is about.
+const availableCommands = process.env.ARGUSDE_FAKE_AGENT_COMMANDS
+  ? JSON.parse(process.env.ARGUSDE_FAKE_AGENT_COMMANDS)
+  : undefined;
 const sessionId = "smoke-session-1";
 
 const app = agent({ name: "smoke-fake-agent" })
@@ -22,7 +29,20 @@ const app = agent({ name: "smoke-fake-agent" })
     protocolVersion: 1,
     agentCapabilities: promptCapabilities ? { promptCapabilities } : {},
   }))
-  .onRequest(methods.agent.session.new, async () => ({ sessionId, modes }))
+  .onRequest(methods.agent.session.new, async ({ client }) => {
+    if (availableCommands) {
+      // Deliberately after the response rather than part of it: the real
+      // bridge pushes this as a notification once the session exists, and a
+      // client that assumed it arrived with session/new would be wrong.
+      void Promise.resolve().then(() =>
+        client.notify(methods.client.session.update, {
+          sessionId,
+          update: { sessionUpdate: "available_commands_update", availableCommands },
+        }),
+      );
+    }
+    return { sessionId, modes };
+  })
   // No current_mode_update notification here — matches the real
   // claude-agent-acp, which confirms a client-requested session/set_mode
   // via its response only. AcpSession.setMode() synthesizes the
@@ -116,6 +136,15 @@ const app = agent({ name: "smoke-fake-agent" })
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: `PERMISSION-OUTCOME:${JSON.stringify(response.outcome ?? response)}` },
           },
+        });
+      }
+
+      // The agent's command set changing mid-session (spec #93 story 44) —
+      // the whole list again, not a delta.
+      if (step.type === "commands-changed") {
+        await client.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "available_commands_update", availableCommands: step.commands },
         });
       }
 

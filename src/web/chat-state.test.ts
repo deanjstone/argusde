@@ -18,6 +18,7 @@ describe("chatStateReducer", () => {
       availableModes: [],
       recordsActivity: true,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      availableCommands: [],
     });
   });
 
@@ -186,6 +187,59 @@ describe("chatStateReducer", () => {
     ]);
   });
 
+  it("learns the agent's slash commands from its session event", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "available-commands",
+          commands: [{ name: "review", description: "Review the diff", inputHint: "What to focus on" }],
+        },
+      },
+    ]);
+
+    expect(state.availableCommands).toEqual([
+      { name: "review", description: "Review the diff", inputHint: "What to focus on" },
+    ]);
+  });
+
+  it("replaces the command list on a later update rather than merging — a dropped command disappears", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: {
+          kind: "available-commands",
+          commands: [
+            { name: "review", description: "Review the diff", inputHint: null },
+            { name: "plan", description: "Draft a plan", inputHint: null },
+          ],
+        },
+      },
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "available-commands", commands: [{ name: "plan", description: "Draft a plan", inputHint: null }] },
+      },
+    ]);
+
+    expect(state.availableCommands.map((c) => c.name)).toEqual(["plan"]);
+  });
+
+  it("forgets the command list when a session starts over, so a restarted agent's menu isn't inherited", () => {
+    const state = reduceAll([
+      {
+        kind: "session-event",
+        threadId: "t1",
+        event: { kind: "available-commands", commands: [{ name: "review", description: "Review", inputHint: null }] },
+      },
+      { kind: "session-event", threadId: "t1", event: { kind: "connection-state", state: "connecting" } },
+    ]);
+
+    expect(state.availableCommands).toEqual([]);
+  });
+
   it("learns the agent's prompt capabilities from its session-start event", () => {
     const state = reduceAll([
       {
@@ -293,6 +347,7 @@ describe("chatStateReducer", () => {
         connectionState: "connected",
         connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
     ]);
 
@@ -318,6 +373,7 @@ describe("chatStateReducer", () => {
         connectionState: "connected",
         connectionError: undefined,
         promptCapabilities: { image: true, audio: false, embeddedContext: true },
+        availableCommands: [],
       },
     ]);
 
@@ -326,7 +382,7 @@ describe("chatStateReducer", () => {
 
   it("history-loaded carries the connection state a client would otherwise have missed racing the new Thread's own start()-time broadcast", () => {
     const state = reduceAll([
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false } },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [] },
     ]);
 
     expect(state.connectionState).toBe("connected");
@@ -340,7 +396,7 @@ describe("chatStateReducer", () => {
         threadId: "t1",
         event: { kind: "mode-changed", modeId: "default", availableModes: [{ id: "default", name: "Default" }] },
       },
-      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false } },
+      { kind: "history-loaded", messages: [], activities: [], recordsActivity: true, currentModeId: null, availableModes: [], connectionState: "connected", connectionError: undefined, promptCapabilities: { image: false, audio: false, embeddedContext: false }, availableCommands: [] },
     ]);
 
     expect(state.currentModeId).toBeUndefined();
@@ -408,6 +464,7 @@ describe("chatStateReducer", () => {
           connectionState: "connected",
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
       ]);
 
@@ -428,6 +485,7 @@ describe("chatStateReducer", () => {
           connectionState: "connected",
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
       ]);
 
@@ -459,6 +517,7 @@ describe("chatStateReducer", () => {
           connectionState: "connected",
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
       ]);
 
@@ -481,6 +540,7 @@ describe("chatStateReducer", () => {
           connectionState: "connected",
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
       ]);
 
@@ -502,6 +562,7 @@ describe("chatStateReducer", () => {
           connectionState: "connected",
           connectionError: undefined,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        availableCommands: [],
       },
       ]);
 

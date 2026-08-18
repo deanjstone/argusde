@@ -26,6 +26,27 @@ export const NO_PROMPT_CAPABILITIES: AgentPromptCapabilities = {
   embeddedContext: false,
 };
 
+/**
+ * One command the connected agent will recognise in a prompt (spec #93 phase
+ * 8). Discovery only — ArgusDE never executes one. Selecting it puts text in
+ * the composer and the user sends it like any other message; the agent side
+ * parses the leading `/name` itself (verified against the real
+ * claude-agent-acp, which answers an unknown one with "Unknown command: …"
+ * rather than treating it as prose).
+ */
+export interface AgentCommand {
+  name: string;
+  description: string;
+  /**
+   * Flattened out of ACP's `input: { hint }`. The only input kind ACP defines
+   * is unstructured — a single hint string — so a nested optional object would
+   * make every consumer unwrap the same one field. Null when the command takes
+   * no argument, which is the overwhelming majority (107 of 122 on the real
+   * agent).
+   */
+  inputHint: string | null;
+}
+
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export interface ToolCallSummary {
@@ -100,4 +121,11 @@ export type AcpSessionEvent =
    * the session restates it — so a client that connects afterwards learns it
    * from thread.get-history instead.
    */
-  | { kind: "agent-capabilities"; capabilities: AgentPromptCapabilities };
+  | { kind: "agent-capabilities"; capabilities: AgentPromptCapabilities }
+  /**
+   * The agent's command list. Unlike the mode catalog, this legitimately
+   * arrives more than once — ACP resends the whole list whenever it changes
+   * (spec #93 story 44) — so a later event *replaces* the previous list
+   * rather than adding to it: a command the agent dropped has to disappear.
+   */
+  | { kind: "available-commands"; commands: AgentCommand[] };

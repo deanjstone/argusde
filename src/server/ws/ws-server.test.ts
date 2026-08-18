@@ -95,6 +95,7 @@ afterEach(async () => {
   delete process.env.ARGUSDE_FAKE_AGENT_STEPS;
   delete process.env.ARGUSDE_FAKE_AGENT_PROMPT_CAPABILITIES;
   delete process.env.ARGUSDE_FAKE_AGENT_ECHO_PROMPT;
+  delete process.env.ARGUSDE_FAKE_AGENT_COMMANDS;
   client.close();
   await server.close();
   eventStore.close();
@@ -1724,6 +1725,100 @@ describe("ws-server", () => {
       const history = await send({ type: "thread.get-history", commandId: "at9-h", threadId });
       const messages = history.ok ? (history.result as { messages: { role: string; content: unknown[] }[] }).messages : [];
       expect(messages.find((m) => m.role === "user")?.content).toEqual([{ type: "text", text: "just words" }]);
+    }, 20_000);
+  });
+
+  /**
+   * The agent's slash-command list (spec #93 phase 8, argusde#122). Pushed as
+   * a session notification and offered nowhere else — verified against the
+   * real claude-agent-acp, which sends it unprompted after session start and
+   * returns none on the session/new response — so the runtime caches it and
+   * history replays it, exactly as it does for modes and prompt capabilities.
+   */
+  describe("available commands", () => {
+    const COMMANDS = [
+      { name: "review", description: "Review the current diff", input: { hint: "What to focus on" } },
+      { name: "plan", description: "Draft a plan before changing anything" },
+    ];
+
+    async function createThread(prefix: string): Promise<string> {
+      const projectResult = await send({
+        type: "project.create",
+        commandId: `${prefix}-p`,
+        workspaceRoot: repoDir,
+        title: "Commands",
+      });
+      const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+      const threadResult = await send({ type: "thread.create", commandId: `${prefix}-t`, projectId, title: "T" });
+      return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    }
+
+    function historyCommands(result: Extract<ServerPush, { type: "command.result" }>): unknown {
+      return result.ok ? (result.result as { availableCommands: unknown }).availableCommands : undefined;
+    }
+
+    it("replays the agent's commands in thread.get-history, flattening ACP's input hint", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_COMMANDS = JSON.stringify(COMMANDS);
+      const threadId = await createThread("ac1");
+
+      // The push races the thread.create response, which is the whole reason
+      // history carries it at all — wait for the runtime to have seen it.
+      await waitFor(() =>
+        received.some(
+          (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "available-commands",
+        ),
+      );
+
+      const history = await send({ type: "thread.get-history", commandId: "ac1-h", threadId });
+      expect(historyCommands(history)).toEqual([
+        { name: "review", description: "Review the current diff", inputHint: "What to focus on" },
+        { name: "plan", description: "Draft a plan before changing anything", inputHint: null },
+      ]);
+    }, 20_000);
+
+    it("reports an empty list for an agent that advertises none, rather than failing", async () => {
+      const threadId = await createThread("ac2");
+
+      const history = await send({ type: "thread.get-history", commandId: "ac2-h", threadId });
+      expect(historyCommands(history)).toEqual([]);
+    }, 20_000);
+
+    it("replaces the list when the agent's commands change mid-session — a dropped command disappears", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_COMMANDS = JSON.stringify(COMMANDS);
+      process.env.ARGUSDE_FAKE_AGENT_STEPS = JSON.stringify([
+        { type: "commands-changed", commands: [{ name: "plan", description: "Draft a plan before changing anything" }] },
+        { type: "message", text: "done" },
+      ]);
+      const threadId = await createThread("ac3");
+      await waitFor(() =>
+        received.some(
+          (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "available-commands",
+        ),
+      );
+
+      await send({ type: "thread.send-message", commandId: "ac3-m", threadId, text: "go" });
+
+      const history = await send({ type: "thread.get-history", commandId: "ac3-h", threadId });
+      // "review" was in the first broadcast and not the second. A merge would
+      // leave it behind, offering a command the agent no longer answers.
+      expect(historyCommands(history)).toEqual([
+        { name: "plan", description: "Draft a plan before changing anything", inputHint: null },
+      ]);
+    }, 20_000);
+
+    it("pushes the commands live, so a client already connected doesn't have to ask", async () => {
+      process.env.ARGUSDE_FAKE_AGENT_COMMANDS = JSON.stringify(COMMANDS);
+      const threadId = await createThread("ac4");
+
+      await waitFor(() =>
+        received.some(
+          (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "available-commands",
+        ),
+      );
+      const pushed = received.find(
+        (m) => m.type === "session.event" && m.threadId === threadId && m.event.kind === "available-commands",
+      );
+      expect(pushed && pushed.type === "session.event" && pushed.event.kind === "available-commands" ? pushed.event.commands : []).toHaveLength(2);
     }, 20_000);
   });
 });

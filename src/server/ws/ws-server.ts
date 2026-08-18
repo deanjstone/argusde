@@ -412,6 +412,11 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
         // reports nothing advertised, which is the honest answer: there is
         // no agent to accept an attachment.
         const promptCapabilities = runtimes.get(command.threadId)?.getPromptCapabilities() ?? NO_PROMPT_CAPABILITIES;
+        // Third of the same kind (see availableModes above): pushed once as a
+        // session event, so a client that connected later can only learn it
+        // here. No live runtime means no agent to run a command, so an empty
+        // list is the honest answer rather than an error.
+        const availableCommands = runtimes.get(command.threadId)?.getAvailableCommands() ?? [];
         return {
           threadId: thread.id,
           projectId: thread.projectId,
@@ -423,6 +428,7 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           connectionState: connectionState.state,
           connectionError: connectionState.error,
           promptCapabilities,
+          availableCommands,
           messages,
           activities,
           // False for Threads that predate durable activity, so the client

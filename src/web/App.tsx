@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  AgentCommand,
   AgentPromptCapabilities,
   ChatContentBlock,
   ConnectionState,
@@ -217,6 +218,7 @@ export function App() {
     connectionState: ConnectionState,
     connectionError: string | undefined,
     promptCapabilities: AgentPromptCapabilities,
+    availableCommands: AgentCommand[],
   ) {
     activeThreadIdRef.current = info.threadId;
     setThread(info);
@@ -233,6 +235,7 @@ export function App() {
         connectionState,
         connectionError,
         promptCapabilities,
+        availableCommands,
       }),
     );
     setDiff(EMPTY_DIFF);
@@ -383,6 +386,7 @@ export function App() {
       activities: ActivityRecord[];
       recordsActivity: boolean;
       promptCapabilities: AgentPromptCapabilities;
+      availableCommands: AgentCommand[];
     }>({ type: "thread.get-history", threadId });
 
     becomeActiveThread(
@@ -401,6 +405,7 @@ export function App() {
       history.connectionState,
       history.connectionError,
       history.promptCapabilities,
+      history.availableCommands,
     );
   }
 
