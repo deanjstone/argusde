@@ -4,10 +4,12 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { TabBar } from "./tab-bar.js";
 
 describe("TabBar", () => {
-  it("renders all three tabs and marks the active one", () => {
+  it("renders every tab and marks the active one", () => {
     render(<TabBar active="chat" onChange={() => {}} />);
 
     expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Files" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("button", { name: "Terminal" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("button", { name: "Threads" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("button", { name: "Settings" })).not.toHaveAttribute("aria-current");
   });
@@ -21,5 +23,8 @@ describe("TabBar", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(onChange).toHaveBeenCalledWith("settings");
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(onChange).toHaveBeenCalledWith("terminal");
   });
 });

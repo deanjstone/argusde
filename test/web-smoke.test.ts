@@ -992,6 +992,138 @@ describe("web smoke: server + browser round trip", () => {
     },
     45_000,
   );
+
+  /**
+   * The terminal in a real browser (spec #128 phase 2).
+   *
+   * Two things here can only be proven in a real browser and were the
+   * spec's flagged unknown: xterm.js builds `<style>` elements it cannot
+   * nonce, and this app's CSP has no `unsafe-inline`. Without the shim in
+   * lib/style-nonce.ts, Chromium raises ten `style-src-elem` violations and
+   * applies none of xterm's rules — a terminal with no colour and wrong
+   * cell metrics. jsdom enforces no CSP at all, so only this catches a
+   * regression.
+   */
+  it(
+    "runs a real command from the Terminal tab, under the real CSP, with xterm's own stylesheets applied",
+    async () => {
+      const terminalPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const consoleMessages: string[] = [];
+      terminalPage.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
+      terminalPage.on("pageerror", (error) => consoleMessages.push(`pageerror: ${error.message}`));
+
+      try {
+        await terminalPage.goto(`http://127.0.0.1:${server.port}/`);
+        await terminalPage.getByRole("button", { name: /type a path manually/i }).click();
+        await terminalPage.getByLabel(/workspace path/i).fill(repoDir);
+        await terminalPage.getByRole("button", { name: /^start$/i }).click();
+        await terminalPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await terminalPage.getByRole("button", { name: "Terminal" }).click();
+
+        // The header names where the shell is rooted (story 7), and its
+        // appearance means terminal.open answered.
+        await terminalPage.getByText(repoDir, { exact: true }).waitFor({ timeout: 20_000 });
+        await terminalPage.waitForSelector(".xterm-rows", { timeout: 20_000 });
+
+        const surface = terminalPage.locator('[data-testid="terminal-surface"]');
+        await surface.click();
+        await terminalPage.keyboard.type("echo BROWSER_TERMINAL_OK");
+        await terminalPage.keyboard.press("Enter");
+
+        // A real shell, in the Thread's working tree, answering a real
+        // keystroke — the whole point of the phase.
+        await terminalPage.waitForFunction(
+          () => document.querySelector(".xterm-rows")?.textContent?.includes("BROWSER_TERMINAL_OK") ?? false,
+          undefined,
+          { timeout: 20_000 },
+        );
+
+        // The load-bearing CSP assertion: xterm's own style elements have
+        // content *and* applied rules. Blocked, they keep their text and
+        // parse to nothing.
+        const sheets = await terminalPage.evaluate(() =>
+          Array.from(document.querySelectorAll('[data-testid="terminal-surface"] style')).map((style) => ({
+            textLength: style.textContent?.length ?? 0,
+            rules: (style as HTMLStyleElement).sheet ? (style as HTMLStyleElement).sheet!.cssRules.length : null,
+          })),
+        );
+        expect(sheets.length).toBeGreaterThan(0);
+        expect(sheets.every((sheet) => sheet.textLength > 0)).toBe(true);
+        expect(sheets.every((sheet) => (sheet.rules ?? 0) > 0)).toBe(true);
+
+        const violations = consoleMessages.filter((message) => /content security policy/i.test(message));
+        expect(violations).toEqual([]);
+      } finally {
+        await terminalPage.close();
+      }
+    },
+    60_000,
+  );
+
+  /**
+   * The phone case (stories 20 and 22). Asserted on geometry rather than a
+   * screenshot: the terminal must not push the key bar or the tab bar off
+   * the screen, and the page must not scroll sideways.
+   */
+  it(
+    "keeps the key bar and the tab bar reachable with a terminal open on a phone-sized viewport",
+    async () => {
+      const phonePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+
+      try {
+        await phonePage.goto(`http://127.0.0.1:${server.port}/`);
+        await phonePage.getByRole("button", { name: /type a path manually/i }).click();
+        await phonePage.getByLabel(/workspace path/i).fill(repoDir);
+        await phonePage.getByRole("button", { name: /^start$/i }).click();
+        await phonePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await phonePage.getByRole("button", { name: "Terminal" }).click();
+        await phonePage.waitForSelector(".xterm-rows", { timeout: 20_000 });
+
+        const surfaceBox = await phonePage.locator('[data-testid="terminal-surface"]').boundingBox();
+        const ctrlBox = await phonePage.getByRole("button", { name: "Ctrl" }).boundingBox();
+        const tabBox = await phonePage.getByRole("button", { name: "Chat" }).boundingBox();
+        expect(surfaceBox).toBeTruthy();
+        expect(ctrlBox).toBeTruthy();
+        expect(tabBox).toBeTruthy();
+
+        // Stacked, not overlapping: emulator, then the keys a soft keyboard
+        // lacks, then the tab bar you leave by.
+        expect(surfaceBox!.y + surfaceBox!.height).toBeLessThanOrEqual(ctrlBox!.y + 1);
+        expect(ctrlBox!.y + ctrlBox!.height).toBeLessThanOrEqual(tabBox!.y + tabBox!.height + 1);
+        expect(tabBox!.y + tabBox!.height).toBeLessThanOrEqual(844);
+
+        const scrollsSideways = await phonePage.evaluate(
+          () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        );
+        expect(scrollsSideways).toBe(false);
+
+        // Leaving the tab and coming back reattaches rather than restarting:
+        // the same shell, replayed (stories 12 and 14).
+        const surface = phonePage.locator('[data-testid="terminal-surface"]');
+        await surface.click();
+        await phonePage.keyboard.type("echo REATTACH_MARKER");
+        await phonePage.keyboard.press("Enter");
+        await phonePage.waitForFunction(
+          () => document.querySelector(".xterm-rows")?.textContent?.includes("REATTACH_MARKER") ?? false,
+          undefined,
+          { timeout: 20_000 },
+        );
+
+        await phonePage.getByRole("button", { name: "Chat" }).click();
+        await phonePage.getByRole("button", { name: "Terminal" }).click();
+        await phonePage.waitForFunction(
+          () => document.querySelector(".xterm-rows")?.textContent?.includes("REATTACH_MARKER") ?? false,
+          undefined,
+          { timeout: 20_000 },
+        );
+      } finally {
+        await phonePage.close();
+      }
+    },
+    60_000,
+  );
 });
 
 /**
