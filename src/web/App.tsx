@@ -23,6 +23,7 @@ import {
   type SearchResults,
   type WorkingTreeChanges,
   type WorkingTreeListing,
+  type TerminalOpened,
 } from "../shared/ws-protocol.js";
 import { WsClient } from "./ws-client.js";
 import { chatStateReducer, initialChatState, type ChatState } from "./chat-state.js";
@@ -33,6 +34,7 @@ import { TabBar, type Tab } from "./components/tab-bar.js";
 import { ProjectPicker } from "./components/project-picker.js";
 import { ThreadList } from "./components/thread-list.js";
 import { FileBrowser } from "./components/file-browser.js";
+import { TerminalView, type TerminalPush } from "./components/terminal-view.js";
 
 interface SetupState {
   submitting: boolean;
@@ -87,6 +89,13 @@ function clearLastActiveThreadId(): void {
  */
 export function App() {
   const clientRef = useRef<WsClient | null>(null);
+  /**
+   * Terminal pushes are a stream, not a command result, so they arrive on
+   * the shared socket and are fanned out to whoever is showing a terminal.
+   * A ref rather than state: a re-render per chunk of output would be one
+   * per frame of a build's log.
+   */
+  const terminalListenersRef = useRef(new Set<(push: TerminalPush) => void>());
   const [connected, setConnected] = useState(false);
   const [setup, setSetup] = useState<SetupState>({ submitting: false });
   const [thread, setThread] = useState<ThreadInfo | null>(null);
@@ -192,6 +201,10 @@ export function App() {
         case "protocol-error":
           setChatState((s) => chatStateReducer(s, { kind: "protocol-error", message: push.message }));
           break;
+        case "terminal.output":
+        case "terminal.exit":
+          for (const listener of terminalListenersRef.current) listener(push);
+          break;
         case "command.result":
           break;
       }
@@ -292,6 +305,38 @@ export function App() {
   const workingTreeFileDiff = (path: string) => {
     const { client, threadId } = requireThreadClient();
     return client.sendCommand<FileDiff>({ type: "thread.file-diff", threadId, path });
+  };
+
+  /**
+   * Terminal commands (spec #128). Thread-scoped like the working-tree
+   * reads above, and for the same reason: the server resolves which working
+   * tree the shell starts in.
+   */
+  const openTerminal = (cols: number, rows: number) => {
+    const { client, threadId } = requireThreadClient();
+    return client.sendCommand<TerminalOpened>({ type: "terminal.open", threadId, cols, rows });
+  };
+
+  const sendTerminalInput = async (terminalId: string, data: string) => {
+    const { client, threadId } = requireThreadClient();
+    await client.sendCommand({ type: "terminal.input", threadId, terminalId, data });
+  };
+
+  const resizeTerminal = async (terminalId: string, cols: number, rows: number) => {
+    const { client, threadId } = requireThreadClient();
+    await client.sendCommand({ type: "terminal.resize", threadId, terminalId, cols, rows });
+  };
+
+  const closeTerminal = async (terminalId: string) => {
+    const { client, threadId } = requireThreadClient();
+    await client.sendCommand({ type: "terminal.close", threadId, terminalId });
+  };
+
+  const subscribeToTerminal = (listener: (push: TerminalPush) => void) => {
+    terminalListenersRef.current.add(listener);
+    return () => {
+      terminalListenersRef.current.delete(listener);
+    };
   };
 
   async function handleWorkspaceSubmit(workspaceRoot: string) {
@@ -783,6 +828,20 @@ export function App() {
             search={searchWorkingTree}
             changedFiles={workingTreeChanges}
             fileDiff={workingTreeFileDiff}
+          />
+        )}
+        {/* Mounted only while the tab is open, which is what keeps "nothing
+            spawns until you ask for one" true (story 10): the open command
+            goes out on mount. Leaving the tab disposes the emulator, never
+            the shell. */}
+        {tab === "terminal" && (
+          <TerminalView
+            threadId={thread?.threadId}
+            openTerminal={openTerminal}
+            sendInput={sendTerminalInput}
+            resizeTerminal={resizeTerminal}
+            closeTerminal={closeTerminal}
+            subscribe={subscribeToTerminal}
           />
         )}
         {tab === "threads" &&

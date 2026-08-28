@@ -1820,6 +1820,172 @@ async function main() {
       }
     }
 
+
+    // ---- US-22: terminal (spec #128 phase 2) ----
+    // On its own isolated server, like the US-18..US-21 blocks: this one
+    // spawns a real shell, and it should not be sharing a Project (or a
+    // working tree) with anything else the audit is doing. Runs at every
+    // viewport — the mobile pass is the point of stories 22.5 and 22.6,
+    // since a terminal you cannot leave is not usable on a phone.
+    //
+    // No visual baselines here, deliberately: this surface renders a
+    // freshly-made temp directory in its header and a live shell prompt in
+    // its body, so every run would differ from its own baseline. A
+    // screenshot diff that can only ever fail is worse than none — the
+    // functional, geometry, a11y and CSP checks below are what actually
+    // hold this surface to account.
+    {
+      let terminalServer;
+      const terminalRepo = makeGitRepo("argusde-audit-terminal-");
+      const terminalPage = await context.newPage();
+      const cspViolations = [];
+      terminalPage.on("console", (message) => {
+        if (/content security policy/i.test(message.text())) cspViolations.push(message.text());
+      });
+      try {
+        terminalServer = await startIsolatedServer({ steps: [{ type: "message", text: "ready" }] });
+        await terminalPage.goto(terminalServer.url);
+        await terminalPage.getByRole("button", { name: /type a path manually/i }).click();
+        await terminalPage.getByLabel(/workspace path/i).fill(terminalRepo);
+        await terminalPage.getByRole("button", { name: /^start$/i }).click();
+        await terminalPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        // ---- US-22.1: the Terminal tab opens a shell rooted at the
+        // Thread's working tree, and says which tree that is ----
+        await terminalPage.getByRole("button", { name: "Terminal" }).click();
+        const rootShown = await terminalPage
+          .getByText(terminalRepo, { exact: true })
+          .waitFor({ state: "visible", timeout: 25000 })
+          .then(() => true)
+          .catch(() => false);
+        const emulatorShown = await terminalPage
+          .waitForSelector(".xterm-rows", { timeout: 25000 })
+          .then(() => true)
+          .catch(() => false);
+        record(
+          "US-22.1",
+          rootShown && emulatorShown ? "pass" : "fail",
+          rootShown && emulatorShown
+            ? "terminal opened, header names the Thread's working tree"
+            : `terminal did not open (working tree named: ${rootShown}, emulator rendered: ${emulatorShown})`,
+        );
+        if (emulatorShown) {
+          await scanA11y(terminalPage, "US-22.1");
+          await checkNoHorizontalScroll(terminalPage, "US-22.6");
+        }
+
+        if (emulatorShown) {
+          // ---- US-22.2: a typed command actually runs ----
+          await terminalPage.locator('[data-testid="terminal-surface"]').click();
+          await terminalPage.keyboard.type("echo AUDIT_TERMINAL_OK");
+          await terminalPage.keyboard.press("Enter");
+          const commandRan = await terminalPage
+            .waitForFunction(() => document.querySelector(".xterm-rows")?.textContent?.includes("AUDIT_TERMINAL_OK") ?? false, undefined, {
+              timeout: 25000,
+            })
+            .then(() => true)
+            .catch(() => false);
+          record(
+            "US-22.2",
+            commandRan ? "pass" : "fail",
+            commandRan ? "a typed command ran in a real shell and its output appeared" : "no output from a typed command within 25s",
+          );
+
+          // ---- US-22.3: xterm renders under the real CSP ----
+          // The one that would fail silently: blocked style elements keep
+          // their text and parse to zero rules, so the terminal renders
+          // without colour or correct cell metrics rather than erroring.
+          const sheets = await terminalPage.evaluate(() =>
+            Array.from(document.querySelectorAll('[data-testid="terminal-surface"] style')).map((style) => ({
+              textLength: style.textContent?.length ?? 0,
+              rules: style.sheet ? style.sheet.cssRules.length : null,
+            })),
+          );
+          const allApplied = sheets.length > 0 && sheets.every((sheet) => (sheet.rules ?? 0) > 0);
+          record(
+            "US-22.3",
+            allApplied && cspViolations.length === 0 ? "pass" : "fail",
+            allApplied && cspViolations.length === 0
+              ? `xterm's ${sheets.length} style elements all applied, no CSP violations`
+              : `style elements: ${JSON.stringify(sheets)}; CSP violations: ${cspViolations.length}`,
+          );
+
+          // ---- US-22.4: the keys a soft keyboard does not have ----
+          const keyBar = ["Ctrl", "Escape", "Tab", "Up", "Down", "Left", "Right"];
+          const missingKeys = [];
+          for (const key of keyBar) {
+            if ((await terminalPage.getByRole("button", { name: key }).count()) === 0) missingKeys.push(key);
+          }
+          record(
+            "US-22.4",
+            missingKeys.length === 0 ? "pass" : "fail",
+            missingKeys.length === 0 ? `key bar offers ${keyBar.join(", ")}` : `key bar missing: ${missingKeys.join(", ")}`,
+          );
+
+          // ---- US-22.5: leaving the tab and coming back reattaches to the
+          // same shell rather than starting a second one ----
+          await terminalPage.getByRole("button", { name: "Chat" }).click();
+          await terminalPage.getByRole("button", { name: "Terminal" }).click();
+          const replayed = await terminalPage
+            .waitForFunction(() => document.querySelector(".xterm-rows")?.textContent?.includes("AUDIT_TERMINAL_OK") ?? false, undefined, {
+              timeout: 25000,
+            })
+            .then(() => true)
+            .catch(() => false);
+          record(
+            "US-22.5",
+            replayed ? "pass" : "fail",
+            replayed ? "reattaching replayed the earlier output instead of starting a blank shell" : "returning to the tab lost the session's output",
+          );
+
+          // ---- US-22.6: emulator, key bar and tab bar stack rather than
+          // overlap, at whatever viewport this pass is running ----
+          const surfaceBox = await terminalPage.locator('[data-testid="terminal-surface"]').boundingBox();
+          const ctrlBox = await terminalPage.getByRole("button", { name: "Ctrl" }).boundingBox();
+          const tabBox = await terminalPage.getByRole("button", { name: "Chat" }).boundingBox();
+          const stacked =
+            surfaceBox && ctrlBox && tabBox && surfaceBox.y + surfaceBox.height <= ctrlBox.y + 1 && ctrlBox.y + ctrlBox.height <= tabBox.y + tabBox.height + 1;
+          record(
+            "US-22.6b",
+            stacked ? "pass" : "fail",
+            stacked
+              ? "terminal, key bar and tab bar are stacked, none covering another"
+              : `overlapping layout — surface: ${JSON.stringify(surfaceBox)}, ctrl: ${JSON.stringify(ctrlBox)}, tabs: ${JSON.stringify(tabBox)}`,
+          );
+
+          // ---- US-22.7: a shell that exits says so and offers a new one ----
+          await terminalPage.locator('[data-testid="terminal-surface"]').click();
+          await terminalPage.keyboard.type("exit");
+          await terminalPage.keyboard.press("Enter");
+          const exitAnnounced = await terminalPage
+            .getByText(/the shell exited/i)
+            .waitFor({ state: "visible", timeout: 25000 })
+            .then(() => true)
+            .catch(() => false);
+          const offersNew = exitAnnounced && (await terminalPage.getByRole("button", { name: /new terminal/i }).count()) > 0;
+          record(
+            "US-22.7",
+            exitAnnounced && offersNew ? "pass" : "fail",
+            exitAnnounced
+              ? offersNew
+                ? "an exited shell is announced with its code, and a new terminal is offered"
+                : "the exit was announced but no new terminal was offered"
+              : "an exited shell left the terminal silently unresponsive",
+          );
+        } else {
+          for (const story of ["US-22.2", "US-22.3", "US-22.4", "US-22.5", "US-22.6b", "US-22.7"]) {
+            record(story, "skip", "terminal never opened — nothing to check");
+          }
+        }
+      } catch (error) {
+        record("US-22.throw", "fail", `terminal checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await terminalPage.close();
+        await terminalServer?.close();
+        fs.rmSync(terminalRepo, { recursive: true, force: true });
+      }
+    }
+
     // ---- US-11: `argusde serve` startup output ----
     // Spawned on its own ephemeral port so it can't disturb the live server
     // this audit is running against.

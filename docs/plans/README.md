@@ -36,3 +36,4 @@ Final sequence — the daily-driver uplift ([spec #93](https://github.com/deanjs
 Terminal ([spec #128](https://github.com/deanjstone/argusde/issues/128)), whose own phase numbering starts fresh at 1; files here keep this directory's running count:
 
 - [Phase 23: Server-side PTY, protocol and lifecycle](phase-23-terminal-server.md) — spec #128 phase 1. A server-owned pseudo-terminal per Thread that survives a client going away, with coalesced output, real flow control, and teardown on every close path.
+- [Phase 24: The Terminal tab](phase-24-terminal-tab.md) — spec #128 phase 2. xterm.js in a fifth bottom tab, reattaching rather than restarting, with a key bar for what a soft keyboard lacks and a scoped nonce shim so xterm's own stylesheets survive the app's CSP.

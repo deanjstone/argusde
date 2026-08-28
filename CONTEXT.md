@@ -42,6 +42,10 @@ It exists as a deliberate, argued exception to the working-tree surface's princi
 
 **Flow control** — a terminal's output is coalesced into one push per frame rather than one per chunk, and the process itself is paused when either the unflushed buffer or the slowest client's socket backlog runs high. Measured against a real pty: `yes` sustains 50 MiB/s across ~76,000 chunks a second, which one frame per chunk would turn into 76,000 frames a second on the socket the conversation shares. Pausing the process was chosen over dropping output — nothing is discarded, and memory stays bounded either way.
 
+**Terminal tab** — the terminal's own surface, fifth in the bottom tab bar beside Files, since both are the Thread's working tree — one read, one run. It is a *view* of the process rather than the process itself: leaving the tab disposes the emulator and nothing else, and returning reattaches and replays. Alongside the emulator it carries a key bar for what a soft keyboard lacks (Ctrl as a one-shot modifier, Escape, Tab, arrows), because a terminal you cannot interrupt on a phone is decorative. xterm.js is loaded on demand when the tab is first opened — it is ~86 KiB gzipped against an app bundle of ~127 KiB, and this app's service worker deliberately does not cache. Since spec #128 phase 2.
+
+xterm builds `<style>` elements it offers no way to nonce, and this app's CSP has no `unsafe-inline`, so its stylesheets are handed the document's nonce for exactly as long as it takes to build them (`src/web/lib/style-nonce.ts`). Left alone it renders with no colour and wrong cell metrics rather than erroring — which is why the audit regime asserts `cssRules.length`, not just that the elements exist.
+
 A terminal is exactly as privileged as the ArgusDE server process, and the tailnet is the only thing gating reach to it. Path containment (`resolveWithin`) governs what a *client* can name on the wire; it is not a jail, and a shell can `cd` wherever the server's user can. That is stated rather than implied — see #128's story 29.
 
 ## Checkpointing

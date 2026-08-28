@@ -1,6 +1,6 @@
 import { cn } from "../lib/utils.js";
 
-export type Tab = "chat" | "files" | "threads" | "settings";
+export type Tab = "chat" | "files" | "terminal" | "threads" | "settings";
 
 export interface TabBarProps {
   active: Tab;
@@ -10,6 +10,9 @@ export interface TabBarProps {
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "chat", label: "Chat" },
   { id: "files", label: "Files" },
+  // Next to Files rather than at the end: both are the Thread's working
+  // tree, one read and one run (spec #128).
+  { id: "terminal", label: "Terminal" },
   { id: "threads", label: "Threads" },
   { id: "settings", label: "Settings" },
 ];

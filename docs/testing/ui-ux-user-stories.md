@@ -352,3 +352,34 @@ expands into the full step list.
   the panel is a collapsible rather than a modal drawer.
 - **US-21.6** — Neither the collapsed pill nor the expanded panel introduces horizontal page
   scroll at mobile width.
+
+## US-22: Terminal
+
+Added with spec [#128](https://github.com/deanjstone/argusde/issues/128) phase 2, which gave the
+Thread's own shell a fifth bottom tab. The process lives on the server, so this surface is a view
+of it and nothing more — which is what most of these stories are really checking.
+
+- **US-22.1** — Opening the Terminal tab starts a shell rooted at the Thread's working tree (its
+  Worktree when promoted, the Project's workspace root otherwise), and the header names that
+  directory and the branch it is on. Nothing is spawned before the tab is opened.
+- **US-22.2** — A command typed into the terminal actually runs in a real shell and its output
+  appears — a real PTY, not a command runner.
+- **US-22.3** — xterm.js's own style elements are *applied* under the app's real CSP, not merely
+  present. This is the failure that hides: blocked style elements keep their text and parse to
+  zero rules, so the terminal renders without colour or correct cell metrics rather than raising
+  an error. Checked as `sheet.cssRules.length > 0` for every one of them, plus zero
+  `content security policy` console violations. See `src/web/lib/style-nonce.ts` for why xterm
+  needs help here at all.
+- **US-22.4** — The key bar offers Ctrl, Escape, Tab and the four arrows — the keys a soft
+  keyboard does not have, without which a terminal on a phone is decorative.
+- **US-22.5** — Leaving the Terminal tab and coming back reattaches to the same shell and replays
+  what it printed, rather than starting a second one. The client-side emulator is disposed on
+  leaving; the process is not.
+- **US-22.6** — The terminal introduces no horizontal page scroll at mobile width, and the
+  emulator, the key bar and the bottom tab bar stack rather than overlap — compared on real
+  `getBoundingClientRect()` geometry, not inferred from a screenshot.
+- **US-22.7** — A shell that exits says so, with its exit code, and offers a new terminal —
+  a dead terminal must be obviously dead rather than silently unresponsive.
+- **US-22.8** *[real-device-only]* — With a soft keyboard open on a real phone, the terminal's
+  last line, the key bar and the tab bar all stay visible. Headless emulation cannot reproduce a
+  dynamic viewport (see the known hard limit above), so this one needs a real device.
