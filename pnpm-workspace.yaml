@@ -11,5 +11,9 @@ enablePrePostScripts: true
 
 allowBuilds:
   better-sqlite3: true
+  # node-pty is the terminal's PTY binding (spec #128 phase 1). Native, like
+  # better-sqlite3 — and like it, built for plain Node: the server runs as
+  # `node dist/server/cli.js serve`, not inside Electron, so no electron-rebuild.
+  node-pty: true
   electron: true
   esbuild: true

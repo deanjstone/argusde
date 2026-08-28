@@ -13,7 +13,7 @@ import { AcpSession } from "../../utility/acp-session.js";
 import { spawnAgentProcessTransport } from "../../utility/spawn-agent-process.js";
 import { branchNameFor } from "../worktree/worktree-store.js";
 import { startWsServer, type WsServerHandle } from "./ws-server.js";
-import type { ServerPush } from "../../shared/ws-protocol.js";
+import type { ServerPush, TerminalOpened } from "../../shared/ws-protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixtureCliPath = path.resolve(__dirname, "../../../test/fixtures/fake-agent-cli.mjs");
@@ -1975,4 +1975,207 @@ describe("ws-server", () => {
       expect(persisted).not.toContain("Read the router");
     }, 20_000);
   });
+});
+
+/**
+ * Terminal (spec #128 phase 1).
+ *
+ * These drive a real pty through the real protocol — a fake would prove
+ * nothing about what this phase exists to prove: that a shell runs in the
+ * Thread's working tree, that its output reaches a client without drowning
+ * the socket, and that closing a Thread does not leave a shell behind.
+ */
+describe("ws-server terminal", () => {
+  /** Ctrl-C, as a client sends it. Built rather than typed, so the byte itself never lands in a source file. */
+  const CTRL_C = String.fromCharCode(3);
+
+  async function openThread(prefix: string): Promise<string> {
+    const projectResult = await send({ type: "project.create", commandId: `${prefix}-p`, workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: `${prefix}-t`, projectId, title: "T" });
+    return threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+  }
+
+  function terminalOutput(threadId: string): string {
+    return received
+      .filter((m): m is Extract<ServerPush, { type: "terminal.output" }> => m.type === "terminal.output" && m.threadId === threadId)
+      .map((m) => m.data)
+      .join("");
+  }
+
+  it("opens a terminal in the Thread's working tree and runs a real command in it", async () => {
+    const threadId = await openThread("tm1");
+
+    const opened = await send({ type: "terminal.open", commandId: "tm1-o", threadId, cols: 80, rows: 24 });
+    expect(opened.ok).toBe(true);
+    const terminal = opened.ok ? (opened.result as TerminalOpened) : null;
+    expect(terminal).toMatchObject({
+      threadId,
+      cwd: repoDir,
+      // Story 7: you must never be able to run a command against a working
+      // tree you did not mean.
+      branch: "main",
+      detached: false,
+      resumed: false,
+      exit: null,
+      scrollbackTruncated: false,
+    });
+    expect(terminal?.shell).toBeTruthy();
+
+    await send({ type: "terminal.input", commandId: "tm1-i", threadId, terminalId: terminal!.terminalId, data: "echo TERMINAL_WS_OK\n" });
+    await waitFor(() => terminalOutput(threadId).includes("TERMINAL_WS_OK"));
+  }, 30_000);
+
+  it("hands a reattaching client the same terminal and replays what it missed", async () => {
+    const threadId = await openThread("tm2");
+    const first = await send({ type: "terminal.open", commandId: "tm2-o", threadId, cols: 80, rows: 24 });
+    const terminal = first.ok ? (first.result as TerminalOpened) : null;
+
+    await send({ type: "terminal.input", commandId: "tm2-i", threadId, terminalId: terminal!.terminalId, data: "echo REPLAY_ME\n" });
+    await waitFor(() => terminalOutput(threadId).includes("REPLAY_ME"));
+
+    // A reload, a second client, or a phone waking up: the same process,
+    // not a second shell (story 14).
+    const second = await send({ type: "terminal.open", commandId: "tm2-o2", threadId, cols: 100, rows: 30 });
+    const reattached = second.ok ? (second.result as TerminalOpened) : null;
+
+    expect(reattached?.terminalId).toBe(terminal?.terminalId);
+    expect(reattached?.resumed).toBe(true);
+    expect(reattached?.scrollback).toContain("REPLAY_ME");
+    // The reattaching client's viewport is the current one, so the process
+    // is told about it rather than left sized for a client that has gone.
+    expect(reattached?.cols).toBe(100);
+    expect(reattached?.rows).toBe(30);
+  }, 30_000);
+
+  it("refuses input aimed at a terminal that is not the Thread's current one", async () => {
+    const threadId = await openThread("tm3");
+    await send({ type: "terminal.open", commandId: "tm3-o", threadId, cols: 80, rows: 24 });
+
+    const stale = await send({
+      type: "terminal.input",
+      commandId: "tm3-i",
+      threadId,
+      terminalId: "a-terminal-from-a-previous-life",
+      data: "echo nope\n",
+    });
+
+    expect(stale.ok).toBe(false);
+    expect(stale.ok === false ? stale.error : "").toMatch(/terminal/i);
+  }, 30_000);
+
+  it("starts a promoted Thread's terminal in its worktree, on its own branch", async () => {
+    const threadId = await openThread("tm4");
+    const promoted = await send({ type: "thread.promote-to-worktree", commandId: "tm4-w", threadId });
+    const { worktreePath } = promoted.ok ? (promoted.result as { worktreePath: string }) : { worktreePath: "" };
+
+    const opened = await send({ type: "terminal.open", commandId: "tm4-o", threadId, cols: 80, rows: 24 });
+    const terminal = opened.ok ? (opened.result as TerminalOpened) : null;
+
+    expect(terminal?.cwd).toBe(worktreePath);
+    expect(terminal?.branch).toBe(branchNameFor(threadId));
+  }, 30_000);
+
+  it("spawns nothing until a terminal is actually asked for", async () => {
+    const threadId = await openThread("tm5");
+
+    await send({ type: "thread.send-message", commandId: "tm5-m", threadId, text: "hello" });
+
+    // Story 10: opening the app must not start a process per Thread.
+    const input = await send({ type: "terminal.input", commandId: "tm5-i", threadId, terminalId: "anything", data: "\n" });
+    expect(input.ok).toBe(false);
+    expect(terminalOutput(threadId)).toBe("");
+  }, 30_000);
+
+  it("coalesces a flood into a handful of pushes instead of one per chunk", async () => {
+    const threadId = await openThread("tm6");
+    const opened = await send({ type: "terminal.open", commandId: "tm6-o", threadId, cols: 80, rows: 24 });
+    const terminalId = opened.ok ? (opened.result as TerminalOpened).terminalId : "";
+
+    // Measured at ~76,000 chunks a second off a real pty. Forwarded one
+    // frame per chunk, this is what makes the app unusable while it runs.
+    await send({ type: "terminal.input", commandId: "tm6-i", threadId, terminalId, data: "yes FLOOD\n" });
+    await waitFor(() => terminalOutput(threadId).length > 200_000, 20_000);
+    await send({ type: "terminal.input", commandId: "tm6-c", threadId, terminalId, data: CTRL_C });
+
+    const pushes = received.filter((m) => m.type === "terminal.output" && m.threadId === threadId);
+    const bytes = terminalOutput(threadId).length;
+    expect(bytes).toBeGreaterThan(200_000);
+    expect(pushes.length).toBeLessThan(bytes / 10_000);
+
+    // And the connection is still healthy for everything else sharing it.
+    const stillAlive = await send({ type: "thread.list-checkpoints", commandId: "tm6-l", threadId });
+    expect(stillAlive.ok).toBe(true);
+  }, 40_000);
+
+  it("ends the terminal when its Thread closes, and refuses to open one for a closed Thread", async () => {
+    const threadId = await openThread("tm7");
+    const opened = await send({ type: "terminal.open", commandId: "tm7-o", threadId, cols: 80, rows: 24 });
+    const terminalId = opened.ok ? (opened.result as TerminalOpened).terminalId : "";
+
+    const closed = await send({ type: "thread.close", commandId: "tm7-c", threadId });
+    expect(closed.ok).toBe(true);
+
+    // Story 15: closing a Thread must not leak a shell — the session goes
+    // with it, so its id no longer resolves.
+    const afterClose = await send({ type: "terminal.input", commandId: "tm7-i", threadId, terminalId, data: "echo still here\n" });
+    expect(afterClose.ok).toBe(false);
+
+    // Story 30's corollary: no Thread to root it in, no terminal.
+    const reopen = await send({ type: "terminal.open", commandId: "tm7-o2", threadId, cols: 80, rows: 24 });
+    expect(reopen.ok).toBe(false);
+    expect(reopen.ok === false ? reopen.error : "").toMatch(/closed/i);
+  }, 30_000);
+
+  it("closes a terminal on request, leaving the Thread itself untouched", async () => {
+    const threadId = await openThread("tm8");
+    const opened = await send({ type: "terminal.open", commandId: "tm8-o", threadId, cols: 80, rows: 24 });
+    const terminalId = opened.ok ? (opened.result as TerminalOpened).terminalId : "";
+
+    const closed = await send({ type: "terminal.close", commandId: "tm8-c", threadId, terminalId });
+    expect(closed.ok).toBe(true);
+
+    // A fresh terminal, not the dead one — and the Thread itself is untouched.
+    const reopened = await send({ type: "terminal.open", commandId: "tm8-o2", threadId, cols: 80, rows: 24 });
+    expect(reopened.ok).toBe(true);
+    const second = reopened.ok ? (reopened.result as TerminalOpened) : null;
+    expect(second?.resumed).toBe(false);
+    expect(second?.terminalId).not.toBe(terminalId);
+  }, 30_000);
+
+  it("tears down a Project's terminals when the Project is deleted", async () => {
+    const projectResult = await send({ type: "project.create", commandId: "tm9-p", workspaceRoot: repoDir, title: "P" });
+    const { projectId } = projectResult.ok ? (projectResult.result as { projectId: string }) : { projectId: "" };
+    const threadResult = await send({ type: "thread.create", commandId: "tm9-t", projectId, title: "T" });
+    const threadId = threadResult.ok ? (threadResult.result as { threadId: string }).threadId : "";
+    const opened = await send({ type: "terminal.open", commandId: "tm9-o", threadId, cols: 80, rows: 24 });
+    const terminalId = opened.ok ? (opened.result as TerminalOpened).terminalId : "";
+
+    await send({ type: "project.delete", commandId: "tm9-d", projectId });
+
+    // Same leak class as a closed Thread's: deleting the records must not
+    // strand the processes.
+    const afterDelete = await send({ type: "terminal.input", commandId: "tm9-i", threadId, terminalId, data: "echo hi\n" });
+    expect(afterDelete.ok).toBe(false);
+  }, 30_000);
+
+  it("tells a client the shell exited rather than leaving the terminal silently unresponsive", async () => {
+    const threadId = await openThread("tm10");
+    const opened = await send({ type: "terminal.open", commandId: "tm10-o", threadId, cols: 80, rows: 24 });
+    const terminalId = opened.ok ? (opened.result as TerminalOpened).terminalId : "";
+
+    await send({ type: "terminal.input", commandId: "tm10-i", threadId, terminalId, data: "exit 5\n" });
+    await waitFor((messages) => messages.some((m) => m.type === "terminal.exit" && m.threadId === threadId));
+
+    const exit = received.find((m): m is Extract<ServerPush, { type: "terminal.exit" }> => m.type === "terminal.exit");
+    expect(exit?.exit.exitCode).toBe(5);
+
+    // Story 9: reopening after an exit gives a fresh shell rather than
+    // reattaching to a corpse.
+    const reopened = await send({ type: "terminal.open", commandId: "tm10-o2", threadId, cols: 80, rows: 24 });
+    const fresh = reopened.ok ? (reopened.result as TerminalOpened) : null;
+    expect(fresh?.exit).toBeNull();
+    expect(fresh?.resumed).toBe(false);
+    expect(fresh?.terminalId).not.toBe(terminalId);
+  }, 30_000);
 });

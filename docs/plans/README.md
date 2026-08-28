@@ -32,3 +32,7 @@ Final sequence — the daily-driver uplift ([spec #93](https://github.com/deanjs
 - [Phase 20: Slash-command menu](phase-20-slash-commands.md) — spec #93 phase 8. Discover and insert the agent's own advertised commands from a `/` menu in the composer, filtered and replayed the same way the mode catalog is.
 - [Phase 21: Context meter](phase-21-context-meter.md) — spec #93 phase 9. A compact, live-updating meter of the agent session's context usage in the composer, never persisted across a reconnect.
 - [Phase 22: Plan pill and expanding panel](phase-22-plan-panel.md) — spec #93 phase 10. A live pill and expanding panel for the agent's plan, plus the mode switcher, thread list and project picker migrated onto theme tokens.
+
+Terminal ([spec #128](https://github.com/deanjstone/argusde/issues/128)), whose own phase numbering starts fresh at 1; files here keep this directory's running count:
+
+- [Phase 23: Server-side PTY, protocol and lifecycle](phase-23-terminal-server.md) — spec #128 phase 1. A server-owned pseudo-terminal per Thread that survives a client going away, with coalesced output, real flow control, and teardown on every close path.

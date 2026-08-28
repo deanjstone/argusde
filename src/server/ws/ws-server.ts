@@ -9,6 +9,7 @@ import type { EventStore, DomainEvent } from "../persistence/event-store.js";
 import type { CheckpointStore } from "../checkpoint/checkpoint-store.js";
 import { WorktreeStore } from "../worktree/worktree-store.js";
 import { ThreadRuntime } from "../session/thread-runtime.js";
+import { TerminalSession } from "../terminal/terminal-session.js";
 import { createStaticFileServer } from "../http/static-server.js";
 import { base64ByteLength, refuseAttachmentSet } from "../../shared/attachments.js";
 import { NO_PROMPT_CAPABILITIES } from "../../shared/acp-events.js";
@@ -27,6 +28,7 @@ import {
   type ClientCommand,
   type DirectoryListing,
   type ServerPush,
+  type TerminalOpened,
 } from "../../shared/ws-protocol.js";
 
 export interface WsServerOptions {
@@ -63,6 +65,14 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   const worktreeStore = options.worktreeStore ?? new WorktreeStore();
   const clients = new Set<WebSocket>();
   const runtimes = new Map<string, ThreadRuntime>();
+  /**
+   * At most one terminal per Thread (spec #128). Keyed by Thread rather
+   * than by terminal id for that reason — and, like `runtimes`, never
+   * restored on startup: a terminal describes a live process, so a server
+   * restart genuinely loses it and the client is told so rather than shown
+   * a terminal that is not there.
+   */
+  const terminals = new Map<string, TerminalSession>();
 
   const staticHandler = options.webDistDir
     ? createStaticFileServer(options.webDistDir)
@@ -85,6 +95,37 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
 
   function send(client: WebSocket, push: ServerPush): void {
     if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(push));
+  }
+
+  /**
+   * How far behind the slowest connected client is. A terminal pauses its
+   * process while this is high, so a `yes` cannot push the conversation out
+   * of the socket they share — measured at 50 MiB/s off a real pty, which
+   * is far more than a phone on a tailnet will ever drain.
+   */
+  function transportBacklog(): number {
+    let worst = 0;
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) worst = Math.max(worst, client.bufferedAmount);
+    }
+    return worst;
+  }
+
+  /** The Thread's current terminal, or a clean refusal — a stale client must never type into a terminal that has been replaced. */
+  function requireTerminal(threadId: string, terminalId: string): TerminalSession {
+    const terminal = terminals.get(threadId);
+    if (!terminal || terminal.id !== terminalId) throw new Error(`Unknown terminal: ${terminalId}`);
+    return terminal;
+  }
+
+  /** Kills a Thread's terminal if it has one. Never throws — a dead shell must not be able to fail a Thread close. */
+  async function disposeTerminal(threadId: string): Promise<void> {
+    const terminal = terminals.get(threadId);
+    if (!terminal) return;
+    terminals.delete(threadId);
+    await terminal.dispose().catch((error: unknown) => {
+      console.warn(`Failed to dispose terminal for thread ${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 
   async function handleCommand(command: ClientCommand): Promise<unknown> {
@@ -333,6 +374,13 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
           });
         }
 
+        // After captureFinalCheckpoint (which throws on an in-flight turn,
+        // aborting the whole close) and before the worktree is removed: a
+        // close that is refused must not kill a terminal, and a worktree
+        // must not be removed with a live shell sitting in it. Story 15 —
+        // closing a Thread is what ends its terminal.
+        await disposeTerminal(command.threadId);
+
         if (thread.worktreePath) {
           const project = eventStore.getProject(thread.projectId);
           if (!project) throw new Error(`Unknown project: ${thread.projectId}`);
@@ -358,6 +406,9 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
             await runtime.dispose().catch(() => undefined);
             runtimes.delete(thread.id);
           }
+          // A terminal is a process too — leaving one behind here would be
+          // the same leak by the same back door.
+          await disposeTerminal(thread.id);
           // A promoted Thread's worktree is ArgusDE's own scratch directory
           // (a sibling of the workspace, not part of it), so it goes with
           // the records. The workspace root itself is never touched.
@@ -477,6 +528,86 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
       }
       case "thread.file-diff":
         return workingTreeFileDiff(resolveThreadCwd(command.threadId), command.path);
+      /**
+       * Terminal (spec #128 phase 1).
+       *
+       * requireOpenThread, not requireThread: unlike a working-tree read,
+       * a terminal is a live process, and a closed Thread has nothing to
+       * root one in (story 30). Opening is idempotent — a Thread with a
+       * live terminal gets that one back with its scrollback rather than a
+       * second shell.
+       */
+      case "terminal.open": {
+        requireOpenThread(command.threadId);
+        const cwd = resolveThreadCwd(command.threadId);
+        const threadId = command.threadId;
+
+        // A shell that has exited is not something to reattach to: story 9
+        // asks for a new one, and the old scrollback belongs to a session
+        // that is over.
+        const existing = terminals.get(threadId);
+        if (existing?.exit) await disposeTerminal(threadId);
+
+        let terminal = terminals.get(threadId);
+        const resumed = terminal !== undefined;
+        if (terminal) {
+          // The client that is here now owns the viewport — a process left
+          // sized for a client that has gone would redraw a TUI wrongly.
+          terminal.resize(command.cols, command.rows);
+        } else {
+          // The session generates its own id, and its callbacks can only
+          // fire after the constructor returns, so they read it back off
+          // this holder rather than being handed one this scope would have
+          // had to invent.
+          let created: TerminalSession | undefined;
+          created = new TerminalSession({
+            threadId,
+            cwd,
+            cols: command.cols,
+            rows: command.rows,
+            transportBacklog,
+            onOutput: (data) => broadcast({ type: "terminal.output", threadId, terminalId: created!.id, data }),
+            onExit: (exit) => broadcast({ type: "terminal.exit", threadId, terminalId: created!.id, exit }),
+          });
+          terminal = created;
+          terminals.set(threadId, terminal);
+        }
+
+        const scrollback = terminal.scrollback();
+        const branch = await workingTreeBranch(cwd);
+        return {
+          terminalId: terminal.id,
+          threadId,
+          cwd,
+          shell: terminal.shell,
+          cols: terminal.cols,
+          rows: terminal.rows,
+          resumed,
+          scrollback: scrollback.data,
+          scrollbackTruncated: scrollback.truncated,
+          exit: terminal.exit,
+          createdAt: terminal.createdAt,
+          ...branch,
+        } satisfies TerminalOpened;
+      }
+      case "terminal.input": {
+        requireOpenThread(command.threadId);
+        requireTerminal(command.threadId, command.terminalId).write(command.data);
+        return {};
+      }
+      case "terminal.resize": {
+        requireOpenThread(command.threadId);
+        requireTerminal(command.threadId, command.terminalId).resize(command.cols, command.rows);
+        return {};
+      }
+      case "terminal.close": {
+        requireOpenThread(command.threadId);
+        // Resolved first so closing someone else's terminal id is a clean
+        // refusal rather than a silent no-op.
+        requireTerminal(command.threadId, command.terminalId);
+        await disposeTerminal(command.threadId);
+        return {};
+      }
       case "fs.list-directory": {
         const target = command.path ?? os.homedir();
         const dirents = await fs.readdir(target, { withFileTypes: true });
@@ -568,6 +699,9 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
   return {
     port: (httpServer.address() as { port: number }).port,
     async close() {
+      // Terminals first: they are the processes most likely to be busy, and
+      // nothing else here depends on one still being alive.
+      await Promise.all([...terminals.keys()].map((threadId) => disposeTerminal(threadId)));
       await Promise.all([...runtimes.values()].map((runtime) => runtime.dispose()));
       runtimes.clear();
 

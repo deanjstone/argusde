@@ -32,6 +32,18 @@ Vocabulary adopted for the T3-Code-parity uplift (see wayfinder map: ArgusDE →
 
 **Plan** — the agent's own list of steps for the work in hand, each entry carrying content and a status of pending, in-progress, or completed. It arrives over ACP as a session notification, several times per turn, and every notification carries the *whole* plan rather than a delta — a revision replaces the previous plan, so there is exactly one answer to "what is the plan". Like context usage, it is session-scoped and never persisted: it describes what a live session is doing now, and is cleared when the session reconnects. A Thread whose agent has produced no plan shows no pill at all. Entries also carry a `priority` field, deliberately not rendered — the real `claude-agent-acp` reports `"medium"` for every entry of every plan, so styling by it would be decoration rather than information. Since spec #93 phase 10.
 
+## Terminal
+
+**Terminal** — a pseudo-terminal the *server* runs for a Thread, rooted at that Thread's working tree. Exactly one per Thread, spawned only when asked for and never before. The server owns the process, not the WebSocket: a client that disappears — a reload, a second device, a phone going to sleep mid-build — loses nothing, and the terminal is handed back on reattach with the output it missed. Every message carries a `terminalId` even though a Thread has one terminal today, so a stale client cannot type into a terminal that has since been replaced. Since spec [#128](https://github.com/deanjstone/argusde/issues/128) phase 1.
+
+It exists as a deliberate, argued exception to the working-tree surface's principle that *the UI shows state and the agent changes it*: a terminal does what the agent genuinely cannot — interactive and TUI programs, a quick command at zero tokens, raw unsummarised output, and debugging the agent when it is the thing that is stuck. Git porcelain had none of those properties and stays ruled out.
+
+**Scrollback** — what a terminal has printed, kept in memory, bounded, and replayed to a client on reattach. Bounded at the tail: when it overflows, the oldest output is dropped and the replay is flagged as truncated, so a partial replay never reads as a whole session. Like context usage and the plan, it is **session-scoped and never persisted** — a terminal describes a live process, so a server restart genuinely loses it and the UI says so rather than showing a terminal that is not there.
+
+**Flow control** — a terminal's output is coalesced into one push per frame rather than one per chunk, and the process itself is paused when either the unflushed buffer or the slowest client's socket backlog runs high. Measured against a real pty: `yes` sustains 50 MiB/s across ~76,000 chunks a second, which one frame per chunk would turn into 76,000 frames a second on the socket the conversation shares. Pausing the process was chosen over dropping output — nothing is discarded, and memory stays bounded either way.
+
+A terminal is exactly as privileged as the ArgusDE server process, and the tailnet is the only thing gating reach to it. Path containment (`resolveWithin`) governs what a *client* can name on the wire; it is not a jail, and a shell can `cd` wherever the server's user can. That is stated rather than implied — see #128's story 29.
+
 ## Checkpointing
 
 **Checkpoint** — a saved snapshot of a Thread's workspace at a particular Turn, enabling diff-against-earlier-turn and revert. Storage mechanism (e.g. hidden git ref, as in T3) is not yet decided for ArgusDE.
