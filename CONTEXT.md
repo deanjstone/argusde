@@ -46,6 +46,10 @@ It exists as a deliberate, argued exception to the working-tree surface's princi
 
 xterm builds `<style>` elements it offers no way to nonce, and this app's CSP has no `unsafe-inline`, so its stylesheets are handed the document's nonce for exactly as long as it takes to build them (`src/web/lib/style-nonce.ts`). Left alone it renders with no colour and wrong cell metrics rather than erroring — which is why the audit regime asserts `cssRules.length`, not just that the elements exist.
 
+**Capture** — terminal output on its way to the agent. Always one of two *explicit* gestures — the current selection, or the terminal's recent output — because a terminal with no shell integration cannot know where the last command began, and a guessed boundary would attach the wrong thing confidently. Capturing lands a removable chip on the composer and switches to the Chat tab, so the whole thing is one gesture and nothing waits on a tab you would have to remember.
+
+A capture is bounded at 400 lines and 16 KiB, keeping the *tail* — the end of a log is the part that says what went wrong — and when it truncates it says so twice: on the chip, and in the message the agent receives, so the agent is never left reasoning about "the whole output" when it has a fragment. It travels as ordinary message text in a fenced block under the user's own words, which is why it appears on their own message in the transcript with no protocol change and nothing to replay specially on a history load. The fence is grown longer than any backtick run inside the captured text, since terminal output routinely contains backticks and a three-backtick fence would end the block early and leak the rest as prose. Since spec #128 phase 3.
+
 A terminal is exactly as privileged as the ArgusDE server process, and the tailnet is the only thing gating reach to it. Path containment (`resolveWithin`) governs what a *client* can name on the wire; it is not a jail, and a shell can `cd` wherever the server's user can. That is stated rather than implied — see #128's story 29.
 
 ## Checkpointing

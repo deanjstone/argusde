@@ -35,6 +35,7 @@ import { ProjectPicker } from "./components/project-picker.js";
 import { ThreadList } from "./components/thread-list.js";
 import { FileBrowser } from "./components/file-browser.js";
 import { TerminalView, type TerminalPush } from "./components/terminal-view.js";
+import type { TerminalCapture } from "./lib/terminal-capture.js";
 
 interface SetupState {
   submitting: boolean;
@@ -108,6 +109,12 @@ export function App() {
   const [promoting, setPromoting] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [closing, setClosing] = useState(false);
+  /**
+   * Output captured in the Terminal tab, waiting on the composer in the Chat
+   * tab (spec #128 phase 3). Held here because it is captured on one surface
+   * and sent from another.
+   */
+  const [terminalCapture, setTerminalCapture] = useState<TerminalCapture | null>(null);
   // Once true, stays true for the rest of this page session — lets the
   // top-level gate distinguish "genuinely first-ever load" (show
   // WorkspaceSetup) from "closed the active Thread, but this session has
@@ -812,6 +819,8 @@ export function App() {
               onCloseThread={() => void handleCloseThread()}
               closing={closing}
               threadClosed={thread.closedAt !== null}
+              terminalCapture={terminalCapture}
+              onClearTerminalCapture={() => setTerminalCapture(null)}
             />
           ) : (
             // Defensive fallback, not the primary flow — handleCloseThread
@@ -842,6 +851,13 @@ export function App() {
             resizeTerminal={resizeTerminal}
             closeTerminal={closeTerminal}
             subscribe={subscribeToTerminal}
+            onCapture={(capture) => {
+              // One gesture, end to end (story 23): capturing puts the chip
+              // on the composer and takes you to it, rather than leaving
+              // something waiting on a tab you would have to remember.
+              setTerminalCapture(capture);
+              setTab("chat");
+            }}
           />
         )}
         {tab === "threads" &&

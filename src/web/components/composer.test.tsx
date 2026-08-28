@@ -33,6 +33,7 @@ function imageFile(name = "screenshot.png", type = "image/png"): File {
 function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = {}) {
   const onSend = props.onSend ?? vi.fn();
   const prepare = props.prepareAttachment ?? vi.fn(async () => prepared());
+  const onClearTerminalCapture = props.onClearTerminalCapture ?? vi.fn();
   render(
     <Composer
       onSend={onSend}
@@ -40,9 +41,11 @@ function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = 
       disabled={props.disabled ?? false}
       prepareAttachment={prepare}
       availableCommands={props.availableCommands ?? []}
+      terminalCapture={props.terminalCapture ?? null}
+      onClearTerminalCapture={onClearTerminalCapture}
     />,
   );
-  return { onSend, prepare };
+  return { onSend, prepare, onClearTerminalCapture };
 }
 
 describe("Composer", () => {
@@ -292,6 +295,60 @@ describe("Composer", () => {
     expect(screen.getByPlaceholderText(/message argusde/i)).toBeDisabled();
     expect(screen.getByRole("button", { name: /send/i })).toBeDisabled();
   });
+
+  describe("terminal output as context (spec #128 phase 3)", () => {
+    const capture = { text: "npm ERR! code E404", lines: 1, truncated: false, source: "output" as const };
+
+    it("shows what was captured before anything is sent, and how much of it there is", () => {
+      renderComposer({ terminalCapture: capture });
+
+      expect(screen.getByText(/terminal output — 1 line/i)).toBeInTheDocument();
+    });
+
+    it("sends the captured output under the user's own words, in a fenced block", () => {
+      const { onSend } = renderComposer({ terminalCapture: capture });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "why?");
+      fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+      expect(onSend).toHaveBeenCalledWith("why?\n\nTerminal output:\n```\nnpm ERR! code E404\n```", []);
+    });
+
+    it("sends captured output on its own — showing the agent a failure needs no words", () => {
+      const { onSend } = renderComposer({ terminalCapture: capture });
+
+      fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+      expect(onSend).toHaveBeenCalledWith("Terminal output:\n```\nnpm ERR! code E404\n```", []);
+    });
+
+    it("says in the message when the capture was truncated, so the agent is not told it has everything", () => {
+      const onSend = vi.fn();
+      renderComposer({ onSend, terminalCapture: { ...capture, truncated: true, lines: 400 } });
+
+      fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+      expect(onSend.mock.calls[0]?.[0]).toContain("earlier output omitted");
+    });
+
+    it("removes a capture before sending, so a mis-capture is not a sent message", () => {
+      const { onClearTerminalCapture } = renderComposer({ terminalCapture: capture });
+
+      fireEvent.click(screen.getByRole("button", { name: /remove terminal output/i }));
+
+      expect(onClearTerminalCapture).toHaveBeenCalled();
+    });
+
+    it("clears the capture once sent, so the next message does not carry it again", () => {
+      const { onClearTerminalCapture } = renderComposer({ terminalCapture: capture });
+
+      type(screen.getByPlaceholderText(/message argusde/i), "look");
+      fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+      expect(onClearTerminalCapture).toHaveBeenCalled();
+    });
+  });
+
 });
 
 /**

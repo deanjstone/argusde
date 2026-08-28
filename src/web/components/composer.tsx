@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { AgentCommand } from "../../shared/acp-events.js";
 import { ATTACHMENT_LIMITS, SUPPORTED_IMAGE_MIME_TYPES } from "../../shared/attachments.js";
 import { prepareImageAttachment, type PreparedAttachment, type PrepareResult } from "../lib/image-attachment.js";
+import { formatMessageWithCapture, type TerminalCapture } from "../lib/terminal-capture.js";
 import { CommandMenu } from "./command-menu.js";
 import { Button } from "./ui/button.js";
 import { Input } from "./ui/input.js";
@@ -37,6 +38,14 @@ export interface ComposerProps {
    * has no version of. Production always uses the default.
    */
   prepareAttachment?: (file: File, context: { acceptsImages: boolean }) => Promise<PrepareResult>;
+  /**
+   * Output captured in the Terminal tab and waiting to be sent (spec #128
+   * phase 3). Owned above this component because it is captured on a
+   * different surface entirely.
+   */
+  terminalCapture?: TerminalCapture | null;
+  /** Called when the capture is removed — by the user, or by having been sent. */
+  onClearTerminalCapture?: () => void;
 }
 
 /**
@@ -51,6 +60,8 @@ export function Composer({
   disabled = false,
   availableCommands = [],
   prepareAttachment = prepareImageAttachment,
+  terminalCapture = null,
+  onClearTerminalCapture,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
@@ -139,16 +150,21 @@ export function Composer({
   function handleSubmit(event: React.FormEvent): void {
     event.preventDefault();
     const trimmed = text.trim();
-    // An image on its own is a message — "here, look at this" needs no words.
-    if (!trimmed && attachments.length === 0) return;
+    // An image, or a block of captured terminal output, is a message on its
+    // own — "here, look at this" needs no words.
+    if (!trimmed && attachments.length === 0 && !terminalCapture) return;
+    // The capture travels as ordinary message text, so it lands on the
+    // user's own message in the transcript (story 26) with nothing to
+    // replay specially on a history load.
     onSend(
-      trimmed,
+      formatMessageWithCapture(trimmed, terminalCapture),
       attachments.map((attachment) => ({ mimeType: attachment.mimeType, data: attachment.data })),
     );
     setText("");
     setAttachments([]);
     setRefusal(undefined);
     setCommandMenuDismissed(false);
+    onClearTerminalCapture?.();
   }
 
   return (
@@ -184,6 +200,27 @@ export function Composer({
               </AttachmentActions>
             </Attachment>
           ))}
+        </AttachmentGroup>
+      )}
+
+      {terminalCapture && (
+        <AttachmentGroup className="mb-2">
+          {/* Shown before sending, and removable, so a capture is never a
+              thing that silently happened to your next message (story 24). */}
+          <Attachment size="sm">
+            <AttachmentContent>
+              <AttachmentTitle>
+                {terminalCapture.source === "selection" ? "Terminal selection" : "Terminal output"} — {terminalCapture.lines}{" "}
+                {terminalCapture.lines === 1 ? "line" : "lines"}
+                {terminalCapture.truncated ? ", earlier output omitted" : ""}
+              </AttachmentTitle>
+            </AttachmentContent>
+            <AttachmentActions>
+              <AttachmentAction type="button" aria-label="Remove terminal output" onClick={() => onClearTerminalCapture?.()}>
+                ✕
+              </AttachmentAction>
+            </AttachmentActions>
+          </Attachment>
         </AttachmentGroup>
       )}
 

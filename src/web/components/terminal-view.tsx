@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalExitPush, TerminalOpened, TerminalOutputPush } from "../../shared/ws-protocol.js";
 import { createXtermTerminal, type CreateTerminal, type TerminalHandle } from "../lib/xterm-terminal.js";
+import { CAPTURE_LIMITS, boundCapture, type TerminalCapture } from "../lib/terminal-capture.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import { Empty, EmptyDescription, EmptyTitle } from "./ui/empty.js";
@@ -16,6 +17,12 @@ export interface TerminalViewProps {
   resizeTerminal: (terminalId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (terminalId: string) => Promise<void>;
   subscribe: (listener: (push: TerminalPush) => void) => () => void;
+  /**
+   * Hands captured output to whoever owns the composer (spec #128 phase 3).
+   * Absent means the capture controls are not offered at all — there is
+   * nowhere for the output to go.
+   */
+  onCapture?: (capture: TerminalCapture) => void;
   /** Swappable so this component's tests can drive a terminal by hand rather than stand up a real emulator in jsdom. */
   createTerminal?: CreateTerminal;
 }
@@ -60,6 +67,7 @@ export function TerminalView({
   resizeTerminal,
   closeTerminal,
   subscribe,
+  onCapture,
   createTerminal = createXtermTerminal,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -72,6 +80,10 @@ export function TerminalView({
   const [error, setError] = useState<string | undefined>(undefined);
   const [opening, setOpening] = useState(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
+  // Said out loud when a capture gesture had nothing to capture — better
+  // than a button that silently does nothing, and better than guessing what
+  // the user meant instead (story 28).
+  const [captureNote, setCaptureNote] = useState<string | undefined>(undefined);
   // Bumped to ask for a fresh shell after one has exited (story 9).
   const [attempt, setAttempt] = useState(0);
 
@@ -194,6 +206,19 @@ export function TerminalView({
     };
   }, [session, resizeTerminal]);
 
+  function capture(source: TerminalCapture["source"]) {
+    const handle = handleRef.current;
+    if (!handle || !onCapture) return;
+    const raw = source === "selection" ? handle.getSelection() : handle.readRecentOutput(CAPTURE_LIMITS.maxLines);
+    const captured = boundCapture(raw, source);
+    if (captured.text === "") {
+      setCaptureNote(source === "selection" ? "Nothing is selected in the terminal." : "This terminal has printed nothing yet.");
+      return;
+    }
+    setCaptureNote(undefined);
+    onCapture(captured);
+  }
+
   function startFreshTerminal() {
     const current = sessionRef.current;
     sessionRef.current = null;
@@ -276,6 +301,21 @@ export function TerminalView({
           real ref, and shadcn primitives cannot take one under this
           project's React 18 (argusde#122). */}
       <div ref={containerRef} data-testid="terminal-surface" className="min-h-0 flex-1 overflow-hidden px-1 py-1" />
+
+      {onCapture && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border px-2 py-1.5">
+          {/* Two gestures, never one that decides for you: the selection, or
+              the recent output. Both land on the composer as a chip you can
+              still remove (stories 23, 24, 28). */}
+          <Button size="sm" variant="secondary" onClick={() => capture("output")}>
+            Send output to agent
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => capture("selection")}>
+            Send selection
+          </Button>
+          {captureNote && <span className="text-xs text-muted-foreground">{captureNote}</span>}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-1 border-t border-border px-2 py-1.5">
         <Button

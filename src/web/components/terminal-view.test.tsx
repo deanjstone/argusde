@@ -3,14 +3,23 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { TerminalOpened } from "../../shared/ws-protocol.js";
 import type { TerminalHandle } from "../lib/xterm-terminal.js";
+import type { TerminalCapture } from "../lib/terminal-capture.js";
 import { TerminalView, type TerminalPush } from "./terminal-view.js";
 
 function fakeHandle() {
   const written: string[] = [];
   let onInput: (data: string) => void = () => {};
-  const handle: TerminalHandle & { written: string[]; type(data: string): void; disposed: boolean } = {
+  const handle: TerminalHandle & {
+    written: string[];
+    type(data: string): void;
+    disposed: boolean;
+    selection: string;
+    recentOutput: string;
+  } = {
     written,
     disposed: false,
+    selection: "",
+    recentOutput: "",
     write: (data) => written.push(data),
     onInput: (listener) => {
       onInput = listener;
@@ -19,6 +28,8 @@ function fakeHandle() {
       };
     },
     fit: () => ({ cols: 80, rows: 24 }),
+    getSelection: () => handle.selection,
+    readRecentOutput: () => handle.recentOutput,
     focus: () => {},
     dispose: () => {
       handle.disposed = true;
@@ -47,12 +58,20 @@ function opened(overrides: Partial<TerminalOpened> = {}): TerminalOpened {
   };
 }
 
-function setup(options: { session?: TerminalOpened; threadId?: string | undefined; openTerminal?: () => Promise<TerminalOpened> } = {}) {
+function setup(
+  options: {
+    session?: TerminalOpened;
+    threadId?: string | undefined;
+    openTerminal?: () => Promise<TerminalOpened>;
+    onCapture?: ((capture: TerminalCapture) => void) | undefined;
+  } = {},
+) {
   const handle = fakeHandle();
   const sendInput = vi.fn(async () => {});
   const resizeTerminal = vi.fn(async () => {});
   const closeTerminal = vi.fn(async () => {});
   const openTerminal = options.openTerminal ?? vi.fn(async () => options.session ?? opened());
+  const onCapture = "onCapture" in options ? options.onCapture : vi.fn();
   let push: (event: TerminalPush) => void = () => {};
 
   const view = render(
@@ -68,11 +87,12 @@ function setup(options: { session?: TerminalOpened; threadId?: string | undefine
           push = () => {};
         };
       }}
+      onCapture={onCapture}
       createTerminal={async () => handle}
     />,
   );
 
-  return { handle, openTerminal, sendInput, resizeTerminal, closeTerminal, push: (event: TerminalPush) => push(event), view };
+  return { handle, openTerminal, sendInput, resizeTerminal, closeTerminal, onCapture, push: (event: TerminalPush) => push(event), view };
 }
 
 describe("TerminalView", () => {
@@ -196,5 +216,46 @@ describe("TerminalView", () => {
     expect(await screen.findByText(/no thread selected/i)).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(openTerminal).not.toHaveBeenCalled();
+  });
+
+  it("hands the recent output to the composer when asked, bounded and labelled", async () => {
+    const { handle, onCapture } = setup();
+    handle.recentOutput = "$ pnpm test\r\n636 passed\r\n\n";
+    await screen.findByRole("button", { name: /send output to agent/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /send output to agent/i }));
+
+    await waitFor(() =>
+      expect(onCapture).toHaveBeenCalledWith({ text: "$ pnpm test\n636 passed", lines: 2, truncated: false, source: "output" }),
+    );
+  });
+
+  it("captures the selection as a selection, on its own gesture", async () => {
+    const { handle, onCapture } = setup();
+    handle.selection = "npm ERR! code E404";
+    await screen.findByRole("button", { name: /send selection/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /send selection/i }));
+
+    await waitFor(() => expect(onCapture).toHaveBeenCalledWith(expect.objectContaining({ source: "selection" })));
+  });
+
+  it("says so rather than capturing nothing when there is nothing to capture", async () => {
+    const { onCapture } = setup();
+    await screen.findByRole("button", { name: /send selection/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /send selection/i }));
+
+    // Story 28: never attach something the user did not point at — including
+    // "the output" when a selection was what they asked for.
+    expect(await screen.findByText(/nothing is selected/i)).toBeInTheDocument();
+    expect(onCapture).not.toHaveBeenCalled();
+  });
+
+  it("offers no capture controls when there is nowhere to send output", async () => {
+    setup({ onCapture: undefined });
+    await screen.findByRole("button", { name: "Ctrl" });
+
+    expect(screen.queryByRole("button", { name: /send output to agent/i })).toBeNull();
   });
 });

@@ -18,6 +18,7 @@ import {
 } from "./ui/message-scroller.js";
 import { ActivityCard } from "./activity-card.js";
 import { Composer, type MessageAttachment } from "./composer.js";
+import type { TerminalCapture } from "../lib/terminal-capture.js";
 import { ContextMeter } from "./context-meter.js";
 import { PlanPanel } from "./plan-panel.js";
 import { CheckpointStrip } from "./checkpoint-strip.js";
@@ -53,6 +54,9 @@ export interface ChatViewProps {
   onCloseThread?: () => void;
   closing?: boolean;
   threadClosed?: boolean;
+  /** Output captured in the Terminal tab, waiting on the composer (spec #128 phase 3). */
+  terminalCapture?: TerminalCapture | null;
+  onClearTerminalCapture?: () => void;
 }
 
 function TimelineItemView({ item }: { item: TimelineItem }) {
@@ -99,6 +103,8 @@ export function ChatView({
   onCloseThread,
   closing = false,
   threadClosed = false,
+  terminalCapture = null,
+  onClearTerminalCapture,
 }: ChatViewProps) {
   // Promoting relocates the thread's agent session to a fresh worktree —
   // only safe while nothing has happened yet. Mirrors state.timeline being
@@ -302,6 +308,8 @@ export function ChatView({
         acceptsImages={state.promptCapabilities.image}
         availableCommands={state.availableCommands}
         disabled={threadClosed}
+        terminalCapture={terminalCapture}
+        onClearTerminalCapture={onClearTerminalCapture}
       />
     </div>
   );
