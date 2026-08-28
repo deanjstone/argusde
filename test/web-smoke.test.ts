@@ -1022,8 +1022,14 @@ describe("web smoke: server + browser round trip", () => {
         await terminalPage.getByRole("button", { name: "Terminal" }).click();
 
         // The header names where the shell is rooted (story 7), and its
-        // appearance means terminal.open answered.
-        await terminalPage.getByText(repoDir, { exact: true }).waitFor({ timeout: 20_000 });
+        // appearance means terminal.open answered. Scoped to the header
+        // rather than the page: the same path is also the Thread's title,
+        // and a shell whose prompt prints its working directory puts it on
+        // screen a third time.
+        await terminalPage
+          .locator('section[aria-label="Terminal"] > header')
+          .getByText(repoDir, { exact: true })
+          .waitFor({ timeout: 20_000 });
         await terminalPage.waitForSelector(".xterm-rows", { timeout: 20_000 });
 
         const surface = terminalPage.locator('[data-testid="terminal-surface"]');
@@ -1120,6 +1126,63 @@ describe("web smoke: server + browser round trip", () => {
         );
       } finally {
         await phonePage.close();
+      }
+    },
+    60_000,
+  );
+
+  /**
+   * Terminal output reaching the agent (spec #128 phase 3). End to end
+   * because the gesture crosses two surfaces: captured in the Terminal tab,
+   * shown and sent from the composer in the Chat tab, and finally read back
+   * off the transcript — which is the only place story 26 can be checked.
+   */
+  it(
+    "captures a command's output in the Terminal tab and sends it on the user's own message",
+    async () => {
+      const capturePage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+
+      try {
+        await capturePage.goto(`http://127.0.0.1:${server.port}/`);
+        await capturePage.getByRole("button", { name: /type a path manually/i }).click();
+        await capturePage.getByLabel(/workspace path/i).fill(repoDir);
+        await capturePage.getByRole("button", { name: /^start$/i }).click();
+        await capturePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await capturePage.getByRole("button", { name: "Terminal" }).click();
+        await capturePage.waitForSelector(".xterm-rows", { timeout: 20_000 });
+        await capturePage.locator('[data-testid="terminal-surface"]').click();
+        await capturePage.keyboard.type("echo CAPTURE_THIS_LINE");
+        await capturePage.keyboard.press("Enter");
+        await capturePage.waitForFunction(
+          () => document.querySelector(".xterm-rows")?.textContent?.includes("CAPTURE_THIS_LINE") ?? false,
+          undefined,
+          { timeout: 20_000 },
+        );
+
+        // One gesture (story 23): capturing lands the chip on the composer
+        // and takes you there.
+        await capturePage.getByRole("button", { name: /send output to agent/i }).click();
+        await capturePage.getByText(/terminal output — \d+ lines?/i).waitFor({ timeout: 10_000 });
+        await capturePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 10_000 });
+
+        await capturePage.getByPlaceholder(/message/i).fill("why did this print?");
+        await capturePage.getByPlaceholder(/message/i).press("Enter");
+
+        // Story 26: the Thread's record shows what the agent was given.
+        await capturePage.waitForFunction(
+          () => {
+            const body = document.body.textContent ?? "";
+            return body.includes("why did this print?") && body.includes("CAPTURE_THIS_LINE");
+          },
+          undefined,
+          { timeout: 20_000 },
+        );
+
+        // And the chip is gone, so the next message does not carry it again.
+        expect(await capturePage.getByText(/terminal output — \d+ lines?/i).count()).toBe(0);
+      } finally {
+        await capturePage.close();
       }
     },
     60_000,

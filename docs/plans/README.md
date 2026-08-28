@@ -37,3 +37,4 @@ Terminal ([spec #128](https://github.com/deanjstone/argusde/issues/128)), whose 
 
 - [Phase 23: Server-side PTY, protocol and lifecycle](phase-23-terminal-server.md) — spec #128 phase 1. A server-owned pseudo-terminal per Thread that survives a client going away, with coalesced output, real flow control, and teardown on every close path.
 - [Phase 24: The Terminal tab](phase-24-terminal-tab.md) — spec #128 phase 2. xterm.js in a fifth bottom tab, reattaching rather than restarting, with a key bar for what a soft keyboard lacks and a scoped nonce shim so xterm's own stylesheets survive the app's CSP.
+- [Phase 25: Terminal output as agent context](phase-25-terminal-capture.md) — spec #128 phase 3. Capture the selection or the recent output onto a removable composer chip, bounded and labelled, sent as text on the user's own message.

@@ -16,6 +16,18 @@ export interface TerminalHandle {
   onInput(listener: (data: string) => void): () => void;
   /** Re-measures the container and returns the size the process should be told about. */
   fit(): { cols: number; rows: number };
+  /** Whatever the user has highlighted, or "" — one of the two explicit capture gestures (spec #128 phase 3, story 28). */
+  getSelection(): string;
+  /**
+   * The tail of what the terminal has printed, up to `maxLines`.
+   *
+   * Deliberately "recent output" rather than "the last command's output":
+   * without shell integration (OSC 133 prompt marks) a terminal genuinely
+   * cannot know where a command began, and a guessed boundary attaches the
+   * wrong thing confidently. The user picks the gesture; this returns what
+   * is there.
+   */
+  readRecentOutput(maxLines: number): string;
   focus(): void;
   dispose(): void;
 }
@@ -80,6 +92,23 @@ export const createXtermTerminal: CreateTerminal = async ({ container }) => {
       // so it needs the same cover as open().
       withStyleNonce(documentStyleNonce(), () => fitAddon.fit());
       return { cols: terminal.cols, rows: terminal.rows };
+    },
+    getSelection: () => terminal.getSelection(),
+    readRecentOutput: (maxLines) => {
+      const buffer = terminal.buffer.active;
+      // baseY is the top of the viewport within the scrollback, so this is
+      // the last written row — reading past it returns the blank rows the
+      // viewport is padded with.
+      const end = buffer.baseY + terminal.rows;
+      const start = Math.max(0, end - maxLines);
+      const lines: string[] = [];
+      for (let row = start; row < end; row += 1) {
+        // `true` trims each row's trailing whitespace: a terminal pads every
+        // line to the full width, and 80-column padding would be most of
+        // what got captured.
+        lines.push(buffer.getLine(row)?.translateToString(true) ?? "");
+      }
+      return lines.join("\n");
     },
     focus: () => terminal.focus(),
     dispose: () => terminal.dispose(),

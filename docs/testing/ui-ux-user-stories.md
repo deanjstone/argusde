@@ -383,3 +383,23 @@ of it and nothing more — which is what most of these stories are really checki
 - **US-22.8** *[real-device-only]* — With a soft keyboard open on a real phone, the terminal's
   last line, the key bar and the tab bar all stay visible. Headless emulation cannot reproduce a
   dynamic viewport (see the known hard limit above), so this one needs a real device.
+
+## US-23: Terminal output as agent context
+
+Added with spec [#128](https://github.com/deanjstone/argusde/issues/128) phase 3, which made a
+command's output reachable by the agent in one gesture. The flow crosses two surfaces — captured
+in the Terminal tab, shown and sent from the composer — so these stories are only meaningful
+end to end.
+
+- **US-23.1** — Capturing from the Terminal tab puts a chip on the composer and takes you to it:
+  one gesture, with nothing left waiting on a tab you would have to remember.
+- **US-23.2** — The chip says what it holds and how much of it — source (output or selection) and
+  a line count — so a capture is never an unlabelled blob.
+- **US-23.3** — The chip can be removed before sending, so a mis-capture is not a sent message.
+- **US-23.4** — Sending puts the captured output on the *user's own message* in the transcript,
+  in a fenced block under their own words, so the Thread's record shows what the agent was given.
+- **US-23.5** — The capture is cleared once sent, so the next message does not carry it again.
+- **US-23.6** — A capture gesture with nothing behind it (no selection, or a terminal that has
+  printed nothing) says so, rather than silently attaching something else. Covered by the
+  component suite rather than the audit: provoking an empty selection in a driven browser is
+  less reliable than asserting it directly, and the story is about what the app refuses to guess.

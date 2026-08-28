@@ -1853,7 +1853,11 @@ async function main() {
         // ---- US-22.1: the Terminal tab opens a shell rooted at the
         // Thread's working tree, and says which tree that is ----
         await terminalPage.getByRole("button", { name: "Terminal" }).click();
+        // Scoped to the terminal's own header: the same path is also the
+        // Thread's title, and a shell whose prompt prints its working
+        // directory puts it on screen a third time.
         const rootShown = await terminalPage
+          .locator('section[aria-label="Terminal"] > header')
           .getByText(terminalRepo, { exact: true })
           .waitFor({ state: "visible", timeout: 25000 })
           .then(() => true)
@@ -1983,6 +1987,128 @@ async function main() {
         await terminalPage.close();
         await terminalServer?.close();
         fs.rmSync(terminalRepo, { recursive: true, force: true });
+      }
+    }
+
+
+    // ---- US-23: terminal output as agent context (spec #128 phase 3) ----
+    // Crosses two surfaces — captured in the Terminal tab, sent from the
+    // composer in the Chat tab — so it gets its own isolated server and a
+    // scripted reply, like the composer blocks above. No visual baselines,
+    // for the same reason as US-22: a live shell prompt and a temp path.
+    {
+      let captureServer;
+      const captureRepo = makeGitRepo("argusde-audit-capture-");
+      const capturePage = await context.newPage();
+      try {
+        captureServer = await startIsolatedServer({ steps: [{ type: "message", text: "looking at that now" }] });
+        await capturePage.goto(captureServer.url);
+        await capturePage.getByRole("button", { name: /type a path manually/i }).click();
+        await capturePage.getByLabel(/workspace path/i).fill(captureRepo);
+        await capturePage.getByRole("button", { name: /^start$/i }).click();
+        await capturePage.waitForSelector('input[placeholder*="Message" i]', { timeout: 20000 });
+
+        await capturePage.getByRole("button", { name: "Terminal" }).click();
+        const emulatorShown = await capturePage
+          .waitForSelector(".xterm-rows", { timeout: 25000 })
+          .then(() => true)
+          .catch(() => false);
+
+        if (!emulatorShown) {
+          for (const story of ["US-23.1", "US-23.2", "US-23.3", "US-23.4", "US-23.5"]) {
+            record(story, "skip", "terminal never opened — nothing to capture");
+          }
+        } else {
+          await capturePage.locator('[data-testid="terminal-surface"]').click();
+          await capturePage.keyboard.type("echo AUDIT_CAPTURE_LINE");
+          await capturePage.keyboard.press("Enter");
+          await capturePage
+            .waitForFunction(() => document.querySelector(".xterm-rows")?.textContent?.includes("AUDIT_CAPTURE_LINE") ?? false, undefined, {
+              timeout: 25000,
+            })
+            .catch(() => undefined);
+
+          // ---- US-23.1 / US-23.2: one gesture puts a labelled chip on the
+          // composer and takes you to it ----
+          await capturePage.getByRole("button", { name: /send output to agent/i }).click();
+          const chip = capturePage.getByText(/terminal output — \d+ lines?/i);
+          const chipShown = await chip
+            .waitFor({ state: "visible", timeout: 15000 })
+            .then(() => true)
+            .catch(() => false);
+          const composerShown = chipShown && (await capturePage.locator('input[placeholder*="Message" i]').count()) > 0;
+          record(
+            "US-23.1",
+            chipShown && composerShown ? "pass" : "fail",
+            chipShown && composerShown
+              ? "capturing landed a chip on the composer and switched to the Chat tab"
+              : `chip shown: ${chipShown}, composer reachable: ${composerShown}`,
+          );
+          const chipText = chipShown ? ((await chip.textContent()) ?? "").trim() : "";
+          record(
+            "US-23.2",
+            /terminal output — \d+ lines?/i.test(chipText) ? "pass" : "fail",
+            chipShown ? `chip text: "${chipText}"` : "no chip to read",
+          );
+          if (chipShown) await scanA11y(capturePage, "US-23.1");
+
+          // ---- US-23.3: removable before sending ----
+          if (chipShown) {
+            await capturePage.getByRole("button", { name: /remove terminal output/i }).click();
+            const chipGone = await chip
+              .waitFor({ state: "hidden", timeout: 10000 })
+              .then(() => true)
+              .catch(() => false);
+            record(
+              "US-23.3",
+              chipGone ? "pass" : "fail",
+              chipGone ? "the capture can be removed before sending" : "the chip stayed after asking to remove it",
+            );
+
+            // Capture again for the send checks.
+            await capturePage.getByRole("button", { name: "Terminal" }).click();
+            await capturePage.waitForSelector(".xterm-rows", { timeout: 25000 });
+            await capturePage.getByRole("button", { name: /send output to agent/i }).click();
+            await chip.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
+          } else {
+            record("US-23.3", "skip", "no chip to remove");
+          }
+
+          // ---- US-23.4 / US-23.5: it lands on the user's own message, and
+          // does not linger afterwards ----
+          const composer = capturePage.getByPlaceholder(/message/i);
+          await composer.fill("why did this print?");
+          await composer.press("Enter");
+          const onTranscript = await capturePage
+            .waitForFunction(
+              () => {
+                const body = document.body.textContent ?? "";
+                return body.includes("why did this print?") && body.includes("AUDIT_CAPTURE_LINE");
+              },
+              undefined,
+              { timeout: 25000 },
+            )
+            .then(() => true)
+            .catch(() => false);
+          record(
+            "US-23.4",
+            onTranscript ? "pass" : "fail",
+            onTranscript ? "the captured output appears on the user's own message in the transcript" : "the sent message did not carry the captured output",
+          );
+
+          const chipCleared = (await capturePage.getByText(/terminal output — \d+ lines?/i).count()) === 0;
+          record(
+            "US-23.5",
+            chipCleared ? "pass" : "fail",
+            chipCleared ? "the capture cleared once sent, so the next message will not resend it" : "the chip survived the send",
+          );
+        }
+      } catch (error) {
+        record("US-23.throw", "fail", `terminal-capture checks could not run: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await capturePage.close();
+        await captureServer?.close();
+        fs.rmSync(captureRepo, { recursive: true, force: true });
       }
     }
 
