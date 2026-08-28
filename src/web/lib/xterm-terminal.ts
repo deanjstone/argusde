@@ -85,7 +85,11 @@ export const createXtermTerminal: CreateTerminal = async ({ container }) => {
     write: (data) => terminal.write(data),
     onInput: (listener) => {
       const subscription = terminal.onData(listener);
-      return () => subscription.dispose();
+      const stopSoftKeyboardFallback = forwardSoftKeyboardInput(terminal.textarea, listener);
+      return () => {
+        subscription.dispose();
+        stopSoftKeyboardFallback();
+      };
     },
     fit: () => {
       // Re-measuring can also create style elements (the dimension rule),
@@ -114,6 +118,73 @@ export const createXtermTerminal: CreateTerminal = async ({ container }) => {
     dispose: () => terminal.dispose(),
   };
 };
+
+/**
+ * What a soft keyboard's `input` event means, for the ones xterm never
+ * looks at. Returns null for anything this should not touch.
+ */
+function softKeyboardData(event: InputEvent): string | null {
+  switch (event.inputType) {
+    case "insertText":
+      return event.data ?? null;
+    // xterm's `_inputEvent` only ever handles `insertText`, so these two
+    // reach nothing at all on a device that sends them instead of a key.
+    case "insertLineBreak":
+      return "\r";
+    case "deleteContentBackward":
+      return "\x7f";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Makes a soft keyboard work (spec #128, found on a real iPhone under
+ * US-22.8 — the story no headless viewport could close).
+ *
+ * xterm drops the character when a `keydown` was seen first and the `input`
+ * event is composed: `_inputEvent`'s `(!e.composed || !this._keyDownSeen)`
+ * guard, which exists to stop a hardware key being delivered twice. A soft
+ * keyboard sends exactly that shape — a `keydown` carrying keyCode 229
+ * ("Unidentified", meaning "the IME will tell you later"), then the
+ * character on a composed `input` event, and no `keypress` at all. So on
+ * iOS the keyboard opens, you type, and nothing whatsoever reaches the
+ * shell.
+ *
+ * This forwards precisely the events that guard rejects, and nothing else.
+ * The discriminator is the preceding keydown: a real key has a real
+ * keyCode, xterm handles it, and this stays out of the way — which is what
+ * keeps a desktop keyboard from sending every character twice. Checking
+ * `defaultPrevented` instead would not work: xterm's `cancel()` is a no-op
+ * unless its `cancelEvents` option is on, so a handled event looks exactly
+ * like an ignored one.
+ */
+function forwardSoftKeyboardInput(textarea: HTMLTextAreaElement | undefined, listener: (data: string) => void): () => void {
+  if (!textarea) return () => {};
+
+  let lastKeydownWasSoftKeyboard = false;
+  const onKeyDown = (event: KeyboardEvent) => {
+    lastKeydownWasSoftKeyboard = event.keyCode === 229 || event.key === "Unidentified";
+  };
+  const onInput = (event: Event) => {
+    const input = event as InputEvent;
+    // Mirrors xterm's own guard: only what it rejected.
+    if (!lastKeydownWasSoftKeyboard || !input.composed) return;
+    const data = softKeyboardData(input);
+    if (data === null) return;
+    // The character landed in the textarea because nothing prevented it.
+    // Left there it accumulates and the next composition reads it back.
+    textarea.value = "";
+    listener(data);
+  };
+
+  textarea.addEventListener("keydown", onKeyDown);
+  textarea.addEventListener("input", onInput);
+  return () => {
+    textarea.removeEventListener("keydown", onKeyDown);
+    textarea.removeEventListener("input", onInput);
+  };
+}
 
 /** Pulls the app's theme tokens off the DOM so the terminal is not a differently-coloured hole in the page. */
 function readThemeColours(container: HTMLElement): { background: string; foreground: string; cursor: string } {
