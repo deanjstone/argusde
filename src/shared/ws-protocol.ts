@@ -20,7 +20,7 @@ export const WS_PATH = "/ws";
  * doesn't need to import the whole server module graph just to reach this
  * string.
  */
-export const API_VERSION = "1.5.0";
+export const API_VERSION = "1.6.0";
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
@@ -85,6 +85,41 @@ export const ClientCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.search"), commandId: z.string(), threadId: z.string(), query: z.string() }),
   z.object({ type: z.literal("thread.changed-files"), commandId: z.string(), threadId: z.string() }),
   z.object({ type: z.literal("thread.file-diff"), commandId: z.string(), threadId: z.string(), path: z.string() }),
+  /**
+   * Terminal (spec #128 phase 1). Thread-scoped like every working-tree
+   * command, for the same reason: the *server* resolves which working tree
+   * the shell starts in rather than the client passing a path it guessed.
+   *
+   * Opening is idempotent — a Thread that already has a live terminal gets
+   * that one back, with its scrollback, rather than a second shell. Every
+   * message carries a `terminalId` even though a Thread has exactly one
+   * terminal today: it makes the later "several terminals" change additive
+   * rather than a protocol break, and it stops a stale client typing into a
+   * terminal that has since been replaced.
+   */
+  z.object({
+    type: z.literal("terminal.open"),
+    commandId: z.string(),
+    threadId: z.string(),
+    cols: z.number().int().positive(),
+    rows: z.number().int().positive(),
+  }),
+  z.object({
+    type: z.literal("terminal.input"),
+    commandId: z.string(),
+    threadId: z.string(),
+    terminalId: z.string(),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("terminal.resize"),
+    commandId: z.string(),
+    threadId: z.string(),
+    terminalId: z.string(),
+    cols: z.number().int().positive(),
+    rows: z.number().int().positive(),
+  }),
+  z.object({ type: z.literal("terminal.close"), commandId: z.string(), threadId: z.string(), terminalId: z.string() }),
 ]);
 
 export type ClientCommand = z.infer<typeof ClientCommandSchema>;
@@ -333,6 +368,59 @@ export interface WorkingTreeChanges extends WorkingTreeBranch {
   files: ChangedFile[];
 }
 
+/** How a Thread's terminal ended. `signal` is null rather than undefined — undefined would simply vanish from the JSON. */
+export interface TerminalExitInfo {
+  exitCode: number;
+  signal: number | null;
+}
+
+/**
+ * terminal.open's answer: everything a client needs to render a terminal it
+ * may never have seen before, including one that has been running while
+ * nothing was attached.
+ *
+ * `cwd` is an absolute server path, unlike every working-tree response,
+ * which keeps paths relative to the root. Hiding it here would be theatre:
+ * the shell prints its own working directory in its prompt in the very
+ * first line of output.
+ */
+export interface TerminalOpened extends WorkingTreeBranch {
+  terminalId: string;
+  threadId: string;
+  cwd: string;
+  shell: string;
+  cols: number;
+  rows: number;
+  /** False when this call started the shell, true when it reattached to one already running — story 14, and the honest answer after a server restart (story 16). */
+  resumed: boolean;
+  /** What the terminal has printed so far, bounded — replayed so a reattach reads as continuous rather than blank. */
+  scrollback: string;
+  /** True once output has been dropped from the front of the buffer, so a partial replay never reads as a whole session. */
+  scrollbackTruncated: boolean;
+  /** Set when the shell has already exited — a dead terminal has to be obviously dead rather than unresponsive. */
+  exit: TerminalExitInfo | null;
+  createdAt: string;
+}
+
+/**
+ * Live terminal output. A push rather than a command result because it is a
+ * stream: the process writes when it likes, and nobody asked for this
+ * particular chunk. Coalesced server-side — see TERMINAL_BOUNDS.
+ */
+export interface TerminalOutputPush {
+  type: "terminal.output";
+  threadId: string;
+  terminalId: string;
+  data: string;
+}
+
+export interface TerminalExitPush {
+  type: "terminal.exit";
+  threadId: string;
+  terminalId: string;
+  exit: TerminalExitInfo;
+}
+
 export type CommandResult =
   | { type: "command.result"; commandId: string; ok: true; result: unknown }
   | { type: "command.result"; commandId: string; ok: false; error: string };
@@ -353,4 +441,4 @@ export interface ProtocolErrorPush {
   message: string;
 }
 
-export type ServerPush = ServerWelcome | CommandResult | SessionEventPush | ProtocolErrorPush;
+export type ServerPush = ServerWelcome | CommandResult | SessionEventPush | ProtocolErrorPush | TerminalOutputPush | TerminalExitPush;
