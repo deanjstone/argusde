@@ -1022,8 +1022,14 @@ describe("web smoke: server + browser round trip", () => {
         await terminalPage.getByRole("button", { name: "Terminal" }).click();
 
         // The header names where the shell is rooted (story 7), and its
-        // appearance means terminal.open answered.
-        await terminalPage.getByText(repoDir, { exact: true }).waitFor({ timeout: 20_000 });
+        // appearance means terminal.open answered. Scoped to the header
+        // rather than the page: the same path is also the Thread's title,
+        // and a shell whose prompt prints its working directory puts it on
+        // screen a third time.
+        await terminalPage
+          .locator('section[aria-label="Terminal"] > header')
+          .getByText(repoDir, { exact: true })
+          .waitFor({ timeout: 20_000 });
         await terminalPage.waitForSelector(".xterm-rows", { timeout: 20_000 });
 
         const surface = terminalPage.locator('[data-testid="terminal-surface"]');

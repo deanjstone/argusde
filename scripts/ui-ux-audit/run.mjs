@@ -1853,7 +1853,11 @@ async function main() {
         // ---- US-22.1: the Terminal tab opens a shell rooted at the
         // Thread's working tree, and says which tree that is ----
         await terminalPage.getByRole("button", { name: "Terminal" }).click();
+        // Scoped to the terminal's own header: the same path is also the
+        // Thread's title, and a shell whose prompt prints its working
+        // directory puts it on screen a third time.
         const rootShown = await terminalPage
+          .locator('section[aria-label="Terminal"] > header')
           .getByText(terminalRepo, { exact: true })
           .waitFor({ state: "visible", timeout: 25000 })
           .then(() => true)
