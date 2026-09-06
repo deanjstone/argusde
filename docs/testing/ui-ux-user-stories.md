@@ -380,9 +380,18 @@ of it and nothing more — which is what most of these stories are really checki
   `getBoundingClientRect()` geometry, not inferred from a screenshot.
 - **US-22.7** — A shell that exits says so, with its exit code, and offers a new terminal —
   a dead terminal must be obviously dead rather than silently unresponsive.
-- **US-22.8** *[real-device-only]* — With a soft keyboard open on a real phone, the terminal's
-  last line, the key bar and the tab bar all stay visible. Headless emulation cannot reproduce a
-  dynamic viewport (see the known hard limit above), so this one needs a real device.
+- **US-22.8** *[real-device-only]* — With a soft keyboard open on a real phone, typing reaches the
+  shell, and the terminal's last line, the key bar and the tab bar all stay visible. Headless
+  emulation cannot reproduce a dynamic viewport or a soft keyboard (see the known hard limit
+  above), so this one needs a real device.
+
+  A real-iPhone pass against this story found that **typing reached nothing at all**: xterm drops
+  a character when a `keydown` was seen first and the `input` event is composed, which is exactly
+  the shape a soft keyboard sends (keyCode 229, then the character on an `input` event, no
+  `keypress`). Fixed in `src/web/lib/xterm-terminal.ts`, and the *mechanism* now has a headless
+  regression test in `test/web-smoke.test.ts` that dispatches that event sequence — but the
+  regression test is a proxy for the device, not a replacement, and this story stays
+  real-device-only.
 
 ## US-23: Terminal output as agent context
 

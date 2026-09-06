@@ -1187,6 +1187,94 @@ describe("web smoke: server + browser round trip", () => {
     },
     60_000,
   );
+
+  /**
+   * The soft-keyboard input path (found on a real iPhone, spec #128 US-22.8).
+   *
+   * xterm ignores an `input` event when a `keydown` was seen first and the
+   * event is composed — `_inputEvent`'s `(!e.composed || !this._keyDownSeen)`
+   * guard, meant to stop hardware keys being delivered twice. A soft keyboard
+   * sends exactly that shape: `keydown` with keyCode 229 ("Unidentified"),
+   * then a composed `input` carrying the character, and no `keypress` at all.
+   * So on iOS the keyboard opens, the user types, and nothing whatsoever
+   * reaches the shell.
+   *
+   * Reproduced here by dispatching that sequence rather than by emulating a
+   * device: no headless browser has a soft keyboard, but the event shape is
+   * the whole mechanism, and it is what the fix has to handle.
+   */
+  it(
+    "accepts input from a soft keyboard, which sends a composed input event after a keyCode-229 keydown",
+    async () => {
+      const keyboardPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+
+      try {
+        await keyboardPage.goto(`http://127.0.0.1:${server.port}/`);
+        await keyboardPage.getByRole("button", { name: /type a path manually/i }).click();
+        await keyboardPage.getByLabel(/workspace path/i).fill(repoDir);
+        await keyboardPage.getByRole("button", { name: /^start$/i }).click();
+        await keyboardPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await keyboardPage.getByRole("button", { name: "Terminal" }).click();
+        await keyboardPage.waitForSelector(".xterm-rows", { timeout: 20_000 });
+        await keyboardPage.locator('[data-testid="terminal-surface"]').click();
+
+        await keyboardPage.evaluate(() => {
+          const textarea = document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+          if (!textarea) throw new Error("xterm helper textarea not found");
+          textarea.focus();
+
+          const softKey = (data: string, inputType = "insertText") => {
+            // What a soft keyboard actually sends: an "I have no idea which
+            // key this is" keydown, then the character on an input event.
+            textarea.dispatchEvent(
+              new KeyboardEvent("keydown", { key: "Unidentified", keyCode: 229, bubbles: true, composed: true, cancelable: true }),
+            );
+            textarea.value += data === "\n" ? "" : data;
+            textarea.dispatchEvent(new InputEvent("input", { data, inputType, bubbles: true, composed: true, cancelable: true }));
+            textarea.dispatchEvent(
+              new KeyboardEvent("keyup", { key: "Unidentified", keyCode: 229, bubbles: true, composed: true, cancelable: true }),
+            );
+          };
+
+          for (const character of "echo SOFT_KEYBOARD_OK") softKey(character);
+          softKey("\n", "insertLineBreak");
+        });
+
+        await keyboardPage.waitForFunction(
+          () => document.querySelector(".xterm-rows")?.textContent?.includes("SOFT_KEYBOARD_OK") ?? false,
+          undefined,
+          { timeout: 20_000 },
+        );
+
+        // Backspace comes through as a deletion, not as a key.
+        await keyboardPage.evaluate(() => {
+          const textarea = document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")!;
+          for (const character of "zz") {
+            textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Unidentified", keyCode: 229, bubbles: true, composed: true }));
+            textarea.value += character;
+            textarea.dispatchEvent(new InputEvent("input", { data: character, inputType: "insertText", bubbles: true, composed: true }));
+          }
+          textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Unidentified", keyCode: 229, bubbles: true, composed: true }));
+          textarea.dispatchEvent(new InputEvent("input", { inputType: "deleteContentBackward", bubbles: true, composed: true }));
+        });
+
+        await keyboardPage.waitForFunction(
+          () => {
+            const rows = document.querySelector(".xterm-rows")?.textContent ?? "";
+            // One z rubbed out by the backspace, so the line ends with a
+            // single z rather than two.
+            return rows.includes("zz") === false && rows.includes("z");
+          },
+          undefined,
+          { timeout: 20_000 },
+        );
+      } finally {
+        await keyboardPage.close();
+      }
+    },
+    60_000,
+  );
 });
 
 /**
