@@ -43,6 +43,16 @@ const KEYS: { label: string; data: string; title: string }[] = [
   { label: "Right", data: `${ESC}[C`, title: "Right arrow" },
 ];
 
+/**
+ * What a keystroke gets told when there is no session to carry it. Says
+ * "nothing was sent" explicitly rather than only naming the cause: the
+ * thing the user needs to know is that what they typed did not happen.
+ */
+const NOTHING_SENT_MESSAGE = "No terminal is open, so nothing was sent. Wait for the shell to start, or start a new one.";
+
+/** The container ref is missing only if this component's own markup changed out from under it — say so rather than leave an empty black rectangle. */
+const NO_SURFACE_MESSAGE = "The terminal could not be attached to the page. Reload and try again.";
+
 /** Ctrl-<letter> is the letter's position in the alphabet: Ctrl-C is 3, Ctrl-D is 4. Returns null for anything that has no control form. */
 function controlByte(key: string): string | null {
   if (key.length !== 1) return null;
@@ -87,13 +97,32 @@ export function TerminalView({
   // Bumped to ask for a fresh shell after one has exited (story 9).
   const [attempt, setAttempt] = useState(0);
 
+  /**
+   * The one route every keystroke takes — xterm's and the key bar's alike,
+   * which is why argusde#133 hit both at once. It must never return without
+   * a word: a terminal that has silently stopped accepting input is
+   * indistinguishable from one whose shell is merely busy, and on a phone
+   * there is no console to check.
+   */
   const send = useCallback(
     (data: string) => {
       const current = sessionRef.current;
-      if (!current) return;
-      void sendInput(current.terminalId, data).catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      });
+      if (!current) {
+        console.error("Terminal input dropped: no terminal session is open.");
+        setError(NOTHING_SENT_MESSAGE);
+        return;
+      }
+      void sendInput(current.terminalId, data).then(
+        () => {
+          // Functional update so an ordinary keystroke against a healthy
+          // terminal is not a state change — this runs once per character.
+          setError((previous) => (previous === undefined ? previous : undefined));
+        },
+        (cause: unknown) => {
+          console.error("Terminal input was not delivered:", cause);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        },
+      );
     },
     [sendInput],
   );
@@ -101,7 +130,11 @@ export function TerminalView({
   useEffect(() => {
     if (!threadId) return;
     const container = containerRef.current;
-    if (!container) return;
+    if (!container) {
+      console.error("Terminal surface is missing — nothing to attach an emulator to.");
+      setError(NO_SURFACE_MESSAGE);
+      return;
+    }
 
     let cancelled = false;
     let handle: TerminalHandle | null = null;

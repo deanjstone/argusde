@@ -393,6 +393,18 @@ of it and nothing more — which is what most of these stories are really checki
   regression test is a proxy for the device, not a replacement, and this story stays
   real-device-only.
 
+  A second real-iPhone pass ([#133](https://github.com/deanjstone/argusde/issues/133)) found the
+  xterm fix above did **not** close this story: the on-screen key bar failed identically, and it
+  never goes near xterm — it calls `sendInput` directly. So the failure is in the input path from
+  the device, not in keyboard handling, and the two fixes are independent. What made it
+  undiagnosable rather than merely broken is that *every* layer failed without a word:
+  `TerminalView.send()` returned silently with no session, and `WsClient.sendCommand()` had no
+  timeout, so a command sent on a socket that reads as OPEN but carries nothing stayed pending
+  forever with nothing left to settle it. Both now speak up, `WsClient` runs an application-level
+  `ping` heartbeat, and a connection written off shows an app-wide banner. **Whether that removes
+  the underlying delivery failure is still unknown and still needs the device** — what is fixed is
+  that the next pass will be told which of the two it is looking at.
+
 ## US-23: Terminal output as agent context
 
 Added with spec [#128](https://github.com/deanjstone/argusde/issues/128) phase 3, which made a
