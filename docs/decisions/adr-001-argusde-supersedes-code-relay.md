@@ -27,7 +27,7 @@ Three options were considered:
 
 ArgusDE is the remote and mobile agent console. The v1 charter is amended from "desktop only" to "desktop first, with remote access to the same server over the tailnet and an installable PWA". Remote work continues here.
 
-argus `apps/code-relay` is superseded. It takes no new feature work, and its README names ArgusDE as the successor. Retiring it (removing the package and its release track, after checking that nothing still depends on its Telegram bot) is tracked as a separate argus issue, not done by this ADR.
+argus `apps/code-relay` is superseded. It takes no new feature work, and its README names ArgusDE as the successor. Retiring it (removing the package and its release track, after checking that nothing still depends on its Telegram bot) is tracked in [argus#450](https://github.com/deanjstone/argus/issues/450), not done by this ADR.
 
 The reasons:
 - ArgusDE already has the pieces a remote console needs, built on one server and one UI: live threads, terminal, checkpoints and plan panel.
@@ -37,5 +37,5 @@ The reasons:
 
 - The `CLAUDE.md` charter line changes in the same PR as this ADR, so agents stop treating remote/PWA work as out of scope.
 - Remote access stays **tailnet-only**. The Tailscale phase uses `tailscale serve`, never `funnel`. Any future relay or public exposure would need its own decision.
-- code-relay's capabilities that ArgusDE lacks (the herdr-scoped Telegram bot, and any provider other than Claude Code) are not ported by default. The argus retirement issue decides whether any of them is still needed before code-relay is removed.
+- code-relay's capabilities that ArgusDE lacks (the herdr-scoped Telegram bot, and any provider other than Claude Code) are not ported by default. argus#450 decides whether any of them is still needed before code-relay is removed.
 - Remote access is now a supported surface, so its security posture (auth on the served UI, the terminal tab's reach) is in scope for future reviews in a way it was not under the desktop-only charter.
