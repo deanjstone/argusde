@@ -14,7 +14,7 @@ Decisions locked via HITL grilling before charting:
 
 - **Not a fork.** Standalone codebase, free to structurally diverge from both T3 and Orca (e.g. adopt Orca's worktree/fleet model without being constrained by T3's existing per-thread architecture, or vice versa).
 - **Stack: Electron.** Matches both inspirations directly; avoids re-solving problems Hearth's Rust/Tauri port already had to work around (e.g. shelling out to a system Node for JS-only ACP adapters) for a project with a much larger target feature set than Hearth's.
-- **Platform: desktop only for v1.** No mobile app, no remote/relay access yet — smallest real surface first, same sequencing Hearth used (local dev build before anything else).
+- **Platform: desktop first, remote over the tailnet.** Originally "desktop only for v1"; amended by [ADR-001](docs/decisions/adr-001-argusde-supersedes-code-relay.md) (2026-09-30). The standalone server's one shared UI is also reached remotely via `tailscale serve` (never `funnel`) and as an installable PWA. ArgusDE supersedes argus `apps/code-relay` as the remote/mobile agent console, so remote work belongs here.
 - **Motivation: full control / no upstream dependency.** Not chasing a specific feature gap between T3 and Orca — the point is owning the whole stack outright, even where the resulting feature set ends up close to one of them.
 - **MVP: T3-style single-agent chat first.** ACP-based chat with one provider (Claude Code) working end-to-end in ArgusDE's own Electron shell is the first real milestone. Orca-style multi-worktree/fleet orchestration is explicitly deferred past MVP, not built in parallel.
 
