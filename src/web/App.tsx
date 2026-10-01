@@ -83,6 +83,19 @@ function clearLastActiveThreadId(): void {
 }
 
 /**
+ * Every terminal command is a round trip — open a pty, write bytes to it,
+ * tell it its size — so an answer that has not arrived by now is not slow,
+ * it is gone. Deliberately generous for a tailnet from a phone on cellular,
+ * where a second or two of round trip is ordinary; the point is that there
+ * is a bound at all, since without one a half-open socket leaves every
+ * keystroke pending forever with nothing to show for it (argusde#133).
+ *
+ * Chat's `thread.send-message` gets no timeout on purpose — an agent turn
+ * legitimately takes minutes.
+ */
+const TERMINAL_COMMAND_TIMEOUT = { timeoutMs: 15_000 };
+
+/**
  * Thin composition root — wires WsClient + the chat-state reducer + the
  * three components together. Not unit-tested directly (same precedent as
  * src/server/index.ts's composition root): covered by the E2E browser test
@@ -98,6 +111,15 @@ export function App() {
    */
   const terminalListenersRef = useRef(new Set<(push: TerminalPush) => void>());
   const [connected, setConnected] = useState(false);
+  /**
+   * Set once the socket is written off — a close, a socket error, or a
+   * command the server never answered (argusde#133). Its own state rather
+   * than flipping `connected` back to false: that would swap the whole app
+   * for the "Connecting…" screen and take the terminal, the transcript and
+   * everything the user was reading with it. The connection is gone; what
+   * is on screen is still worth looking at.
+   */
+  const [connectionLost, setConnectionLost] = useState<string | undefined>(undefined);
   const [setup, setSetup] = useState<SetupState>({ submitting: false });
   const [thread, setThread] = useState<ThreadInfo | null>(null);
   const [chatState, setChatState] = useState<ChatState>(initialChatState);
@@ -189,11 +211,22 @@ export function App() {
     const client = new WsClient({ url: `${wsProtocol}//${location.host}${WS_PATH}` });
     clientRef.current = client;
 
+    // A socket that has stopped carrying traffic has to become visible, not
+    // just stop working. Subscribed before anything can go wrong with it.
+    const unsubscribeConnectionLost = client.onConnectionLost((message) => {
+      console.error("ArgusDE connection lost:", message);
+      setConnectionLost(message);
+    });
+
     const unsubscribe = client.onPush((push) => {
       switch (push.type) {
         case "server.welcome":
           setChatState((s) => chatStateReducer(s, { kind: "welcome", apiVersion: push.apiVersion }));
           setConnected(true);
+          // Started only once the server has actually answered something,
+          // so a heartbeat can never be the thing that reports a connection
+          // still being established as dead.
+          client.startHeartbeat();
           void attemptSessionRestore();
           break;
         case "session.event":
@@ -218,6 +251,9 @@ export function App() {
     });
 
     return () => {
+      // Unsubscribed before close(), so tearing the page down deliberately
+      // does not announce itself as a lost connection.
+      unsubscribeConnectionLost();
       unsubscribe();
       client.close();
     };
@@ -321,22 +357,22 @@ export function App() {
    */
   const openTerminal = (cols: number, rows: number) => {
     const { client, threadId } = requireThreadClient();
-    return client.sendCommand<TerminalOpened>({ type: "terminal.open", threadId, cols, rows });
+    return client.sendCommand<TerminalOpened>({ type: "terminal.open", threadId, cols, rows }, TERMINAL_COMMAND_TIMEOUT);
   };
 
   const sendTerminalInput = async (terminalId: string, data: string) => {
     const { client, threadId } = requireThreadClient();
-    await client.sendCommand({ type: "terminal.input", threadId, terminalId, data });
+    await client.sendCommand({ type: "terminal.input", threadId, terminalId, data }, TERMINAL_COMMAND_TIMEOUT);
   };
 
   const resizeTerminal = async (terminalId: string, cols: number, rows: number) => {
     const { client, threadId } = requireThreadClient();
-    await client.sendCommand({ type: "terminal.resize", threadId, terminalId, cols, rows });
+    await client.sendCommand({ type: "terminal.resize", threadId, terminalId, cols, rows }, TERMINAL_COMMAND_TIMEOUT);
   };
 
   const closeTerminal = async (terminalId: string) => {
     const { client, threadId } = requireThreadClient();
-    await client.sendCommand({ type: "terminal.close", threadId, terminalId });
+    await client.sendCommand({ type: "terminal.close", threadId, terminalId }, TERMINAL_COMMAND_TIMEOUT);
   };
 
   const subscribeToTerminal = (listener: (push: TerminalPush) => void) => {
@@ -768,8 +804,16 @@ export function App() {
   // window.
   if (!connected) {
     return (
-      <main className="flex h-dvh items-center justify-center bg-background text-muted-foreground">
-        <p className="text-sm">Connecting…</p>
+      <main className="flex h-dvh items-center justify-center bg-background p-4 text-center text-muted-foreground">
+        {/* A socket that dies before server.welcome would otherwise sit on
+            "Connecting…" forever, saying nothing about why. */}
+        {connectionLost ? (
+          <p role="alert" className="text-sm text-destructive">
+            {connectionLost}
+          </p>
+        ) : (
+          <p className="text-sm">Connecting…</p>
+        )}
       </main>
     );
   }
@@ -790,6 +834,14 @@ export function App() {
 
   return (
     <div className="flex h-dvh flex-col">
+      {/* App-wide, above every tab: a dead socket is not the terminal's
+          problem or the transcript's, it is the page's, and it has to be
+          visible wherever the user happens to be standing (argusde#133). */}
+      {connectionLost && (
+        <p role="alert" className="border-b border-border bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {connectionLost}
+        </p>
+      )}
       <main className="min-h-0 flex-1">
         {/* Visually hidden — the compact mobile-first chrome has no room for a
             visible page title, but every page needs exactly one <h1> for

@@ -20,9 +20,20 @@ export const WS_PATH = "/ws";
  * doesn't need to import the whole server module graph just to reach this
  * string.
  */
-export const API_VERSION = "1.6.0";
+export const API_VERSION = "1.7.0";
 
 export const ClientCommandSchema = z.discriminatedUnion("type", [
+  /**
+   * A round trip that does nothing, so that a client can find out whether
+   * its socket still carries traffic (argusde#133). iOS keeps a killed
+   * socket reading as OPEN and never fires a close event, so the only way
+   * to tell is to ask for an answer and see whether one arrives.
+   *
+   * Application-level rather than a WebSocket ping frame on purpose:
+   * browser JavaScript cannot send a ping frame, and a server-sent one
+   * would only tell the *server* that a client had gone.
+   */
+  z.object({ type: z.literal("ping"), commandId: z.string() }),
   z.object({ type: z.literal("project.create"), commandId: z.string(), workspaceRoot: z.string(), title: z.string() }),
   z.object({ type: z.literal("thread.create"), commandId: z.string(), projectId: z.string(), title: z.string() }),
   z.object({

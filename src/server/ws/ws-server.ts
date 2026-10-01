@@ -130,6 +130,13 @@ export async function startWsServer(options: WsServerOptions): Promise<WsServerH
 
   async function handleCommand(command: ClientCommand): Promise<unknown> {
     switch (command.type) {
+      /**
+       * Deliberately empty: the answer arriving at all is the whole point
+       * (argusde#133). Reads nothing and touches nothing, so a client's
+       * heartbeat costs a round trip and no work.
+       */
+      case "ping":
+        return {};
       case "project.create": {
         // Idempotent by workspaceRoot — otherwise every resubmission of
         // WorkspaceSetup (or the Threads tab's own "+ New project" form,
