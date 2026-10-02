@@ -14,7 +14,7 @@ import * as nodePty from "node-pty";
  *
  * Nothing here is persisted. A terminal describes what a *live server* is
  * running, exactly like context usage and the agent's plan (see
- * CONTEXT.md), so a value carried across a restart would describe a process
+ * GLOSSARY.md), so a value carried across a restart would describe a process
  * that no longer exists. #128 makes that limit visible in the UI rather
  * than papering over it.
  */
