@@ -63,11 +63,12 @@ function setup(
     session?: TerminalOpened;
     threadId?: string | undefined;
     openTerminal?: () => Promise<TerminalOpened>;
+    sendInput?: (terminalId: string, data: string) => Promise<void>;
     onCapture?: ((capture: TerminalCapture) => void) | undefined;
   } = {},
 ) {
   const handle = fakeHandle();
-  const sendInput = vi.fn(async () => {});
+  const sendInput = vi.fn(options.sendInput ?? (async () => {}));
   const resizeTerminal = vi.fn(async () => {});
   const closeTerminal = vi.fn(async () => {});
   const openTerminal = options.openTerminal ?? vi.fn(async () => options.session ?? opened());
@@ -257,5 +258,76 @@ describe("TerminalView", () => {
     await screen.findByRole("button", { name: "Ctrl" });
 
     expect(screen.queryByRole("button", { name: /send output to agent/i })).toBeNull();
+  });
+
+  /**
+   * argusde#133. Both input routes — xterm and the key bar — used to return
+   * without a word when there was no session to send to or the send did not
+   * land, which is exactly what a phone sees when its socket has quietly
+   * died. A send that goes nowhere has to say so.
+   */
+  it("says a keystroke went nowhere rather than swallowing it, when there is no terminal to send to", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Never resolves, so the view is mounted with no session — the state a
+    // failed or still-pending terminal.open leaves behind.
+    const { sendInput } = setup({ openTerminal: vi.fn(() => new Promise<TerminalOpened>(() => {})) });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Up" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/nothing was sent/i);
+    expect(sendInput).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("surfaces a send the server never took, instead of dropping it silently", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { handle } = setup({
+      sendInput: async () => {
+        throw new Error("Lost the connection to the ArgusDE server. Check it's still running, then reload.");
+      },
+    });
+    // The shell line only renders once terminal.open has answered, which is
+    // also when xterm's input is wired up.
+    await screen.findByText("/bin/zsh");
+
+    handle.type("ls\r");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/lost the connection/i);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("surfaces a key-bar tap the server never took, on the same path as a keystroke", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    setup({
+      sendInput: async () => {
+        throw new Error("Lost the connection to the ArgusDE server. Check it's still running, then reload.");
+      },
+    });
+    await screen.findByText("/bin/zsh");
+
+    fireEvent.click(screen.getByRole("button", { name: "Up" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/lost the connection/i);
+    consoleError.mockRestore();
+  });
+
+  it("clears a stale send error once a later send lands", async () => {
+    let failing = true;
+    const { handle } = setup({
+      sendInput: async () => {
+        if (failing) throw new Error("Lost the connection to the ArgusDE server. Check it's still running, then reload.");
+      },
+    });
+    await screen.findByText("/bin/zsh");
+
+    handle.type("a");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    failing = false;
+    handle.type("b");
+
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 });

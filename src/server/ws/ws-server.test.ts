@@ -117,6 +117,19 @@ describe("ws-server", () => {
     20_000,
   );
 
+  it(
+    "answers a ping, so a client can tell a live socket from one that merely looks open",
+    async () => {
+      // The whole value is that an answer comes back at all (argusde#133) —
+      // a socket iOS has quietly killed still reads as OPEN, and only a
+      // reply that never arrives distinguishes the two.
+      const result = await send({ type: "ping", commandId: "ping-1" });
+
+      expect(result.ok).toBe(true);
+    },
+    20_000,
+  );
+
   it("drives a full project -> thread -> message round trip, streaming the reply back over the same connection", async () => {
     const projectResult = await send({ type: "project.create", commandId: "c1", workspaceRoot: repoDir, title: "Test Project" });
     expect(projectResult.ok).toBe(true);

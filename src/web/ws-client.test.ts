@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { WebSocketServer } from "ws";
+import type { AddressInfo } from "node:net";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -222,4 +224,88 @@ describe("WsClient", () => {
     },
     15_000,
   );
+
+  /**
+   * The iOS failure in argusde#133. A socket iOS has quietly killed still
+   * reads as OPEN from JavaScript, so `send()` succeeds into nothing and the
+   * command's promise is registered as pending with nothing left to settle
+   * it. Every test below drives that exact shape: a server that accepts the
+   * connection and then answers nothing at all.
+   */
+  describe("a socket that looks open but answers nothing", () => {
+    let silentServer: WebSocketServer;
+    let silentClient: WsClient;
+
+    beforeEach(async () => {
+      silentServer = new WebSocketServer({ port: 0, path: "/ws" });
+      await new Promise<void>((resolve) => silentServer.once("listening", () => resolve()));
+      const { port } = silentServer.address() as AddressInfo;
+      silentClient = new WsClient({ url: `ws://127.0.0.1:${port}/ws` });
+      await silentClient.waitUntilOpen();
+    });
+
+    afterEach(async () => {
+      silentClient.close();
+      await new Promise<void>((resolve) => silentServer.close(() => resolve()));
+    });
+
+    it("rejects a command that is never answered, rather than leaving it pending forever", async () => {
+      const rejection = await silentClient
+        .sendCommand({ type: "project.list" }, { timeoutMs: 60 })
+        .then(() => undefined)
+        .catch((error: Error) => error);
+
+      expect(rejection).toBeInstanceOf(Error);
+      // Says what happened and what to do, in the register of the
+      // already-closed-socket message next to it.
+      expect(rejection!.message).toMatch(/connection/i);
+      expect(rejection!.message).toMatch(/reload|reconnect|running/i);
+    }, 15_000);
+
+    it("reports the connection as lost once a command times out, so a dead socket stops looking healthy", async () => {
+      const lost: string[] = [];
+      silentClient.onConnectionLost((message) => lost.push(message));
+
+      await silentClient.sendCommand({ type: "project.list" }, { timeoutMs: 60 }).catch(() => undefined);
+
+      expect(lost).toHaveLength(1);
+      expect(lost[0]).toMatch(/connection/i);
+    }, 15_000);
+
+    it("reports the connection as lost from its own heartbeat, with no command of the user's to hang first", async () => {
+      const lost = new Promise<string>((resolve) => silentClient.onConnectionLost(resolve));
+
+      silentClient.startHeartbeat({ intervalMs: 10, timeoutMs: 60 });
+
+      await expect(lost).resolves.toMatch(/connection/i);
+    }, 15_000);
+
+    it("leaves a command with no timeout waiting — an agent turn legitimately takes minutes", async () => {
+      let settled = false;
+      const pending = silentClient.sendCommand({ type: "project.list" });
+      void pending.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(settled).toBe(false);
+    }, 15_000);
+  });
+
+  it("reports the connection as lost when the socket actually closes, not only when a command is in flight", async () => {
+    await client.waitUntilOpen();
+    const lost = new Promise<string>((resolve) => client.onConnectionLost(resolve));
+
+    client.close();
+
+    await expect(lost).resolves.toMatch(/connection/i);
+  }, 15_000);
+
+  it("does not reject a command that answered inside its timeout", async () => {
+    await client.waitUntilOpen();
+
+    await expect(client.sendCommand({ type: "project.list" }, { timeoutMs: 10_000 })).resolves.toBeDefined();
+  }, 15_000);
 });
