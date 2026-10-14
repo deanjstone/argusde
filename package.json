@@ -8,7 +8,7 @@
   "bin": {
     "argusde": "dist/server/cli.js"
   },
-  "packageManager": "pnpm@11.10.0",
+  "packageManager": "pnpm@12.13.0",
   "engines": {
     "node": ">=22.0.0"
   },
