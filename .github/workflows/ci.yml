@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # No version argument: package.json's `packageManager` pin
-      # (pnpm@11.10.0) is the single source of truth, so this can't drift from
+      # (pnpm@12.13.0) is the single source of truth, so this can't drift from
       # what runs locally.
       - uses: pnpm/action-setup@v4
 
