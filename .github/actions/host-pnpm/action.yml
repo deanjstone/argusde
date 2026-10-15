@@ -1,0 +1,36 @@
+name: Host pnpm
+description: >-
+  Use the pnpm already on a self-hosted runner's PATH (fnm's alias bin) instead of
+  reinstalling it with pnpm/action-setup, and fail if it is not the version pinned
+  by packageManager. Call it with `if: runner.environment != 'github-hosted'`.
+
+inputs:
+  working-directory:
+    description: Directory whose package.json holds the packageManager pin.
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Check pnpm against the packageManager pin
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        fnm_bin="$HOME/.local/share/fnm/aliases/default/bin"
+        if [[ -d "$fnm_bin" ]]; then
+          echo "$fnm_bin" >> "$GITHUB_PATH"
+          export PATH="$fnm_bin:$PATH"
+        fi
+        pin="$(node -p "require('./package.json').packageManager || ''")"
+        expected="${pin#pnpm@}"
+        expected="${expected%%+*}"
+        if [[ "$pin" != pnpm@* || -z "$expected" ]]; then
+          echo "::error::package.json has no pnpm@<version> packageManager pin (got '$pin')"
+          exit 1
+        fi
+        actual="$(pnpm --version)"
+        echo "pnpm --version: $actual (packageManager pin: $expected)"
+        if [[ "$actual" != "$expected" ]]; then
+          echo "::error::pnpm $actual does not match the packageManager pin $expected"
+          exit 1
+        fi

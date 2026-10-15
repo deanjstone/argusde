@@ -21,8 +21,10 @@ jobs:
   test:
     # Pinned rather than ubuntu-latest, because the apt package names below are
     # release-specific (libasound2t64 on 24.04 is libasound2 on 22.04) — a
-    # silent runner bump would break the install step, not the tests.
-    runs-on: ubuntu-24.04
+    # silent runner bump would break the install step, not the tests. Setting the
+    # CI_RUNS_ON repo variable moves the job to the homelab runner instead (the
+    # fallback stays this label); pnpm/action-setup then gives way to host-pnpm.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +33,11 @@ jobs:
       # (pnpm@12.13.0) is the single source of truth, so this can't drift from
       # what runs locally.
       - uses: pnpm/action-setup@v4
+        if: runner.environment == 'github-hosted'
+
+      - name: Use the host pnpm (self-hosted)
+        if: runner.environment != 'github-hosted'
+        uses: ./.github/actions/host-pnpm
 
       - uses: actions/setup-node@v4
         with:
