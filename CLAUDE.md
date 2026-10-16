@@ -35,23 +35,33 @@ Collapsed from wayfinder map [argusde#1](https://github.com/deanjstone/argusde/i
 - **Chat UI**: a custom chat-style surface rendering ACP session updates directly, not a terminal emulator.
 - **Build/packaging**: electron-builder.
 
-## UI components — shadcn only (locked 2026-08-17)
+## UI components — design-system registry only (locked 2026-10-16)
 
-ArgusDE's UI is built from **real shadcn components**, installed via the CLI — not
-hand-rolled lookalikes. shadcn was initialised properly on 2026-08-17 (`components.json`,
-Radix base, `radix-nova` style, neutral base colour, `@/*` → `src/web`); before that the
-`ui/` directory held hand-written approximations, which is what this rule exists to stop
-recurring.
+ArgusDE's UI primitives come from the **`deanjstone/design-system` registry** (`base-nova`
+style, Base UI, OKLCH tokens, IBM Plex Sans), installed through the shadcn CLI — not
+hand-rolled lookalikes and not a Radix install of upstream shadcn. This supersedes the
+2026-08-17 "shadcn only" rule, which had ArgusDE on its own `radix-nova` install
+(argusde#141). The registry is pinned to a release tag in `components.json`
+(`registries["@design-system"]`, currently `v2.7.0`); bump the tag deliberately, review the diff
+like any dependency upgrade, and see the registry's README on what a pin does and doesn't fix.
 
-- **Add components with the CLI**: `pnpm dlx shadcn@latest add <component>`. Never write a
-  primitive by hand that shadcn already ships.
+- **Add components with the CLI**: `pnpm dlx shadcn@latest add @design-system/<component>`.
+  Never write a primitive by hand that the registry already ships.
+- **A primitive the registry lacks goes into design-system first**, never as a one-off here.
+  The two current gaps, `breadcrumb` and `command` (design-system#94), are listed in `test/registry-only.test.ts`
+  until the registry has them; the guard test fails on any other non-registry file under
+  `src/web/components/ui/`.
 - **Hand-rolling a component requires the user's explicit approval**, and is only on the
-  table when shadcn genuinely has no equivalent. Ask; don't assume.
+  table when neither the registry nor upstream shadcn has an equivalent. Ask; don't assume.
+- Base UI composes with the `render` prop, not Radix's `asChild`:
+  `<Item render={<button type="button" onClick={…} />}>…</Item>`. Radix (`radix-ui`,
+  `@radix-ui/*`) must not come back; the guard test enforces it.
 - Composed app-level surfaces (chat view, checkpoint strip, thread list) are ArgusDE's own,
-  but they must be **built out of** shadcn primitives rather than raw elements plus Tailwind.
+  but they must be **built out of** registry primitives rather than raw elements plus Tailwind.
 - Theme through the CSS variables in `src/web/index.css`, not per-component colour classes.
-  `--primary` is mapped to ArgusDE's violet accent so shadcn components inherit it.
-- The app shell sets `class="dark"` on `<html>` — the token set is dark-only by design.
+  The registry's `theme` tokens are the base; ArgusDE's violet `--primary`/`--ring` are an
+  override block at the end of that file. The app shell sets `class="dark"` on `<html>` — the
+  token set is dark-only by design.
 - [`shadcn-ui/chatbot-template`](https://github.com/shadcn-ui/chatbot-template) remains the
   pattern source for chat surfaces (wayfinder map #83). Take components and patterns, not
   its Next.js/Vercel AI SDK plumbing.

@@ -30,9 +30,8 @@
  * build-time value would be wrong on every request.
  */
 export function documentStyleNonce(): string | null {
-  // The same source main.tsx hands to Radix (argusde#113) — the server
-  // writes the per-response value into this meta tag when it serves the
-  // document. One mechanism, not two.
+  // The server writes the per-response value into this meta tag when it
+  // serves the document (argusde#113).
   const meta = document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]');
   if (meta?.content && meta.content !== "__CSP_NONCE__") return meta.content;
   // Fallback for a document served some other way: read it back off an

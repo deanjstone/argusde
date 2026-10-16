@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { AgentCommand } from "../../shared/acp-events.js";
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "./ui/command.js";
-import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover.js";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 
 export interface CommandMenuProps {
   open: boolean;
@@ -23,7 +23,7 @@ export interface CommandMenuProps {
  * claude-agent-acp rather than assumed (an unknown command comes back as
  * "Unknown command: …", not as a conversational reply).
  *
- * The first Radix *popover* in this app. It only works at all because
+ * The first *popover* in this app. It only works at all because
  * argusde#113 put a per-response CSP nonce in place — the injected `<style>`
  * an overlay uses to lock scroll is blocked outright without one.
  */
@@ -84,17 +84,30 @@ export function CommandMenu({ open, commands, query, onSelect, onOpenChange, chi
 
   return (
     <Popover open={open && hasCommands} onOpenChange={onOpenChange}>
-      <PopoverAnchor asChild>{children}</PopoverAnchor>
+      <div className="relative flex-1">
+        {children}
+        {/* The registry popover positions against its trigger and has no
+            anchor part, so the composer's footprint is handed to it as an
+            invisible, unfocusable, click-through trigger laid over the
+            composer. Nothing ever interacts with it. */}
+        <PopoverTrigger
+          render={<span aria-hidden className="pointer-events-none absolute inset-0" />}
+          nativeButton={false}
+          tabIndex={-1}
+        />
+      </div>
       <PopoverContent
-        // Radix renders this with role="dialog", which axe requires to have an
-        // accessible name — without one it is a serious violation, caught by
-        // the audit rather than by review.
+        // The popup is a dialog, which axe requires to have an accessible name
+        // — without one it is a serious violation, caught by the audit rather
+        // than by review.
         aria-label="Agent commands"
         align="start"
         side="top"
         // The composer is the point of this surface; the menu must not steal
-        // the caret from it while the user is still typing the command name.
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        // the caret from it while the user is still typing the command name,
+        // nor take focus back on close (the trigger above is not focusable).
+        initialFocus={false}
+        finalFocus={false}
         className="w-[min(28rem,calc(100vw-2rem))] p-0"
       >
         <Command
@@ -109,9 +122,9 @@ export function CommandMenu({ open, commands, query, onSelect, onOpenChange, chi
           }}
         >
           {/* Plain overflow rather than `scroll-area`, whose injected `<style>`
-              is blocked unless Radix is handed the CSP nonce — see the
-              style-src commentary in server/http/static-server.ts. The cap
-              matters either way: the real agent advertised 122 commands. */}
+              is blocked unless the CSP nonce reaches it — see the style-src
+              commentary in server/http/static-server.ts. The cap matters
+              either way: the real agent advertised 122 commands. */}
           <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>No matching command.</CommandEmpty>
             <CommandGroup>

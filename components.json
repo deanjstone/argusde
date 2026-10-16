@@ -1,6 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "radix-nova",
+  "style": "base-nova",
   "rsc": false,
   "tsx": true,
   "tailwind": {
@@ -21,5 +21,9 @@
   },
   "menuColor": "default",
   "menuAccent": "subtle",
-  "registries": {}
+  "registries": {
+    "@design-system": {
+      "url": "https://raw.githubusercontent.com/deanjstone/design-system/v2.7.0/r/{name}.json"
+    }
+  }
 }

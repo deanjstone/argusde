@@ -1,7 +1,7 @@
+@import "@fontsource-variable/ibm-plex-sans";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 /*
  ---break---
  */
@@ -25,7 +25,7 @@ body,
  */
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: var(--font-sans-stack);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -74,13 +74,68 @@ body,
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-surface-5: var(--surface-5);
+  --color-surface-border: var(--surface-border);
+  --color-surface-border-light: var(--surface-border-light);
+  --color-accent-orchid-1: var(--accent-orchid-1);
+  --color-accent-orchid-2: var(--accent-orchid-2);
+  --color-accent-orchid-1-dark: var(--accent-orchid-1-dark);
+  --color-accent-nebula-1: var(--accent-nebula-1);
+  --color-accent-nebula-2: var(--accent-nebula-2);
+  --color-accent-nebula-1-dark: var(--accent-nebula-1-dark);
+  --color-accent-lagoon-1: var(--accent-lagoon-1);
+  --color-accent-lagoon-2: var(--accent-lagoon-2);
+  --color-accent-lagoon-1-dark: var(--accent-lagoon-1-dark);
+  --color-accent-garnet-1: var(--accent-garnet-1);
+  --color-accent-garnet-2: var(--accent-garnet-2);
+  --color-accent-garnet-1-dark: var(--accent-garnet-1-dark);
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-in: fadeIn 0.3s ease-out;
+  --animate-slide-up: slideUp 0.3s ease-out;
+  --surface-grain-size: var(--surface-grain-size);
+  --surface-grain: var(--surface-grain);
+  --app-titlebar-native-controls-inset: var(--app-titlebar-native-controls-inset);
+  --app-titlebar-inset-right: var(--app-titlebar-inset-right);
+  --app-titlebar-inset-left: var(--app-titlebar-inset-left);
+  --app-titlebar-inset-top: var(--app-titlebar-inset-top);
+  --app-titlebar-height: var(--app-titlebar-height);
+  --color-app-scrollbar-thumb-hover: var(--app-scrollbar-thumb-hover);
+  --color-app-scrollbar-thumb: var(--app-scrollbar-thumb);
+  --app-scrollbar-width: var(--app-scrollbar-width);
+  --glass-saturation: var(--glass-saturation);
+  --glass-opacity: var(--glass-opacity);
+  --glass-blur: var(--glass-blur);
+  --color-destructive-foreground: var(--destructive-foreground);
+  @keyframes fadeIn {
+  from {
+    opacity: 0;
+    }
+  to {
+    opacity: 1;
+    }
+  }
+  @keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    }
+  }
 }
 /*
  ---break---
@@ -92,7 +147,7 @@ body,
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.541 0.281 293.009);
+  --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
   /* The accent, light enough to be *text*. --primary is a surface colour: it
      has to stay dark so near-white --primary-foreground reads on top of it,
@@ -142,13 +197,13 @@ body,
   --diff-removed-bg: oklch(0.94 0.05 25);
   --diff-hunk: oklch(0.52 0.13 265);
   --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --input: oklch(0.64 0 0);
+  --ring: oklch(0.62 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -157,7 +212,42 @@ body,
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: oklch(0.62 0 0);
+  --destructive-foreground: oklch(1 0 0);
+  --surface-0: #06060a;
+  --surface-1: #0c0c14;
+  --surface-2: #13131e;
+  --surface-3: #1a1a28;
+  --surface-4: #222233;
+  --surface-5: #2a2a3d;
+  --surface-border: #2a2a3d;
+  --surface-border-light: #72729c;
+  --accent-orchid-1: #a21caf;
+  --accent-orchid-2: #4338ca;
+  --accent-orchid-1-dark: #f0abfc;
+  --accent-nebula-1: #0369a1;
+  --accent-nebula-2: #6d28d9;
+  --accent-nebula-1-dark: #7dd3fc;
+  --accent-lagoon-1: #134e4a;
+  --accent-lagoon-2: #0e7490;
+  --accent-lagoon-1-dark: #5eead4;
+  --accent-garnet-1: #881337;
+  --accent-garnet-2: #e11d48;
+  --accent-garnet-1-dark: #fda4af;
+  --glass-blur: 12px;
+  --glass-opacity: 80%;
+  --glass-saturation: 1.14;
+  --app-scrollbar-width: 8px;
+  --app-scrollbar-thumb: rgb(217 217 217);
+  --app-scrollbar-thumb-hover: rgb(191 191 191);
+  --app-titlebar-height: 52px;
+  --app-titlebar-inset-top: 0px;
+  --app-titlebar-inset-left: calc(env(safe-area-inset-left, 0px) + 0.75rem);
+  --app-titlebar-inset-right: calc(env(safe-area-inset-right, 0px) + 0.75rem);
+  --app-titlebar-native-controls-inset: 0px;
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --surface-grain-size: 256px 256px;
+  --font-sans-stack: "IBM Plex Sans Variable", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
 }
 /*
  ---break---
@@ -169,15 +259,8 @@ body,
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  /* Same violet as the light theme, deliberately not the lighter dark-mode
-     accent shadcn ships. This token is a *background* here — the user's own
-     message bubble and every primary button — under near-white
-     --primary-foreground, and the lighter value only reaches 4.21:1, below
-     WCAG AA. It is also exactly the violet-600 the hand-rolled bubble used
-     before spec #93 phase 2 migrated it onto tokens, so this both fixes the
-     contrast and keeps the accent looking like it always did. */
-  --primary: oklch(0.541 0.281 293.009);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
   /* 7.3:1 on the dark background, still 5.6:1 on a muted card. This is the
      block the app actually runs in — the shell sets class="dark". */
   --primary-bright: oklch(0.75 0.16 293);
@@ -187,7 +270,7 @@ body,
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  --destructive: oklch(0.58 0.191 22.216);
   --warning: oklch(0.79 0.15 74);
   --warning-foreground: oklch(0.22 0.05 68);
   --syntax-comment: oklch(0.62 0.02 260);
@@ -206,21 +289,34 @@ body,
   --diff-removed-bg: oklch(0.28 0.07 25);
   --diff-hunk: oklch(0.75 0.13 265);
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
+  --input: oklch(1 0 0 / 40%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.922 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --destructive-foreground: oklch(1 0 0);
+  --surface-0: #06060a;
+  --surface-1: #0c0c14;
+  --surface-2: #13131e;
+  --surface-3: #1a1a28;
+  --surface-4: #222233;
+  --surface-5: #2a2a3d;
+  --surface-border: #2a2a3d;
+  --surface-border-light: #72729c;
+  --glass-blur: 16px;
+  --glass-saturation: 1.08;
+  --app-scrollbar-thumb: var(--color-surface-4);
+  --app-scrollbar-thumb-hover: var(--color-surface-5);
 }
 /*
  ---break---
@@ -235,4 +331,272 @@ body,
   html {
     @apply font-sans;
   }
+}
+/*
+ ---break---
+ */
+@custom-variant wco (&:is(.wco, .wco *));
+/*
+ ---break---
+ */
+@layer components {
+  .card {
+    background-color: var(--color-card);
+    color: var(--color-card-foreground);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+  }
+  .card-hover {
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+  .dark .card {
+    border-color: var(--color-surface-border);
+  }
+/*
+ ---break---
+ */
+@media (hover: hover) {
+  .card-hover:hover {
+    background-color: var(--color-accent);
+    }
+  .dark .card-hover:hover {
+    background-color: var(--color-surface-2);
+    border-color: var(--color-surface-border-light);
+    }
+  }
+  .btn-primary {
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+    border-radius: var(--radius-md);
+  }
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--color-foreground);
+  }
+  .btn-ghost:hover {
+    background-color: var(--color-accent);
+    color: var(--color-accent-foreground);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 9999px;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: var(--color-secondary);
+    color: var(--color-secondary-foreground);
+  }
+  .input {
+    border: 1px solid var(--color-input);
+    border-radius: var(--radius-md);
+    background-color: transparent;
+  }
+  .input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-ring);
+  }
+  .btn-gradient {
+    background-image: linear-gradient(115deg, var(--grad-1), var(--grad-2));
+    color: #fff;
+    border: none;
+  }
+  .gradient-orchid {
+    --grad-1: var(--color-accent-orchid-1);
+    --grad-2: var(--color-accent-orchid-2);
+  }
+  .gradient-nebula {
+    --grad-1: var(--color-accent-nebula-1);
+    --grad-2: var(--color-accent-nebula-2);
+  }
+  .gradient-lagoon {
+    --grad-1: var(--color-accent-lagoon-1);
+    --grad-2: var(--color-accent-lagoon-2);
+  }
+  .gradient-garnet {
+    --grad-1: var(--color-accent-garnet-1);
+    --grad-2: var(--color-accent-garnet-2);
+  }
+}
+/*
+ ---break---
+ */
+@media (display-mode: standalone) {
+  :root {
+    --app-titlebar-inset-top: env(safe-area-inset-top, 0px);
+  }
+}
+  .wco {
+    --app-titlebar-height: env(titlebar-area-height, 52px);
+    --app-titlebar-inset-top: env(titlebar-area-y, 0px);
+    --app-titlebar-inset-left: calc(env(titlebar-area-x, 0px) + 0.75rem);
+    --app-titlebar-inset-right: calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem);
+    --app-titlebar-native-controls-inset: calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px) + 0.75rem);
+}
+  .drag-region {
+    -webkit-app-region: drag;
+}
+  .drag-region button, .drag-region input, .drag-region textarea, .drag-region select, .drag-region a {
+    -webkit-app-region: no-drag;
+}
+  ::-webkit-scrollbar {
+    width: var(--app-scrollbar-width);
+    height: var(--app-scrollbar-width);
+}
+  ::-webkit-scrollbar-track {
+    background: transparent;
+}
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--app-scrollbar-thumb);
+    border-radius: 9999px;
+}
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--app-scrollbar-thumb-hover);
+}
+  .dark ::selection {
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+}
+  .dark input[type="date"]::-webkit-calendar-picker-indicator, .dark input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+}
+/*
+ ---break---
+ */
+@media (prefers-reduced-motion: reduce) {
+/*
+ ---break---
+ */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    }
+  to {
+    opacity: 1;
+    }
+  }
+  .animate-pulse-slow {
+    animation: none;
+  }
+  .card-hover {
+    transition-duration: 1ms;
+  }
+  [data-slot="dialog-content"] {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+  }
+}
+/*
+ ---break---
+ */
+@media (pointer: coarse) {
+  [data-slot="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  [data-slot="input"] {
+    min-height: 44px;
+  }
+  [data-slot="tabs-list"] {
+    min-height: 44px;
+  }
+  [data-slot="tabs-trigger"] {
+    min-height: 38px;
+  }
+  [data-slot="dialog-close"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+/*
+ ---break---
+ */
+@utility pt-safe {
+    padding-top: max(env(safe-area-inset-top), 0px);
+}
+/*
+ ---break---
+ */
+@utility pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+/*
+ ---break---
+ */
+@utility pl-safe {
+    padding-left: max(env(safe-area-inset-left), 0px);
+}
+/*
+ ---break---
+ */
+@utility pr-safe {
+    padding-right: max(env(safe-area-inset-right), 0px);
+}
+/*
+ ---break---
+ */
+@utility surface-glass {
+    background: color-mix(in srgb, var(--color-background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--color-background) !important;
+  }
+}
+/*
+ ---break---
+ */
+@utility dialog-glass {
+    background: color-mix(in srgb, var(--color-background) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    border-color: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--color-popover) !important;
+  }
+}
+/*
+ ---break---
+ */
+@utility dropdown-glass {
+    background: color-mix(in srgb, var(--color-popover) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    border: 1px solid color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: var(--color-popover) !important;
+  }
+}
+/*
+ ---break---
+ */
+@utility surface-grain {
+    background-image: var(--surface-grain);
+    background-repeat: repeat;
+    background-size: var(--surface-grain-size);
+}
+
+/*
+ * ArgusDE's accent, layered over the design-system theme tokens above. The
+ * registry ships a neutral --primary; the violet is this app's identity, so it
+ * is overridden here rather than edited into the vendored block (the pattern in
+ * myargus/DESIGN.md).
+ *
+ * --primary is a *background* — the user's message bubble and every primary
+ * button — under near-white --primary-foreground, so it has to stay dark enough
+ * to carry that text at WCAG AA (violet-600; the lighter dark-mode value only
+ * reaches 4.21:1). --ring is the same hue lifted to --primary-bright, which is
+ * 7.3:1 on the app background. Both blocks are overridden because the shell
+ * always runs under class="dark" but the :root set is still the fallback.
+ */
+:root,
+.dark {
+  --primary: oklch(0.541 0.281 293.009);
+  --primary-foreground: oklch(0.985 0 0);
+}
+:root {
+  --ring: oklch(0.541 0.281 293.009);
+}
+.dark {
+  --ring: oklch(0.75 0.16 293);
 }

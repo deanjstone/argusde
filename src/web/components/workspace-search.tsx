@@ -84,22 +84,20 @@ export function WorkspaceSearch({ results, loading, error, onOpenMatch }: Worksp
           {file.matches.map((match) => (
             <Item
               key={`${file.path}:${match.line}`}
-              asChild
               variant="muted"
               size="xs"
               className="cursor-pointer hover:bg-muted"
+              render={<button type="button" onClick={() => onOpenMatch(file.path, match.line)} />}
             >
-              <button type="button" onClick={() => onOpenMatch(file.path, match.line)}>
-                <ItemContent className="min-w-0 flex-row items-baseline gap-2">
-                  {/* The line number is the thing you scan, so it leads and
-                      keeps a fixed width — tabular digits stop the match text
-                      shifting between rows. */}
-                  <span aria-hidden className="shrink-0 tabular-nums text-muted-foreground">
-                    {match.line}
-                  </span>
-                  <ItemTitle className="min-w-0 truncate font-mono font-normal">{match.text.trim()}</ItemTitle>
-                </ItemContent>
-              </button>
+              <ItemContent className="min-w-0 flex-row items-baseline gap-2">
+                {/* The line number is the thing you scan, so it leads and
+                    keeps a fixed width — tabular digits stop the match text
+                    shifting between rows. */}
+                <span aria-hidden className="shrink-0 tabular-nums text-muted-foreground">
+                  {match.line}
+                </span>
+                <ItemTitle className="min-w-0 truncate font-mono font-normal">{match.text.trim()}</ItemTitle>
+              </ItemContent>
             </Item>
           ))}
           {file.matchesTruncated && (

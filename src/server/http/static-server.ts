@@ -39,17 +39,19 @@ const DEFAULT_MIME_TYPE = "application/octet-stream";
 //   | a `<style>` element with no nonce             | **blocked**              |
 //   | a `<style>` element carrying this nonce       | allowed                  |
 //
-// The nonce is what makes the last row work, and it is why Radix's overlays
-// function at all: they lock body scroll through `react-remove-scroll`, which
-// stamps the nonce onto the element it injects. Without it a dialog *opens*
-// but leaves the page scrolling behind it, plus a console violation the
-// audit's zero-console-errors gate fails on.
+// The nonce is what makes the last row work. The terminal needs it (xterm.js
+// builds `<style>` elements — see web/lib/style-nonce.ts). The overlays needed
+// it too while they were Radix, which locked body scroll through
+// `react-remove-scroll` and its injected `<style>`; the Base UI primitives lock
+// through the CSSOM instead, so they no longer do. Without a nonce a dialog
+// that did inject one would *open* but leave the page scrolling behind it,
+// plus a console violation the audit's zero-console-errors gate fails on.
 //
 // What this does and does not rule out:
 //
-//   * `scroll-area` is blocked **by default**, but not inherently: Radix
-//     renders a `<style>` element for it and accepts a `nonce` prop to stamp,
-//     which it simply isn't given today. The plain `overflow-y-auto`
+//   * `scroll-area` was blocked **by default**, but not inherently: the Radix
+//     one rendered a `<style>` element and accepted a `nonce` prop to stamp.
+//     The Base UI one has not been re-probed. The plain `overflow-y-auto`
 //     containers elsewhere in this app predate that understanding and are
 //     kept because they work, not because a nonce could not fix them.
 //   * Computed `style={{ … }}` from React is **fine**. The syntax highlighter

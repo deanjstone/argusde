@@ -61,12 +61,16 @@ export function DirectoryBrowser({ listDirectory, onSelect }: DirectoryBrowserPr
           <div className="flex flex-col gap-1">
             {listing.entries.length === 0 && <p className="py-2 text-center text-sm text-muted-foreground">No subfolders here.</p>}
             {listing.entries.map((entry) => (
-              <Item key={entry.path} asChild variant="muted" size="xs" className="cursor-pointer hover:bg-muted">
-                <button type="button" onClick={() => navigate(entry.path)}>
-                  <ItemContent>
-                    <ItemTitle>{entry.name}</ItemTitle>
-                  </ItemContent>
-                </button>
+              <Item
+                key={entry.path}
+                variant="muted"
+                size="xs"
+                className="cursor-pointer hover:bg-muted"
+                render={<button type="button" onClick={() => navigate(entry.path)} />}
+              >
+                <ItemContent>
+                  <ItemTitle>{entry.name}</ItemTitle>
+                </ItemContent>
               </Item>
             ))}
           </div>
