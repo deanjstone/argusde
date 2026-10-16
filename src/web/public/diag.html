@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>ArgusDE terminal diagnostics</title>
+    <link rel="stylesheet" href="/diag.css" />
+  </head>
+  <body>
+    <h1>Terminal diagnostics</h1>
+    <p id="summary">Connecting…</p>
+    <button id="run" type="button">Run terminal check</button>
+    <button id="clear" type="button">Clear log</button>
+    <p id="verdict" data-verdict=""></p>
+    <h2>Keyboard probe</h2>
+    <p>Tap the box and type <code>abc</code>:</p>
+    <textarea id="probe" rows="2" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+    <p id="keysummary">no key events yet</p>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+    <script src="/diag.js"></script>
+  </body>
+</html>

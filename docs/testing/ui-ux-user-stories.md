@@ -405,6 +405,13 @@ of it and nothing more — which is what most of these stories are really checki
   the underlying delivery failure is still unknown and still needs the device** — what is fixed is
   that the next pass will be told which of the two it is looking at.
 
+  For that pass, the server also serves a standalone diagnostics page at `/diag.html`
+  ([#146](https://github.com/deanjstone/argusde/issues/146), source in `src/web/public/diag.*`).
+  **Run terminal check** sends `terminal.input` outside the app's UI and names which of #133's
+  three failures it sees: no reply to the input, input accepted with no shell output, or output in
+  the server's scrollback with no `terminal.output` push. `test/diag-page.test.ts` reproduces the
+  first and third by dropping WebSocket frames under iPhone emulation.
+
 ## US-23: Terminal output as agent context
 
 Added with spec [#128](https://github.com/deanjstone/argusde/issues/128) phase 3, which made a
