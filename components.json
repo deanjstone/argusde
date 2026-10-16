@@ -23,7 +23,7 @@
   "menuAccent": "subtle",
   "registries": {
     "@design-system": {
-      "url": "https://raw.githubusercontent.com/deanjstone/design-system/v2.7.0/r/{name}.json"
+      "url": "https://raw.githubusercontent.com/deanjstone/design-system/v2.8.0/r/{name}.json"
     }
   }
 }
