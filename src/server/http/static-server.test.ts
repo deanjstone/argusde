@@ -46,7 +46,7 @@ describe("createStaticFileServer", () => {
   });
 
   /**
-   * CSP nonce plumbing (argusde#113). Radix overlays lock body scroll by
+   * CSP nonce plumbing (argusde#113). Radix overlays locked body scroll by
    * injecting a <style> element, which `style-src 'self'` blocks outright —
    * measured, not assumed: a real alert-dialog under the old policy opened
    * but left `document.body` at `overflow: visible`, i.e. the page still

@@ -56,23 +56,21 @@ export function ContextMeter({ usage }: ContextMeterProps) {
   return (
     <TooltipProvider>
       <Tooltip>
-        {/* asChild on a plain element, never on a shadcn primitive: the CLI
+        {/* Rendered onto a plain element, never a shadcn primitive: the CLI
             emits React-19-style components that cannot receive a ref under
             this project's React 18, and an unmeasurable trigger positions its
             overlay off-screen (argusde#122 lost real time to exactly this). */}
-        <TooltipTrigger asChild>
-          <div className="flex shrink-0 items-center gap-1.5" data-slot="context-meter">
-            <Progress
-              value={percent}
-              // The figures are on the element itself, not only in the
-              // tooltip: story 49 wants this compact, but a tooltip is
-              // unreachable on a phone, which is the case this app is for.
-              aria-label={label}
-              data-band={band}
-              className={cn("w-12", BAND_INDICATOR[band])}
-            />
-            <span className={cn("text-xs tabular-nums", BAND_LABEL[band])}>{percent}%</span>
-          </div>
+        <TooltipTrigger render={<div className="flex shrink-0 items-center gap-1.5" data-slot="context-meter" />}>
+          <Progress
+            value={percent}
+            // The figures are on the element itself, not only in the
+            // tooltip: story 49 wants this compact, but a tooltip is
+            // unreachable on a phone, which is the case this app is for.
+            aria-label={label}
+            data-band={band}
+            className={cn("w-12", BAND_INDICATOR[band])}
+          />
+          <span className={cn("text-xs tabular-nums", BAND_LABEL[band])}>{percent}%</span>
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>

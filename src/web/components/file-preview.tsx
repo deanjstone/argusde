@@ -135,7 +135,7 @@ export function FilePreview({ preview, loading, error, highlightLine }: FilePrev
       </div>
 
       {/* Plain overflow rather than shadcn's `scroll-area`, whose injected
-          `<style>` is blocked unless Radix is handed the CSP nonce — see the
+          `<style>` is blocked unless it is handed the CSP nonce — see the
           style-src commentary in server/http/static-server.ts. */}
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="w-max min-w-full py-2 font-mono text-xs leading-relaxed">

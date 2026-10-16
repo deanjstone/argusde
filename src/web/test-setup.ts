@@ -10,7 +10,7 @@ afterEach(() => {
   cleanup();
 });
 
-// jsdom implements neither of these, and Radix's overlay primitives need both
+// jsdom implements neither of these, and the overlay primitives need both
 // — Popover measures its trigger to position itself, and its dismiss handling
 // captures the pointer. Without them a component test of anything built on a
 // popover dies with "ResizeObserver is not defined" long before it asserts

@@ -163,7 +163,8 @@ describe("CommandMenu", () => {
     await screen.findByText("review");
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    // Base UI passes the change details as a second argument.
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything()));
     expect(onSelect).not.toHaveBeenCalled();
   });
 });

@@ -83,15 +83,12 @@ export function DiffView({
             // alert-dialog; phase 6 deferred that pending argusde#113, which
             // is now resolved, so it lands here.
             <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <button
-                  type="button"
-                  disabled={reverting || revertBlockedReason !== undefined}
-                  title={revertBlockedReason}
-                  className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  {reverting ? "Reverting…" : "Revert to this checkpoint"}
-                </button>
+              <AlertDialogTrigger
+                disabled={reverting || revertBlockedReason !== undefined}
+                title={revertBlockedReason}
+                className="text-xs text-warning hover:opacity-80 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {reverting ? "Reverting…" : "Revert to this checkpoint"}
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>

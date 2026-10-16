@@ -216,10 +216,8 @@ export function FileBrowser({ threadId, listDirectory, readFile, search, changed
                   ) : (
                     // A button, not an anchor: navigation here is a server
                     // round trip within the app, not a document link.
-                    <BreadcrumbLink asChild>
-                      <button type="button" onClick={() => void navigate(crumb.path)}>
-                        {crumb.label}
-                      </button>
+                    <BreadcrumbLink render={<button type="button" onClick={() => void navigate(crumb.path)} />}>
+                      {crumb.label}
                     </BreadcrumbLink>
                   )}
                 </BreadcrumbItem>
@@ -233,7 +231,7 @@ export function FileBrowser({ threadId, listDirectory, readFile, search, changed
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Plain overflow rather than shadcn's `scroll-area`, whose injected
-            `<style>` is blocked unless Radix is handed the CSP nonce — see the
+            `<style>` is blocked unless it is handed the CSP nonce — see the
             style-src commentary in server/http/static-server.ts. */}
         <div
           className={cn(
@@ -341,24 +339,24 @@ export function FileBrowser({ threadId, listDirectory, readFile, search, changed
               listing?.entries.map((entry) => (
                 <Item
                   key={entry.path}
-                  asChild
                   variant="muted"
                   size="xs"
                   className="cursor-pointer hover:bg-muted"
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => (entry.kind === "directory" ? void navigate(entry.path) : void open(entry.path))}
+                    />
+                  }
                 >
-                  <button
-                    type="button"
-                    onClick={() => (entry.kind === "directory" ? void navigate(entry.path) : void open(entry.path))}
-                  >
-                    <ItemContent>
-                      <ItemTitle className="font-mono">
-                        {/* A trailing slash rather than an icon: it survives
-                            a narrow column and needs no legend. */}
-                        {entry.name}
-                        {entry.kind === "directory" ? "/" : ""}
-                      </ItemTitle>
-                    </ItemContent>
-                  </button>
+                  <ItemContent>
+                    <ItemTitle className="font-mono">
+                      {/* A trailing slash rather than an icon: it survives
+                          a narrow column and needs no legend. */}
+                      {entry.name}
+                      {entry.kind === "directory" ? "/" : ""}
+                    </ItemTitle>
+                  </ItemContent>
                 </Item>
               ))}
           </div>

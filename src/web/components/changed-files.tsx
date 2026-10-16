@@ -89,22 +89,22 @@ export function ChangedFiles({ changes, loading, error, selectedPath, onSelect }
       {changes.files.map((file) => (
         <Item
           key={file.path}
-          asChild
           variant={file.path === selectedPath ? "outline" : "muted"}
           size="xs"
           className="cursor-pointer hover:bg-muted"
+          render={
+            <button type="button" onClick={() => onSelect(file.path)} aria-current={file.path === selectedPath || undefined} />
+          }
         >
-          <button type="button" onClick={() => onSelect(file.path)} aria-current={file.path === selectedPath || undefined}>
-            <ItemContent className="min-w-0 gap-1">
-              <ItemTitle className="min-w-0 truncate font-mono font-normal">{file.path}</ItemTitle>
-              {/* A rename is the one kind whose old name is part of the story —
-                  without it the file just appears and another disappears. */}
-              {file.previousPath && (
-                <span className="truncate font-mono text-xs text-muted-foreground">from {file.previousPath}</span>
-              )}
-            </ItemContent>
-            <Badge variant={kindVariant(file.kind)}>{KIND_LABEL[file.kind]}</Badge>
-          </button>
+          <ItemContent className="min-w-0 gap-1">
+            <ItemTitle className="min-w-0 truncate font-mono font-normal">{file.path}</ItemTitle>
+            {/* A rename is the one kind whose old name is part of the story —
+                without it the file just appears and another disappears. */}
+            {file.previousPath && (
+              <span className="truncate font-mono text-xs text-muted-foreground">from {file.previousPath}</span>
+            )}
+          </ItemContent>
+          <Badge variant={kindVariant(file.kind)}>{KIND_LABEL[file.kind]}</Badge>
         </Item>
       ))}
     </div>

@@ -254,7 +254,7 @@ describe("web smoke: server + browser round trip", () => {
       // This test used to wait for the "Close diff" button to detach, on the
       // grounds that handleRevertCheckpoint only closes the panel *after* the
       // round trip resolves. That stopped meaning anything the moment the
-      // confirmation became a modal: Radix marks the rest of the document
+      // confirmation became a modal: the dialog marks the rest of the document
       // `aria-hidden` while a dialog is open, which takes those elements out
       // of the accessibility tree, so a `getByRole` locator reports itself
       // detached the instant the dialog opens — long before any revert has
@@ -279,15 +279,16 @@ describe("web smoke: server + browser round trip", () => {
   /**
    * The CSP nonce, end to end in a real browser (argusde#113).
    *
-   * Radix overlays lock body scroll by injecting a `<style>` element, which
-   * `style-src 'self'` blocks outright. Measured before the fix: a real
+   * Overlays built on Radix locked body scroll by injecting a `<style>` element,
+   * which `style-src 'self'` blocks outright (Base UI locks through the CSSOM,
+   * which the policy allows). Measured before the fix: a real
    * alert-dialog opened, but `document.body` stayed at `overflow: visible`
    * (so the page scrolled behind it) and the console carried a CSP violation.
    * Nothing about that is visible from unit tests — jsdom enforces no CSP —
    * so this is the only place the mechanism is actually proven.
    */
   it(
-    "opens a Radix overlay under the real CSP with no violation, and its scroll lock actually applies",
+    "opens an overlay under the real CSP with no violation, and its scroll lock actually applies",
     async () => {
       const cspPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
       const consoleMessages: string[] = [];
@@ -412,7 +413,7 @@ describe("web smoke: server + browser round trip", () => {
   /**
    * The context meter in a real browser (spec #93 phase 9). Two things only
    * provable here: that the meter is driven by a real `usage_update` travelling
-   * the whole path, and that its tooltip — a third distinct Radix component —
+   * the whole path, and that its tooltip — a third distinct overlay component —
    * is CSP-clean under the real policy.
    */
   it(
@@ -442,10 +443,11 @@ describe("web smoke: server + browser round trip", () => {
         expect(await meter.getAttribute("data-band")).toBe("comfortable");
         await meterPage.getByText("25%").waitFor({ timeout: 5_000 });
 
-        // Hovering opens the Radix tooltip — the third distinct overlay in this
+        // Hovering opens the tooltip — the third distinct overlay in this
         // app, and so a third exercise of argusde#113's nonce.
         await meter.hover();
-        await meterPage.getByRole("tooltip").waitFor({ timeout: 10_000 });
+        // Base UI's popup carries no role="tooltip"; the registry's slot marks it.
+        await meterPage.locator('[data-slot="tooltip-content"]').filter({ hasText: /50,000 of 200,000/ }).waitFor({ timeout: 10_000 });
 
         expect(consoleMessages.filter((message) => /content security policy/i.test(message))).toEqual([]);
       } finally {
@@ -457,7 +459,7 @@ describe("web smoke: server + browser round trip", () => {
 
   /**
    * The slash-command menu in a real browser (spec #93 phase 8). Two things
-   * only provable here: that a Radix *popover* — a different component from
+   * only provable here: that a *popover* — a different component from
    * the alert-dialog #113 shipped with — is CSP-clean under the real policy,
    * and that the menu actually renders where the composer is.
    */
