@@ -42,15 +42,15 @@ style, Base UI, OKLCH tokens, IBM Plex Sans), installed through the shadcn CLI â
 hand-rolled lookalikes and not a Radix install of upstream shadcn. This supersedes the
 2026-08-17 "shadcn only" rule, which had ArgusDE on its own `radix-nova` install
 (argusde#141). The registry is pinned to a release tag in `components.json`
-(`registries["@design-system"]`, currently `v2.7.0`); bump the tag deliberately, review the diff
+(`registries["@design-system"]`, currently `v2.8.0`); bump the tag deliberately, review the diff
 like any dependency upgrade, and see the registry's README on what a pin does and doesn't fix.
 
 - **Add components with the CLI**: `pnpm dlx shadcn@latest add @design-system/<component>`.
   Never write a primitive by hand that the registry already ships.
 - **A primitive the registry lacks goes into design-system first**, never as a one-off here.
-  The two current gaps, `breadcrumb` and `command` (design-system#94), are listed in `test/registry-only.test.ts`
-  until the registry has them; the guard test fails on any other non-registry file under
-  `src/web/components/ui/`.
+  Any gap is listed in `NOT_YET_IN_REGISTRY` in `test/registry-only.test.ts` until the registry
+  has it (empty since `breadcrumb` and `command` landed in v2.8.0, design-system#94); the guard
+  test fails on any other non-registry file under `src/web/components/ui/`.
 - **Hand-rolling a component requires the user's explicit approval**, and is only on the
   table when neither the registry nor upstream shadcn has an equivalent. Ask; don't assume.
 - Base UI composes with the `render` prop, not Radix's `asChild`:

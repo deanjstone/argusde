@@ -11,17 +11,18 @@ import { describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SRC = join(ROOT, "src/web");
 
-// registry.json item names at the tag pinned in components.json (v2.7.0).
+// registry.json item names at the tag pinned in components.json (v2.8.0).
 const REGISTRY_ITEMS = new Set([
   "theme", "utils", "button", "card", "label", "input", "dialog", "tabs", "badge", "alert-dialog", "avatar", "checkbox",
   "collapsible", "drawer", "dropdown-menu", "popover", "progress", "scroll-area", "select", "separator", "sheet", "skeleton",
   "slider", "sonner", "switch", "textarea", "message", "bubble", "marker", "attachment", "message-scroller", "tooltip",
   "use-mobile", "item", "empty", "sidebar", "spinner", "field", "input-group", "toggle", "toggle-group", "button-group",
+  "breadcrumb", "command",
 ]);
 
 // Primitives the registry does not ship yet. Each stays here only until it is
 // added to design-system and pulled from there; none may import Radix.
-const NOT_YET_IN_REGISTRY = new Set(["breadcrumb", "command"]);
+const NOT_YET_IN_REGISTRY = new Set<string>([]);
 
 const filesUnder = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
