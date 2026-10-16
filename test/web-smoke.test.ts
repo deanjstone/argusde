@@ -501,6 +501,52 @@ describe("web smoke: server + browser round trip", () => {
     45_000,
   );
 
+  /**
+   * The Files tab's breadcrumb in a real browser: each crumb above the current
+   * folder is a `BreadcrumbLink render={<button />}` that drives a real
+   * fs listing round trip, and the current folder is the non-interactive page.
+   */
+  it(
+    "navigates the Files tab into a folder and back to the root through the breadcrumb",
+    async () => {
+      const filesRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "argusde-web-smoke-files-"));
+      fs.mkdirSync(path.join(filesRepoDir, "docs"));
+      fs.writeFileSync(path.join(filesRepoDir, "docs", "guide.md"), "# guide\n");
+      fs.writeFileSync(path.join(filesRepoDir, "top.txt"), "top\n");
+      execFileSync("git", ["init", "--initial-branch=main"], { cwd: filesRepoDir });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: filesRepoDir });
+      execFileSync("git", ["config", "user.name", "ArgusDE Test"], { cwd: filesRepoDir });
+      execFileSync("git", ["add", "-A"], { cwd: filesRepoDir });
+      execFileSync("git", ["commit", "-m", "initial commit"], { cwd: filesRepoDir });
+
+      const filesPage = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      try {
+        await filesPage.goto(`http://127.0.0.1:${server.port}/`);
+        await filesPage.getByRole("button", { name: /type a path manually/i }).click();
+        await filesPage.getByLabel(/workspace path/i).fill(filesRepoDir);
+        await filesPage.getByRole("button", { name: /^start$/i }).click();
+        await filesPage.waitForSelector('input[placeholder*="Message" i]', { timeout: 15_000 });
+
+        await filesPage.getByRole("button", { name: "Files", exact: true }).click();
+        const breadcrumb = filesPage.getByRole("navigation", { name: "breadcrumb" });
+        await breadcrumb.getByText("root").waitFor({ timeout: 10_000 });
+        expect(await breadcrumb.getByText("root").getAttribute("aria-current")).toBe("page");
+
+        await filesPage.getByRole("button", { name: "docs" }).click();
+        await filesPage.getByRole("button", { name: "guide.md" }).waitFor({ timeout: 10_000 });
+        expect(await breadcrumb.getByText("docs").getAttribute("aria-current")).toBe("page");
+
+        await breadcrumb.getByRole("button", { name: "root" }).click();
+        await filesPage.getByRole("button", { name: "top.txt" }).waitFor({ timeout: 10_000 });
+        expect(await breadcrumb.getByRole("button").count()).toBe(0);
+      } finally {
+        await filesPage.close();
+        fs.rmSync(filesRepoDir, { recursive: true, force: true });
+      }
+    },
+    45_000,
+  );
+
   it(
     "shows the agent's mode catalog and switches modes via a real session/set_mode round trip",
     async () => {
