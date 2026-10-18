@@ -11,11 +11,12 @@ on:
 permissions:
   contents: read
 
-# A superseded push has nothing useful left to say — cancel it rather than
-# paying for a full Electron + Playwright run twice.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # One group per PR, one per main commit. Never ${{ github.ref }}: a group holds one
+  # pending run, so on main the next merge would cancel this commit's queued run.
+  # A superseded PR push is still cancelled (argus-config#534).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
